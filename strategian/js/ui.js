@@ -134,8 +134,12 @@
   };
 
   UI.toggleTheme = function () {
-    const cur = document.documentElement.getAttribute('data-theme');
-    const next = cur === 'light' ? 'dark' : 'light';
+    // With nothing stamped the page is following the OS, so resolve what the
+    // viewer is actually looking at before flipping it.
+    const stamped = document.documentElement.getAttribute('data-theme');
+    const effective = stamped || (window.matchMedia &&
+      window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+    const next = effective === 'dark' ? 'light' : 'dark';
     document.documentElement.setAttribute('data-theme', next);
     if (S.game.state) S.game.state.settings.theme = next;
     try { localStorage.setItem('strategian.theme', next); } catch (e) { /* ignore */ }

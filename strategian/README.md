@@ -155,3 +155,14 @@ A few things the model does that are worth knowing before you play:
   administrative capacity are stocks. Benchmark funding buys a competent service;
   excellence costs considerably more, and a poor country cannot buy a rich
   country's outcomes at any share of a small GDP.
+
+## Building the single-file version
+
+`node build.js` writes two self-contained files into `dist/`:
+
+- `strategian.html` — a complete page with everything inlined. Open it directly
+  from disk, email it, drop it on any static host. No server required.
+- `fragment.html` — the same content without the document shell, for hosts that
+  supply their own `<head>` and `<body>`.
+
+The build has no dependencies and no minifier: the output stays readable.
