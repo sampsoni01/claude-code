@@ -162,6 +162,7 @@
 
     // Content cadence is measured from today, not from year zero, so nothing
     // fires on the first tick.
+    G.buildRoster(st);
     const day0 = S.absDay(st.date);
     st.counters.lastDecisionDay = day0 + 4;
     st.counters.lastEventDay = day0 + 12;
@@ -447,12 +448,13 @@
   };
 
   G.decisionInterval = function (st) {
-    // Crises come faster; calm periods breathe.
-    let base = 15;
-    if (st.wars.length) base -= 3;
-    if (st.society.unrest > 55) base -= 2;
-    if (st.society.stability > 75 && !st.wars.length) base += 4;
-    return S.clamp(base + st.rng.int(-3, 5), 6, 26);
+    // Crises come faster; calm periods breathe. The base is deliberately
+    // long: at the old cadence the library was exhausted inside a year.
+    let base = 27;
+    if (st.wars.length) base -= 5;
+    if (st.society.unrest > 55) base -= 3;
+    if (st.society.stability > 75 && !st.wars.length) base += 6;
+    return S.clamp(base + st.rng.int(-7, 11), 9, 48);
   };
 
   G.updateIntel = function (st, dt) {
@@ -512,6 +514,7 @@
       G.event('Election year. The country will decide whether to keep you.', '');
       S.Soc.runElection(st);
     }
+    if (st.counters.yearsInOffice % 6 === 0) G.refreshRoster(st);
     // Peace tracking for the world-peace victory.
     if (st.world.tension <= 15 && !st.wars.length && (st.world.globalWars || 0) === 0) st.peaceStreak++;
     else st.peaceStreak = 0;
@@ -519,19 +522,62 @@
   };
 
   /* ========================================================== DECISIONS */
+  /* Every world deals from its own deck. Without this, a small pool plus a
+     fixed cooldown produced a near-complete rotation of the whole library
+     every couple of years, identical in content across playthroughs. */
+  G.ROSTER_SHARE = 0.66;
+
+  G.buildRoster = function (st) {
+    const pool = S.Decisions.LIB.filter((d) => !d.dynamic);
+    const core = pool.filter((d) => d.core).map((d) => d.id);
+    const rest = st.rng.shuffle(pool.filter((d) => !d.core)).map((d) => d.id);
+    const keep = Math.max(12, Math.round(pool.length * G.ROSTER_SHARE) - core.length);
+    st.roster = core.concat(rest.slice(0, keep));
+    st.rosterOut = rest.slice(keep);
+  };
+
+  // Over a long game the roster turns over, so the back half is not the
+  // same deck as the front half.
+  G.refreshRoster = function (st) {
+    if (!st.roster || !st.rosterOut || !st.rosterOut.length) return;
+    const swaps = Math.max(1, Math.round(st.roster.length * 0.12));
+    for (let i = 0; i < swaps; i++) {
+      if (!st.rosterOut.length) break;
+      const outIdx = st.rng.int(0, st.roster.length - 1);
+      const inIdx = st.rng.int(0, st.rosterOut.length - 1);
+      const leaving = st.roster[outIdx];
+      const def = S.Decisions.BY_ID[leaving];
+      if (def && def.core) continue;
+      st.roster[outIdx] = st.rosterOut[inIdx];
+      st.rosterOut[inIdx] = leaving;
+    }
+  };
+
   G.rollDecision = function (st) {
     const abs = S.absDay(st.date);
+    if (!st.roster) G.buildRoster(st);
+    const gaps = st.counters.decisionGap = st.counters.decisionGap || {};
     const candidates = S.Decisions.LIB.filter((d) => {
       if (d.dynamic) return false;
+      if (st.roster.indexOf(d.id) < 0) return false;
       const cd = st.counters.decisionCooldown[d.id];
-      if (cd && abs - cd < 900) return false;
+      // Recurrence is spaced unevenly, so nothing comes back on a metronome.
+      if (cd && abs - cd < (gaps[d.id] || 1200)) return false;
       if (st.inbox.some((i) => i.def.id === d.id)) return false;
       const w = typeof d.weight === 'function' ? d.weight(st) : (d.weight || 5);
       return w > 0;
     });
     if (!candidates.length) return;
-    const pick = st.rng.weighted(candidates, (d) => (typeof d.weight === 'function' ? d.weight(st) : d.weight));
-    if (pick) G.pushDecision(pick.id, {});
+    // A per-draw jitter on top of the weight, so relevance shapes the order
+    // without dictating it.
+    const pick = st.rng.weighted(candidates, (d) => {
+      const w = typeof d.weight === 'function' ? d.weight(st) : d.weight;
+      return Math.max(0.5, w) * st.rng.range(0.45, 1.75);
+    });
+    if (pick) {
+      gaps[pick.id] = st.rng.int(900, 2400);
+      G.pushDecision(pick.id, {});
+    }
   };
 
   G.pushDecision = function (id, ctx) {
@@ -830,6 +876,8 @@
     st.scheduled = st.scheduled || [];
     st.programmes = st.programmes || [];
     st.actionCooldown = st.actionCooldown || {};
+    st.counters.decisionGap = st.counters.decisionGap || {};
+    if (!st.roster) G.buildRoster(st);
     st.autoPaused = false;
     st.settings = st.settings || {};
     if (st.settings.autoResume == null) st.settings.autoResume = true;

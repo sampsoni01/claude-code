@@ -88,11 +88,21 @@ it goes wrong and what happens if it does. Those figures are the ministry's
 error band narrows as your administrative capacity improves. Policy settings
 and budget lines are exact — you pull those levers yourself.
 
-The library is finite, so issues recur across playthroughs. What stops them
-reading identically is that each arrival draws its own framing and its own
-specifics — a named region, industry, firm, union or official — once, and the
-brief, the advisers and the options all describe that same situation. The most
-frequently-seen decisions have several genuinely different framings.
+Issues are dealt from a **per-world roster**: at setup each world draws about
+two-thirds of the decision library, so two playthroughs are not the same deck
+in a different order. Roughly 40% of the roster turns over every six years, so
+the back half of a long game is not the front half again. Recurrence gaps are
+randomised between about two and a half and six and a half years, so nothing
+comes back on a metronome.
+
+On top of that, each arrival draws its own framing and its own specifics — a
+named region, industry, firm, union or official — once, and the brief, the
+advisers and the options all describe that same situation. The most frequently
+seen decisions have several genuinely different framings.
+
+Measured: two fresh games of the same country and government now share about
+half their issues over four years, against 85–100% before this was fixed, and
+year one shows roughly a quarter of the library rather than three-quarters.
 
 Ignoring a decision is itself a decision: when the deadline passes the most
 passive available course is taken for you, and it costs you.

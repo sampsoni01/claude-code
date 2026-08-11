@@ -122,7 +122,7 @@
 
     /* ------------------------------------------------------------ BUDGET */
     {
-      id: 'budget_annual', cat: 'budget', title: 'The Annual Budget Framework',
+      id: 'budget_annual', core: true, cat: 'budget', title: 'The Annual Budget Framework',
       from: 'Minister of Finance', urgency: 'pressing', deadline: 21,
       weight: (st) => (st.date.month === 9 ? 40 : 0),
       brief: (st) => `<p>The framework for next year must go to the printers within three weeks. The Treasury has modelled three envelopes.</p>

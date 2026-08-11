@@ -22,7 +22,7 @@ const DIST = path.join(ROOT, 'dist');
 const SCRIPTS = [
   'js/util.js', 'js/data-world.js', 'js/sim-economy.js', 'js/sim-society.js',
   'js/sim-military.js', 'js/sim-diplomacy.js', 'js/negotiation.js', 'js/news.js',
-  'js/briefings.js', 'js/aftermath.js', 'js/actions.js', 'js/data-decisions.js', 'js/data-events.js', 'js/game.js',
+  'js/briefings.js', 'js/aftermath.js', 'js/actions.js', 'js/data-decisions.js', 'js/data-decisions-2.js', 'js/data-events.js', 'js/game.js',
   'js/ui.js', 'js/main.js'
 ];
 
