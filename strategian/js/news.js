@@ -183,6 +183,8 @@
   News.ambient = function (st) {
     const good = st.society.approval * 0.4 + st.quality.infra * 0.3 + st.quality.health * 0.3;
     const roll = st.rng();
+    // The press keeps returning to a wound the country is still carrying.
+    if (roll < 0.22 && S.Aftermath.recall(st)) return null;
     if (st.national.softPower > 62 && roll < 0.14) return News.push(st, 'culture', {});
     if (st.quality.science > 68 && roll < 0.20) return News.push(st, 'tech', {});
     if (st.society.corruption > 58 && roll < 0.28) return News.push(st, 'corruption', {});

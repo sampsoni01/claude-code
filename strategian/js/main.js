@@ -9,7 +9,7 @@
     } catch (e) { /* private mode */ }
 
     // Guard against a half-loaded page.
-    const missing = ['Econ', 'Soc', 'Mil', 'Dip', 'Nego', 'News', 'Brief', 'game', 'UI']
+    const missing = ['Econ', 'Soc', 'Mil', 'Dip', 'Nego', 'News', 'Brief', 'Aftermath', 'Actions', 'game', 'UI']
       .filter((k) => !S[k]);
     if (missing.length) {
       document.getElementById('app').innerHTML =

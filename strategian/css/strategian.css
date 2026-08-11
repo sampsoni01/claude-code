@@ -433,6 +433,9 @@ input[type=checkbox] { accent-color: var(--gold); width: 15px; height: 15px; }
 }
 .option:hover { border-color: var(--gold); background: var(--panel-3); }
 .option.sel { border-color: var(--gold); box-shadow: inset 0 0 0 1px var(--gold); }
+/* An initiative that exists but is not currently open to you. */
+.option.off { opacity: .48; cursor: not-allowed; }
+.option.off:hover { border-color: var(--line); background: var(--panel-2); }
 .option .ol { font-size: 13.5px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
 .option .od { font-size: 12px; color: var(--ink-2); margin-top: 4px; line-height: 1.5; }
 .option .oe { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }

@@ -256,7 +256,10 @@
 
     // Casualties scale with intensity and inversely with quality edge.
     const edge = S.clamp(own / Math.max(0.001, foe), 0.2, 5);
-    const baseLoss = (w.intensity / 100) * 0.020 * st.military.manpower;
+    // Losses per ten-day cycle as a share of the force under arms. Calibrated
+    // so that a hard-fought year of modern war costs tens of thousands of
+    // lives rather than the millions of a total war between mass armies.
+    const baseLoss = (w.intensity / 100) * 0.0008 * st.military.manpower;
     const ourLoss = baseLoss / Math.pow(edge, 0.45) * (post.off * 0.55 + 0.65);
     const theirLoss = baseLoss * Math.pow(edge, 0.35) * 1.05;
     w.casualties += ourLoss * 1e6;
@@ -264,7 +267,9 @@
     if (w.type !== 'conventional' || w.score < 0) {
       w.civilianCasualties += baseLoss * 1e6 * (w.type === 'conventional' ? 0.35 : 0.85);
     }
-    w.casualtiesRatio = S.clamp((w.casualties / 1e6) / Math.max(0.05, st.pop.total) * 22, 0, 1.5);
+    // Deaths as a share of the population, scaled so that losing a tenth of a
+    // percent of your people reads as a bloody war politically.
+    w.casualtiesRatio = S.clamp((w.casualties / 1e6) / Math.max(0.05, st.pop.total) * 800, 0, 1.5);
 
     st.military.morale -= (odds < 0.45 ? 1.6 : -0.5);
     st.military.readiness -= (w.intensity / 100) * 2.4;
@@ -378,6 +383,26 @@
     }
     st.military.veterancy = Math.min(100, st.military.veterancy + 12);
     st.world.tension = Math.max(0, st.world.tension - 10);
+
+    // A war leaves its dead behind whoever won. The grief is a live political
+    // fact for years, and it schedules the settlement that follows from it.
+    const dead = Math.round(w.casualties + w.civilianCasualties);
+    if (dead > 2000) {
+      const share = dead / 1e6 / Math.max(0.1, st.pop.total); // dead per head
+      S.Aftermath.addScar(st, {
+        kind: 'war_' + w.id, name: w.name,
+        desc: S.people(dead / 1e6) + ' of our people dead. ' +
+          (outcome === 'victory' ? 'Won.' : outcome === 'defeat' ? 'Lost.' : 'Settled.'),
+        severity: S.clamp(35 + share * 900 + (outcome === 'defeat' ? 25 : 0), 20, 110),
+        years: S.clamp(4 + share * 60, 3, 12), deaths: dead,
+        growth: -S.clamp(share * 22, 0.2, 1.6),
+        approval: outcome === 'defeat' ? -4 : -1,
+        unrest: outcome === 'defeat' ? 5 : 2,
+        qualityDrag: { infra: -S.clamp(share * 160, 2, 22), health: -S.clamp(share * 90, 1, 14) },
+        tag: 'war'
+      });
+      S.Aftermath.schedule(st, 'war_memorial', { war: w.name, dead: dead, outcome: outcome }, 150);
+    }
 
     if (outcome === 'victory') {
       st.national.prestige += 12; st.society.honeymoon += 8;

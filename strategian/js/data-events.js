@@ -194,11 +194,18 @@
       return 'An intelligence operation in ' + n.name + ' has been exposed. Diplomats are being expelled in both directions.';
     }),
     ev('terror_attack', (st) => (st.society.unrest > 45 || st.wars.length) ? 7 : 2, (st) => {
-      st.society.approval += 3; st.society.cohesion += 4; st.society.unrest += 3;
+      const dead = st.rng.int(18, 210);
+      st.society.approval += 3; st.society.cohesion += 5; st.society.unrest += 3;
       st.quality.security -= 2;
-      S.game.pushDecision('terror_response', {});
-      S.News.custom(st, 'Attack in the Capital Leaves Dozens Dead', 'bad');
-      return 'A bombing in the capital has killed dozens. The country is angry and looking at you.';
+      S.Aftermath.addScar(st, {
+        kind: 'terror', name: 'The Capital Bombing',
+        desc: S.num(dead) + ' dead. Security policy has not been the same since.',
+        severity: 45, years: 4, deaths: dead,
+        growth: -0.2, approval: 0, unrest: +2, qualityDrag: { security: -6 }, tag: 'attack'
+      });
+      S.game.pushDecision('terror_response', { dead: dead });
+      S.News.custom(st, 'Attack in the Capital Leaves ' + S.num(dead) + ' Dead', 'bad');
+      return 'A bombing in the capital has killed ' + S.num(dead) + '. The country is angry and looking at you.';
     }),
     ev('diplomatic_windfall', (st) => st.national.prestige > 50 ? 5 : 2, (st) => {
       const n = st.rng.pick(st.diplomacy.nations);

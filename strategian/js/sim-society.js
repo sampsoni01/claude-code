@@ -75,7 +75,8 @@
       + s.scandal
       + (pol.interior.propaganda * 0.10 * (gov.legitimacyFrom === 'approval' ? 0.35 : 1))
       - Math.max(0, s.inequality - 48) * 0.14
-      - Math.max(0, s.unrest - 55) * 0.14;
+      - Math.max(0, s.unrest - 55) * 0.14
+      + S.Aftermath.approvalOffset(st);
 
     // The reference adapts over roughly three years.
     ref.services = S.drift(ref.services, services, 0.34 * dt);
@@ -131,6 +132,7 @@
 
     st.wars.forEach((w) => { uTarget += (100 - w.homeSupport) * 0.06 + w.intensity * 0.03; });
     uTarget += st.economy.sanctionPressure * 0.10;
+    uTarget += S.Aftermath.unrestOffset(st);
 
     s.unrest = S.drift(s.unrest, S.clamp(uTarget, 0, 100), 1.9 * dt);
 

@@ -57,6 +57,27 @@ everything feeds the simulation.
 | **Foreign Ministry** | Every foreign power, with relations, affinity, treaties and a menu of instruments: trade talks, defence pacts, arms control, energy contracts, aid packages, sanctions, ultimatums, war |
 | **Records & Objectives** | Victory tracks with itemised requirements, the full decision record, the press archive, and save/export |
 
+## Initiatives — the things you start
+
+Every department screen opens with an **Initiatives** panel: forty-three
+actions you take rather than answer. Mobilise the reserves or stand them down,
+stage an exercise, deploy peacekeepers, test a warhead, sell arms, declare war.
+Denounce a government by name, make a state visit, convene an international
+conference, expel a mission, fly in relief. Sweep the ministries for
+corruption, declare a state of emergency, or open the prisons in a general
+amnesty. Stimulate, consolidate, buy back debt, found a sovereign wealth fund.
+
+Some are one-off. Fifteen of them are **programmes**: multi-year projects that
+cost a share of output every year until they finish and pay off at the end —
+hospital construction, rural clinics, immunisation, literacy, universities,
+foreign scholarships, arts and broadcasting, national infrastructure, grid
+hardening, a high-speed rail spine, ports, mass housing, water and sanitation,
+police reform, offensive cyber. You can see how far along each one is, and you
+can cancel one, which wastes everything already spent.
+
+Each action shows what it costs and why it is unavailable when it is. Anything
+grave asks you to confirm.
+
 ## Decisions
 
 Matters arrive on your desk with a source, a brief, advisers who disagree with
@@ -67,9 +88,35 @@ it goes wrong and what happens if it does.
 Ignoring a decision is itself a decision: when the deadline passes the most
 passive available course is taken for you, and it costs you.
 
-Urgent matters pause the clock by default. Random events fire without warning:
-harvests fail, banks collapse, ministers are found with property portfolios
-nobody declared, pathogens arrive, governments fall abroad.
+The clock stops itself when something urgent arrives and starts again by
+itself once you have ruled on it — both halves can be turned off in the menu.
+It stays stopped while anything urgent is still outstanding, and a pause you
+made yourself is never undone for you.
+
+Random events fire without warning: harvests fail, banks collapse, ministers
+are found with property portfolios nobody declared, governments fall abroad.
+
+## Aftermath
+
+Catastrophes are meant to outlive their headline. A disaster, a pandemic, a
+terrorist attack or a war leaves a **scar**: a named, dated wound with a death
+toll that drags on growth, on the public mood and on the quality of whatever it
+broke, and that heals over years at a rate set by how capable and solvent your
+state is. You can see everything the country is still carrying on the Situation
+Room and in the Records screen, with each ongoing effect itemised.
+
+Scars are written about. The press returns to them unprompted, and prints an
+anniversary piece every year while the damage is still material.
+
+They also schedule what follows. A disaster puts a reconstruction bill on your
+desk ten weeks later and an inquiry report over a year after that; a pandemic
+sends you its reckoning eighteen months on; a costly war asks you what to do
+about the dead. What you choose in those follow-ups shortens or lengthens the
+scar, so the original catastrophe keeps mattering for as long as you let it.
+
+Nothing catastrophic can happen while the last one is still being absorbed —
+there is a seven-year floor between them, so a once-in-a-generation event is
+one.
 
 ## Negotiation
 
@@ -117,8 +164,11 @@ and import it back.
 
 ## Controls
 
-`Space` pause · `1`–`4` speed · `I` open the next matter on your desk. The
-theme toggle in the top bar switches between dark and light.
+`Space` pause · `1` normal · `2` fast · `I` open the next matter on your desk.
+The theme toggle in the top bar switches between dark and light.
+
+There are two running speeds. There used to be four; the fastest two expired
+matters before they could be read, which made the clock the opponent.
 
 ## How the simulation is put together
 
@@ -132,6 +182,8 @@ js/sim-diplomacy.js   relations, treaties, and the behaviour of other government
 js/negotiation.js     the negotiating engine
 js/news.js            the press
 js/briefings.js       intelligence, military and treasury briefings
+js/aftermath.js       scars, anniversaries and deferred consequences
+js/actions.js         player initiatives and multi-year programmes
 js/data-decisions.js  the decision library
 js/data-events.js     random events
 js/game.js            state, the clock, decisions, save/load, victory conditions
@@ -151,6 +203,10 @@ A few things the model does that are worth knowing before you play:
   de-anchors inflation expectations.
 - **Deficits are financed by someone or they are not.** Past the point where the
   market will fund you, the state cuts without asking you and prints the rest.
+- **Catastrophes leave scars, and scars are capped.** Each one is a real
+  standing weight on growth, mood and services, but their combined effect is
+  bounded so a run of bad luck stays survivable and your own condition decides
+  whether the country breaks.
 - **Institutions move in years.** Education, health, infrastructure and
   administrative capacity are stocks. Benchmark funding buys a competent service;
   excellence costs considerably more, and a poor country cannot buy a rich

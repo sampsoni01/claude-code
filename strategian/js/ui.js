@@ -79,7 +79,7 @@
       const st = S.game.state;
       if (!st || st.ended) return;
       if (e.code === 'Space') { e.preventDefault(); S.game.togglePause(); }
-      else if (e.key >= '1' && e.key <= '4') S.game.setSpeed(parseInt(e.key, 10));
+      else if (e.key >= '1' && e.key <= '2') S.game.setSpeed(parseInt(e.key, 10));
       else if (e.key === 'i' || e.key === 'I') { if (st.inbox.length) UI.openDecision(st.inbox[0]); }
     });
   };
@@ -111,7 +111,8 @@
       '<div class="clockbox"><div class="clock">' + esc(S.dateLabel(st.date)) + '</div>' +
       '<div class="speedctl">' +
       S.game.SPEED_NAMES.map((n, i) =>
-        '<button data-speed="' + i + '" class="' + (i === 0 ? 'pause ' : '') + (st.speed === i ? 'on' : '') + '">' + n + '</button>').join('') +
+        '<button data-speed="' + i + '" title="' + S.game.SPEED_TITLES[i] + '" class="' +
+        (i === 0 ? 'pause ' : '') + (st.speed === i ? 'on' : '') + '">' + n + '</button>').join('') +
       '</div></div>' +
       '<div class="stat-strip">' + chips.map((c) =>
         '<div class="stat-chip' + (c.alarm ? ' alarm' : '') + '"><span class="k">' + c.k + '</span>' +
@@ -353,6 +354,157 @@
       (d ? '<span class="d">' + d + '</span>' : '') + '</div>';
   }
 
+  /* ========================================================= INITIATIVES */
+  // Things you start, as opposed to things you answer. Every department that
+  // has any gets this panel at the top of its screen.
+  UI.initiatives = function (dept) {
+    const st = S.game.state;
+    const card = el('div.card.accent-gold');
+    function paint() {
+      const acts = S.Actions.forDept(st, dept);
+      let h = '<div class="card-h"><h3>Initiatives</h3><span class="spacer"></span>' +
+        '<span class="hint">actions you can take now</span></div>';
+      if (!acts.length) { card.innerHTML = h + '<div class="empty">Nothing to launch from here.</div>'; return; }
+      h += '<div class="options">';
+      acts.forEach((a) => {
+        const s = S.Actions.status(st, a);
+        h += '<div class="option' + (s.ok ? '' : ' off') + '" data-run="' + a.id + '">' +
+          '<div class="ol">' + esc(a.name) +
+          (a.danger ? ' <span class="tag c-clay tiny">grave</span>' : '') +
+          (a.programme ? ' <span class="tag c-steel tiny">programme</span>' : '') +
+          (a.target ? ' <span class="tag c-plum tiny">pick a nation</span>' : '') + '</div>' +
+          '<div class="od">' + esc(a.desc) + '</div>' +
+          '<div class="oe"><span class="eff">' + esc(S.Actions.costLabel(st, a)) + '</span>' +
+          (s.ok ? '' : '<span class="eff risk">' + esc(s.reason) + '</span>') + '</div></div>';
+      });
+      h += '</div>';
+      card.innerHTML = h;
+      S.qsa('[data-run]', card).forEach((d) => {
+        d.onclick = () => {
+          const a = S.Actions.BY_ID[d.dataset.run];
+          if (!S.Actions.status(st, a).ok) return;
+          UI.launchAction(a, paint);
+        };
+      });
+    }
+    paint();
+    card._repaint = paint;
+    return card;
+  };
+
+  UI.launchAction = function (a, after) {
+    const st = S.game.state;
+    if (a.target === 'nation') {
+      const list = st.diplomacy.nations.filter((n) => !a.targetFilter || a.targetFilter(st, n));
+      const body = '<div class="brief-text"><p>' + esc(a.desc) + '</p>' +
+        '<p class="small dim">' + esc(S.Actions.costLabel(st, a)) + '</p></div>' +
+        '<div class="caps" style="margin:14px 0 6px">Choose a target</div><div class="options">' +
+        list.map((n) => '<div class="option" data-nat="' + n.id + '">' +
+          '<div class="ol"><span class="flagdot c-' + n.color + '" style="background:currentColor"></span> ' + esc(n.name) + '</div>' +
+          '<div class="od">' + esc(n.notes) + '</div>' +
+          '<div class="oe"><span class="eff">Relations ' + S.round(n.relation, 0) + '</span>' +
+          '<span class="eff">Power ' + S.round(n.power, 0) + '</span>' +
+          '<span class="eff">Force ' + S.round(n.milPower, 1) + '</span>' +
+          (n.allyOfUs ? '<span class="eff pos">Ally</span>' : '') +
+          (n.atWar ? '<span class="eff neg">At war</span>' : '') + '</div></div>').join('') +
+        '</div>';
+      const modal = UI.showModal({
+        eyebrow: 'Initiative', title: a.name, body: body,
+        footer: [{ label: 'Cancel', cls: 'ghost', act: () => UI.closeModal() }]
+      });
+      S.qsa('[data-nat]', modal).forEach((d) => {
+        d.onclick = () => {
+          const n = S.dip(st, d.dataset.nat);
+          if (a.confirm && !confirm(a.name + ' — ' + n.name + '. This cannot be undone. Proceed?')) return;
+          UI.closeModal();
+          const text = S.Actions.run(st, a, n);
+          UI.actionResult(a, text, after);
+        };
+      });
+      return;
+    }
+    if (a.confirm && !confirm(a.name + '. This cannot be undone. Proceed?')) return;
+    const text = S.Actions.run(st, a, null);
+    UI.actionResult(a, text, after);
+  };
+
+  UI.actionResult = function (a, text, after) {
+    if (text == null) return;
+    UI.showModal({
+      eyebrow: 'Initiative', title: a.name,
+      body: '<div class="brief-text"><p>' + esc(text) + '</p></div>',
+      footer: [{ label: 'Close', cls: 'primary', act: () => { UI.closeModal(); if (after) after(); UI.onTick(true); } }]
+    });
+  };
+
+  /* Long-running programmes, wherever they are being run from. */
+  UI.programmesCard = function (dept) {
+    const st = S.game.state;
+    const card = el('div.card');
+    function paint() {
+      const list = (st.programmes || []).filter((p) => !dept || p.dept === dept);
+      let h = '<div class="card-h"><h3>Programmes in Progress</h3><span class="spacer"></span>' +
+        '<span class="hint">funded every year until they finish</span></div>';
+      if (!list.length) {
+        card.innerHTML = h + '<div class="empty">No programmes running here.</div>';
+        return;
+      }
+      list.forEach((p) => {
+        const pct = S.clamp((p.elapsed / p.years) * 100, 0, 100);
+        h += '<div class="li" style="padding:9px 0;border-bottom:1px solid var(--line-soft)">' +
+          '<div style="display:flex;gap:8px;align-items:baseline"><b style="font-size:13px">' + esc(p.name) + '</b>' +
+          '<span class="spacer" style="flex:1"></span>' +
+          '<span class="mono small dim">' + S.round(p.elapsed, 1) + ' / ' + p.years + ' yrs</span></div>' +
+          S.meter(pct, { color: 'gold' }) +
+          '<div class="small dim" style="margin-top:4px">' + esc(p.desc) + ' · ' +
+          S.money((p.costPct / 100) * st.economy.gdp) + ' a year' +
+          ' <button class="btn sm ghost" data-cancel="' + p.id + '" style="float:right;margin-top:-4px">Cancel</button></div></div>';
+      });
+      card.innerHTML = h;
+      S.qsa('[data-cancel]', card).forEach((b) => {
+        b.onclick = () => {
+          if (!confirm('Cancel this programme? Everything spent so far is lost.')) return;
+          S.Actions.cancelProgramme(st, b.dataset.cancel);
+          paint(); UI.onTick(true);
+        };
+      });
+    }
+    paint();
+    card._repaint = paint;
+    return card;
+  };
+
+  UI.initiativeBlock = function (dept, withProgrammes) {
+    const wrap = el('div.grid' + (withProgrammes ? '.g2' : ''), { style: { marginTop: '14px' } });
+    wrap.appendChild(UI.initiatives(dept));
+    if (withProgrammes) wrap.appendChild(UI.programmesCard(dept));
+    return wrap;
+  };
+
+  /* What the country is still carrying. */
+  UI.scarsHtml = function (st) {
+    const scars = S.Aftermath.summary(st);
+    if (!scars.length) return '<div class="empty">The country is not currently carrying anything.</div>';
+    return scars.map((s) => {
+      const years = Math.max(0, st.date.year - s.startYear);
+      return '<div class="li" style="padding:9px 0;border-bottom:1px solid var(--line-soft)">' +
+        '<div style="display:flex;gap:8px;align-items:baseline">' +
+        '<b style="font-size:13px">' + esc(s.name) + '</b>' +
+        '<span class="spacer" style="flex:1"></span>' +
+        '<span class="tiny dim">' + esc(s.startLabel) + (years ? ' · ' + years + 'y ago' : '') + '</span></div>' +
+        S.meter(s.severity, { invert: true }) +
+        '<div class="small dim" style="margin-top:4px">' + esc(s.desc) + '</div>' +
+        '<div class="oe" style="margin-top:5px">' +
+        (s.deaths ? '<span class="eff neg">' + S.num(s.deaths) + ' dead</span>' : '') +
+        (s.growth ? '<span class="eff neg">Growth ' + S.signed(s.growth * (s.severity / 100), 2) + '</span>' : '') +
+        (s.unrest ? '<span class="eff neg">Unrest ' + S.signed(s.unrest * (s.severity / 100), 1) + '</span>' : '') +
+        (s.approval ? '<span class="eff neg">Approval ' + S.signed(s.approval * (s.severity / 100), 1) + '</span>' : '') +
+        Object.keys(s.qualityDrag || {}).map((k) => '<span class="eff neg">' + esc(S.Decisions.LABELS['quality.' + k] || k) +
+          ' ' + S.signed(s.qualityDrag[k] * (s.severity / 100), 0) + '</span>').join('') +
+        '</div></div>';
+    }).join('');
+  };
+
   function head(title, lede, extra) {
     return '<div class="page-head"><div><h1>' + esc(title) + '</h1>' +
       (lede ? '<div class="lede">' + esc(lede) + '</div>' : '') + '</div>' +
@@ -437,6 +589,11 @@
     left += card('Internal Risk Board', 'Higher is worse', riskHtml,
       (st.risk.coup > 45 || st.risk.civilWar > 45 || st.risk.collapse > 45) ? 'accent-clay' : '');
 
+    if ((st.scars || []).length) {
+      left += card('What the Country Is Still Carrying', 'lasting consequences of past events',
+        UI.scarsHtml(st), 'accent-clay');
+    }
+
     left += card('The Economy', 'Weekly series', S.lineChart([
       { label: 'Real growth %', values: h.growth || [], color: 'sage' },
       { label: 'Inflation %', values: h.inflation || [], color: 'clay' },
@@ -483,6 +640,18 @@
     });
     right += card('Factional Standing', 'Least loyal first', fac);
 
+    if ((st.programmes || []).length) {
+      let pr = '';
+      st.programmes.forEach((p) => {
+        const pct = S.clamp((p.elapsed / p.years) * 100, 0, 100);
+        pr += '<div style="padding:5px 0"><div class="small">' + esc(p.name) + '</div>' +
+          S.meter(pct, { color: 'gold' }) +
+          '<div class="tiny dim">' + S.round(p.elapsed, 1) + ' of ' + p.years + ' years · ' +
+          S.money((p.costPct / 100) * st.economy.gdp) + '/yr</div></div>';
+      });
+      right += card('Programmes Running', st.programmes.length + ' in delivery', pr, 'accent-steel');
+    }
+
     let vic = '';
     S.VICTORY.forEach((v) => {
       const p = (st.victoryProgress[v.id] || { pct: 0 }).pct;
@@ -507,6 +676,7 @@
 
     const live = el('div#treasuryLive');
     main.appendChild(live);
+    main.appendChild(UI.initiativeBlock('treasury'));
 
     const grid = el('div.grid.g2', { style: { marginTop: '14px' } });
 
@@ -802,6 +972,7 @@
       'Policing, liberties, information — and the balance of power between the groups whose consent you govern with.'));
     const live = el('div#intLive');
     main.appendChild(live);
+    main.appendChild(UI.initiativeBlock('interior', true));
 
     const grid = el('div.grid.g2', { style: { marginTop: '14px' } });
     const sec = el('div.card');
@@ -880,6 +1051,7 @@
       'The slow instruments. Nothing here pays back inside one term, and everything long-run depends on it.'));
     const live = el('div#eduLive');
     main.appendChild(live);
+    main.appendChild(UI.initiativeBlock('social', true));
 
     const grid = el('div.grid.g2', { style: { marginTop: '14px' } });
     const b = el('div.card');
@@ -931,6 +1103,7 @@
       'Where the power comes from, what it costs, and what it does to the weather your successors inherit.'));
     const live = el('div#enLive');
     main.appendChild(live);
+    main.appendChild(UI.initiativeBlock('infra', true));
     const grid = el('div.grid.g2', { style: { marginTop: '14px' } });
     const c1 = el('div.card');
     c1.innerHTML = '<div class="card-h"><h3>Energy Policy</h3></div>';
@@ -969,6 +1142,7 @@
       'Force structure, doctrine, and the conduct of any war you happen to be fighting.'));
     const live = el('div#warLive');
     main.appendChild(live);
+    main.appendChild(UI.initiativeBlock('war'));
 
     const grid = el('div.grid.g2', { style: { marginTop: '14px' } });
     const c1 = el('div.card');
@@ -1084,6 +1258,7 @@
       'What we know, how confident we are, and how much of it is wrong.'));
     const live = el('div#intelLive');
     main.appendChild(live);
+    main.appendChild(UI.initiativeBlock('intel', true));
     const grid = el('div.grid.g2', { style: { marginTop: '14px' } });
     const c1 = el('div.card');
     c1.innerHTML = '<div class="card-h"><h3>Service Funding</h3></div>';
@@ -1129,6 +1304,7 @@
       'Relations, treaties and the instruments of persuasion short of war.'));
     const live = el('div#forLive');
     main.appendChild(live);
+    main.appendChild(UI.initiativeBlock('foreign'));
     const table = el('div.card', { style: { marginTop: '14px' } });
     main.appendChild(table);
 
@@ -1268,6 +1444,13 @@
     html += '</div>';
 
     html += '<div class="grid g2">';
+    html += '<div class="card" style="margin-bottom:14px">' +
+      '<div class="card-h"><h3>National Memory</h3><span class="spacer"></span>' +
+      '<span class="hint">events the country has not finished absorbing</span></div>' +
+      UI.scarsHtml(st) +
+      ((st.national.totalDeaths || 0) ? '<div class="notice bad" style="margin-top:12px">Total dead from disasters, attacks and war during this administration: <b>' +
+        S.num(st.national.totalDeaths) + '</b>.</div>' : '') + '</div>';
+
     let dec = '';
     st.log.filter((l) => l.title).slice(0, 40).forEach((l) => {
       dec += '<div class="li" style="padding:8px 0;border-bottom:1px solid var(--line-soft)">' +
@@ -1599,8 +1782,9 @@
     const st = S.game.state;
     const body = '<div class="brief-text"><p><b>STRATEGIAN</b> — you are ' + esc(st.nation.leaderTitle + ' ' + st.nation.leader) +
       ' of ' + esc(st.nation.name) + ', governing as a ' + esc(S.gov(st).name.toLowerCase()) + '.</p>' +
-      '<p class="small dim">Keys: <span class="help-key">Space</span> pause · <span class="help-key">1–4</span> speed · <span class="help-key">I</span> open the next matter on your desk.</p></div>' +
-      '<label class="check" style="margin-top:10px"><input type="checkbox" id="apChk"' + (st.settings.autoPause ? ' checked' : '') + '> Pause automatically when an urgent matter arrives</label>';
+      '<p class="small dim">Keys: <span class="help-key">Space</span> pause · <span class="help-key">1</span> normal · <span class="help-key">2</span> fast · <span class="help-key">I</span> open the next matter on your desk.</p></div>' +
+      '<label class="check" style="margin-top:10px"><input type="checkbox" id="apChk"' + (st.settings.autoPause ? ' checked' : '') + '> Stop the clock when an urgent matter arrives</label>' +
+      '<label class="check"><input type="checkbox" id="arChk"' + (st.settings.autoResume ? ' checked' : '') + '> Start it again once the matter is dealt with</label>';
     const modal = UI.showModal({
       eyebrow: 'Menu', title: 'Game', body: body,
       footer: [
@@ -1611,6 +1795,7 @@
       ]
     });
     S.qs('#apChk', modal).onchange = (e) => { st.settings.autoPause = e.target.checked; };
+    S.qs('#arChk', modal).onchange = (e) => { st.settings.autoResume = e.target.checked; };
   };
 
   /* ============================================================ END GAME */
@@ -1782,7 +1967,11 @@
         '<p class="small dim">Matters will arrive on your desk with deadlines. Ignore them and the default course is taken for you, badly. ' +
         'Every ministry on the left is yours to set directly — budgets, tax, monetary policy, doctrine, liberties, trade. ' +
         'The wire on the right tells you how it is playing.</p>' +
-        '<p class="small dim">Use <span class="help-key">Space</span> to pause and <span class="help-key">1–4</span> to change speed. The game saves itself every year.</p>' +
+        '<p class="small dim">You are not only a respondent. Every department screen opens with an <b>Initiatives</b> panel — ' +
+        'mobilise, denounce a government, declare war, launch a hospital or rail programme, sweep the ministries for corruption. ' +
+        'Programmes run for years and cost money every one of them.</p>' +
+        '<p class="small dim">The clock stops itself for anything urgent and starts again once you have ruled on it. ' +
+        '<span class="help-key">Space</span> pauses, <span class="help-key">1</span> and <span class="help-key">2</span> set the speed. The game saves itself every year.</p>' +
         '</div>',
       footer: [{ label: 'Begin', cls: 'primary', act: () => { UI.closeModal(); S.game.setSpeed(1); } }]
     });

@@ -4,8 +4,11 @@
 
   const G = S.game = {};
 
-  G.SPEEDS = [0, 1100, 550, 240, 100]; // ms per in-game day; index 0 = paused
-  G.SPEED_NAMES = ['❚❚', '▶', '▶▶', '▶▶▶', '▶▶▶▶'];
+  // Two running speeds only. Anything faster and matters arrived and expired
+  // before they could be read, which made the clock the opponent.
+  G.SPEEDS = [0, 1100, 560]; // ms per in-game day; index 0 = paused
+  G.SPEED_NAMES = ['❚❚', '▶', '▶▶'];
+  G.SPEED_TITLES = ['Pause', 'Normal', 'Fast'];
   G.MAX_INBOX = 5;
   G.SAVE_KEY = 'strategian.save.v1';
 
@@ -109,13 +112,15 @@
         tension: 32, climate: 30, techLevel: 100, globalWars: 0
       },
       wars: [], foreignWars: [],
+      scars: [], scheduled: [], programmes: [], actionCooldown: {},
+      autoPaused: false, resumeSpeed: 1,
       inbox: [], headlines: [], log: [], news: {},
       flags: { aidRecipient: arch.tags.indexOf('Aid dependent') >= 0 || arch.tags.indexOf('IMF programme') >= 0 },
       counters: { decisionCooldown: {} },
       risk: { coup: 0, civilWar: 0, collapse: 0 },
       victoryProgress: {}, peaceStreak: 0,
       negotiation: null, ended: null,
-      settings: { autoPause: true, theme: cfg.theme || 'dark' }
+      settings: { autoPause: true, autoResume: true, theme: cfg.theme || 'dark' }
     };
 
     // Foreign powers.
@@ -308,11 +313,30 @@
   };
   G.togglePause = function () {
     const st = G.state; if (!st) return;
+    // A deliberate pause is yours to undo; it clears the automatic one.
+    st.autoPaused = false;
     G.setSpeed(st.speed > 0 ? 0 : (st.lastSpeed || 1));
   };
+  /* The clock stops itself for anything urgent and starts itself again once
+     you have dealt with it, so the only pauses you manage are your own. */
   G.pauseForDecision = function () {
     const st = G.state;
-    if (st && st.settings.autoPause && st.speed > 0) G.setSpeed(0);
+    if (!st || !st.settings.autoPause || st.speed === 0) return;
+    st.autoPaused = true;
+    st.resumeSpeed = st.speed;
+    G.setSpeed(0);
+  };
+
+  G.resumeAfterDecision = function () {
+    const st = G.state;
+    if (!st || st.ended || !st.autoPaused) return;
+    if (!st.settings.autoResume) return;
+    // Stay stopped while anything urgent is still outstanding, or while a
+    // negotiation is open — those are deliberately turn-based.
+    if (st.negotiation) return;
+    if (st.inbox.some((i) => i.urgency === 'urgent')) return;
+    st.autoPaused = false;
+    if (st.speed === 0) G.setSpeed(st.resumeSpeed || st.lastSpeed || 1);
   };
 
   /* --------------------------------------------------------------- tick */
@@ -334,6 +358,8 @@
     S.Soc.tick(st, dt);
     S.Mil.tick(st, dt);
     S.Dip.tick(st, dt);
+    S.Actions.programmeTick(st, dt);
+    S.Aftermath.tick(st, dt);
     G.updateIntel(st, dt);
 
     if (d.day === 1) G.onNewMonth(st);
@@ -616,6 +642,7 @@
         if (S.UI) S.UI.openNegotiation();
       }
     }
+    G.resumeAfterDecision(st);
     if (S.UI) S.UI.onTick(true);
   };
 
@@ -786,6 +813,14 @@
     })).filter((i) => i.def);
     st.negotiation = null;
     st.speed = 0;
+    // Saves written before a feature existed simply arrive without it.
+    st.scars = st.scars || [];
+    st.scheduled = st.scheduled || [];
+    st.programmes = st.programmes || [];
+    st.actionCooldown = st.actionCooldown || {};
+    st.autoPaused = false;
+    st.settings = st.settings || {};
+    if (st.settings.autoResume == null) st.settings.autoResume = true;
     G.state = st; S.game.state = st;
     return st;
   };

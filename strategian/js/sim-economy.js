@@ -91,11 +91,12 @@
     const service = st.economy.debt * (st.economy.avgDebtRate / 100);
     st.economy.debtService = service;
     st.economy.programSpending = prog;
-    // Wars are funded off-budget and show up as a separate line.
+    // Wars and capital programmes are funded off-budget and show as separate lines.
     let warCost = 0;
     st.wars.forEach((w) => { warCost += w.annualCost || 0; });
     st.economy.warSpending = warCost;
-    return prog + service + warCost;
+    const progCost = st.economy.programmeSpending || 0;
+    return prog + service + warCost + progCost;
   };
 
   /* --------------------------------------------- the financing constraint
@@ -158,12 +159,14 @@
       Math.max(0, (pol.tax.income - 36)) * 0.008;
     const world = (st.world.growth - 2.6) * 0.30;
     const warDrag = -S.sum(st.wars, (w) => (w.intensity / 100) * 0.9);
+    // Damage the country has not finished repairing still costs it output.
+    const scarDrag = S.Aftermath.growthDrag(st);
     const sanctions = -(st.economy.sanctionPressure / 100) * 1.8;
     const energyDrag = -Math.max(0, st.world.oil - 100) / 100 * (st.economy.energyImportDep / 100) * 2.2;
 
     let g = base + human + physical + innovation + institutions + openness +
       regulation + statism + labour + stability + demog + taxDrag + world +
-      warDrag + sanctions + energyDrag + (gov.growthBonus || 0);
+      warDrag + scarDrag + sanctions + energyDrag + (gov.growthBonus || 0);
 
     return S.clamp(g, -9, 12);
   };
@@ -477,6 +480,9 @@
       if (key === 'culture') target += (gov.cultureBonus || 0) * 0.5 + st.policy.interior.propaganda * 0.05;
       if (key === 'security') target += st.policy.interior.policing * 0.16;
       if (key === 'education') target += (st.policy.social.eduUniversity - 30) * 0.04;
+      // Whatever a catastrophe broke stays broken until the scar heals, no
+      // matter how much money is pointed at it.
+      target += S.Aftermath.qualityDrag(st, key);
       target = S.clamp(target, 2, 100);
       // Institutional stocks move slowly — years, not months.
       st.quality[key] = S.drift(st.quality[key], target, 0.42 * dt);

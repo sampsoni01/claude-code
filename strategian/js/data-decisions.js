@@ -49,6 +49,37 @@
   };
   D.FACTION_LABEL = FACTION_LABEL;
 
+  /* Some decisions generate their own scenario. That has to happen the first
+     time anything asks for it — the brief, an option, or the deadline
+     lapsing — because a player who never opens the file still lives in the
+     country it describes. */
+  D.ensureDisaster = function (st, ctx) {
+    if (ctx.kind) return ctx;
+    ctx.kind = st.rng.pick(['flood', 'earthquake', 'cyclone', 'wildfire complex', 'drought']);
+    ctx.region = st.rng.pick(['the eastern provinces', 'the coastal belt', 'the northern uplands', 'the delta region']);
+    // A disaster strikes a region, not a nation. The affected population grows
+    // with the country but nothing like linearly, so a vast state does not
+    // automatically suffer a vast death toll.
+    const affected = Math.min(st.pop.total, 8 + st.pop.total * 0.10) * 1e6;
+    // Vulnerability is infrastructure, health capacity and warning time.
+    const vuln = S.clamp(2.6 - st.quality.infra / 45 - st.quality.health / 70, 0.35, 2.6);
+    ctx.deaths = Math.round(affected * st.rng.range(0.00025, 0.0009) * vuln);
+    ctx.displaced = Math.round(ctx.deaths * st.rng.int(18, 45));
+    return ctx;
+  };
+  D.ensurePandemic = function (st, ctx) {
+    if (ctx.base) return ctx;
+    // Unmitigated deaths, before any policy response.
+    const prepared = st.flags.pandemicPrepared ? 0.55 : 1;
+    ctx.base = Math.round(st.pop.total * st.rng.range(900, 2600) * prepared *
+      S.clamp(1.7 - st.quality.health / 80, 0.5, 1.7));
+    return ctx;
+  };
+  D.disasterName = function (ctx) {
+    return 'The ' + S.titleCase(String(ctx.region || 'regional').replace('the ', '')) +
+      ' ' + S.titleCase(String(ctx.kind || 'disaster'));
+  };
+
   /* Convenience builders --------------------------------------------- */
   const gov = (st) => st.nation.governmentId;
   const authoritarian = (st) => ['junta', 'personalist', 'party', 'theocratic'].indexOf(gov(st)) >= 0;
@@ -964,50 +995,327 @@
     {
       id: 'natural_disaster', cat: 'crisis', title: 'Catastrophe in the Provinces',
       from: 'Emergency Committee', urgency: 'urgent', deadline: 3,
-      weight: (st) => 5 + st.world.climate * 0.12,
-      brief: (st) => `<p>A ${st.rng.pick(['flood', 'earthquake', 'cyclone', 'wildfire complex', 'drought'])} has struck ${st.rng.pick(['the eastern provinces', 'the coastal belt', 'the northern uplands', 'the delta region'])}. Early estimates put the displaced in the hundreds of thousands.</p>
-        <p>The response in the first seventy-two hours determines both how many people die and how this is remembered.</p>`,
+      // A disaster of this scale is a generational event, and the model
+      // refuses to let one arrive while the last is still being buried.
+      weight: (st) => (S.Aftermath.canCatastrophe(st) ? 6 + st.world.climate * 0.10 : 0),
+      brief: (st, ctx) => {
+        D.ensureDisaster(st, ctx);
+        return `<p>A ${ctx.kind} has struck ${ctx.region}. The confirmed dead stand at <b>${S.num(ctx.deaths)}</b> and the figure is rising. Roughly <b>${S.num(ctx.displaced)}</b> people have lost their homes.</p>
+          <p>This is the worst thing to happen to this country in a generation. What you do in the next seventy-two hours decides how many of the missing are found alive — and the rest of your term will be measured against it.</p>`;
+      },
+      advisors: () => [
+        { who: 'Emergency Committee', role: 'Cabinet Office', said: 'Every hour of delay in the first three days costs lives at a rate I can put a number on. I would rather not have to.' },
+        { who: 'Finance Minister', role: 'Treasury', said: 'Whatever we spend now we will spend again on reconstruction, for years. Budget for both.' }
+      ],
       options: [
-        { label: 'Full national mobilisation', detail: 'Army, treasury, everything. Immediately.',
-          effects: { 'society.approval': +9, 'economy.shock': -0.5, 'military.readiness': -6, 'quality.infra': -2 },
-          fn: (st) => { st.economy.reserves -= st.economy.gdp * 0.012; },
-          factions: { military: +4, provinces: +14, labour: +6 }, headline: 'Army Deployed as Nation Mobilises for Disaster Relief' },
-        { label: 'Standard emergency response', detail: 'The plan, as written, at the funded level.',
-          effects: { 'society.approval': +1, 'economy.shock': -0.3, 'quality.infra': -2 },
-          factions: { provinces: +3 } },
-        { label: 'Appeal for international assistance', detail: 'Accept help. Accept how it looks.',
-          effects: { 'society.approval': -2, 'national.prestige': -4, 'economy.shock': -0.1 },
-          fn: (st) => { st.economy.reserves += st.economy.gdp * 0.004; st.diplomacy.nations.forEach((n) => { if (n.relation > 20) n.relation += 4; }); },
-          factions: { nationalists: -8, provinces: +6 }, headline: 'Government Appeals for International Disaster Aid' },
-        { label: 'Downplay the scale', detail: 'Manage the story rather than the disaster.',
-          effects: { 'society.approval': -6, 'society.latent': +8, 'policy.interior.pressFreedom': -4, 'quality.infra': -3 },
+        {
+          label: 'Full national mobilisation', detail: 'Army, treasury, everything, immediately. Nothing held back.',
+          effects: { 'society.approval': +9, 'military.readiness': -6 },
+          fn: (st, ctx) => {
+            D.ensureDisaster(st, ctx);
+            st.economy.reserves -= st.economy.gdp * 0.020;
+            ctx.deaths = Math.round(ctx.deaths * 0.72);
+            S.Aftermath.markCatastrophe(st);
+            S.Aftermath.addScar(st, {
+              kind: 'disaster_' + ctx.kind, name: D.disasterName(ctx),
+              desc: S.num(ctx.deaths) + ' dead, ' + S.num(ctx.displaced) + ' displaced. Reconstruction under way.',
+              severity: 62, years: 5, deaths: ctx.deaths,
+              growth: -0.7, approval: -1, unrest: +2,
+              qualityDrag: { infra: -14, health: -6 }
+            });
+            S.Aftermath.schedule(st, 'disaster_reconstruction', ctx, 70);
+            S.Aftermath.schedule(st, 'disaster_inquiry', ctx, 420);
+          },
+          factions: { military: +4, provinces: +14, labour: +6 },
+          headline: 'Army Deployed as Nation Mobilises for Disaster Relief'
+        },
+        {
+          label: 'Standard emergency response', detail: 'The plan, as written, at the funded level.',
+          effects: { 'society.approval': +1 },
+          fn: (st, ctx) => {
+            D.ensureDisaster(st, ctx);
+            st.economy.reserves -= st.economy.gdp * 0.008;
+            S.Aftermath.markCatastrophe(st);
+            S.Aftermath.addScar(st, {
+              kind: 'disaster_' + ctx.kind, name: D.disasterName(ctx),
+              desc: S.num(ctx.deaths) + ' dead, ' + S.num(ctx.displaced) + ' displaced.',
+              severity: 78, years: 6, deaths: ctx.deaths,
+              growth: -1.0, approval: -2, unrest: +4,
+              qualityDrag: { infra: -20, health: -9 }
+            });
+            S.Aftermath.schedule(st, 'disaster_reconstruction', ctx, 70);
+            S.Aftermath.schedule(st, 'disaster_inquiry', ctx, 420);
+          },
+          factions: { provinces: +3 }
+        },
+        {
+          label: 'Appeal for international assistance', detail: 'Accept help, and accept how accepting it looks.',
+          effects: { 'national.prestige': -5 },
+          fn: (st, ctx) => {
+            D.ensureDisaster(st, ctx);
+            st.economy.reserves += st.economy.gdp * 0.010;
+            ctx.deaths = Math.round(ctx.deaths * 0.80);
+            st.diplomacy.nations.forEach((n) => { if (n.relation > 10) { n.relation += 6; n.affinity += 3; } });
+            S.Aftermath.markCatastrophe(st);
+            S.Aftermath.addScar(st, {
+              kind: 'disaster_' + ctx.kind, name: D.disasterName(ctx),
+              desc: S.num(ctx.deaths) + ' dead. Recovery is being run partly by foreign agencies.',
+              severity: 66, years: 5, deaths: ctx.deaths,
+              growth: -0.7, approval: -1, unrest: +3,
+              qualityDrag: { infra: -15, health: -5 }
+            });
+            S.Aftermath.schedule(st, 'disaster_reconstruction', ctx, 70);
+            S.Aftermath.schedule(st, 'disaster_inquiry', ctx, 420);
+          },
+          factions: { nationalists: -8, provinces: +6 },
+          headline: 'Government Appeals for International Disaster Aid'
+        },
+        {
+          label: 'Downplay the scale', detail: 'Manage the story rather than the disaster.',
+          effects: { 'society.approval': -6, 'society.latent': +10, 'policy.interior.pressFreedom': -4 },
+          fn: (st, ctx) => {
+            D.ensureDisaster(st, ctx);
+            ctx.deaths = Math.round(ctx.deaths * 1.45);
+            ctx.coverUp = true;
+            S.Aftermath.markCatastrophe(st);
+            S.Aftermath.addScar(st, {
+              kind: 'disaster_' + ctx.kind, name: D.disasterName(ctx),
+              desc: 'The official toll was never believed. ' + S.num(ctx.deaths) + ' are thought to have died.',
+              severity: 92, years: 8, deaths: ctx.deaths,
+              growth: -1.3, approval: -4, unrest: +7,
+              qualityDrag: { infra: -24, health: -12 }
+            });
+            S.Aftermath.schedule(st, 'disaster_inquiry', ctx, 300);
+          },
           factions: { provinces: -16, reformers: -8 },
-          risk: { p: 0.5, text: 'Death toll emerges', fn: (st) => { st.society.approval -= 10; st.society.unrest += 8; S.News.custom(st, 'True Death Toll Revealed; Government Accused of Cover-Up', 'bad'); } } }
+          risk: {
+            p: 0.6, text: 'The real toll emerges',
+            fn: (st) => {
+              st.society.approval -= 12; st.society.unrest += 10; st.society.latent += 10;
+              S.News.custom(st, 'True Death Toll Revealed; Government Accused of Cover-Up', 'bad');
+            }
+          }
+        }
+      ]
+    },
+    {
+      id: 'disaster_reconstruction', cat: 'crisis', dynamic: true, title: 'The Reconstruction Bill',
+      from: 'Ministry of Infrastructure', urgency: 'pressing', deadline: 20,
+      brief: (st, ctx) => `<p>The emergency phase is over. ${S.num(ctx.displaced || 0)} people are still in temporary accommodation and the ministry has costed what it would take to rebuild properly rather than adequately.</p>
+        <p>The damage is still dragging on output and will keep doing so until it is repaired. This is the decision that determines for how long.</p>`,
+      advisors: () => [
+        { who: 'Infrastructure Minister', role: 'Cabinet', said: 'Rebuild to the old standard and we do this again in fifteen years. Rebuild properly and we do not.' },
+        { who: 'Finance Minister', role: 'Treasury', said: 'The proper version is a full point of output a year for five years. I want that said in the room.' }
+      ],
+      options: [
+        {
+          label: 'Rebuild better, and to a higher standard', detail: 'A five-year reconstruction programme with resilience built in.',
+          effects: { 'society.approval': +4 },
+          fn: (st) => {
+            S.Actions.startProgramme(st, {
+              key: 'nationalinfra', name: 'Reconstruction Programme', dept: 'infra', years: 5, costPct: 0.95,
+              desc: 'Rebuilding the affected regions to a higher standard.',
+              perYear: { 'quality.infra': 1.6 }, headline: 'Five-Year Reconstruction Programme Approved'
+            });
+            const scar = (st.scars || [])[0];
+            if (scar) { scar.years = Math.max(2, scar.years - 2); scar.severity *= 0.85; }
+          },
+          factions: { provinces: +12, labour: +8, business: -3 }
+        },
+        {
+          label: 'Restore what was there, no more', detail: 'Cheaper, faster, and identically vulnerable.',
+          effects: { 'society.approval': +1 },
+          fn: (st) => { st.economy.reserves -= st.economy.gdp * 0.012; st.quality.infra += 3; st.flags.rebuiltCheap = true; },
+          factions: { business: +4, provinces: +3 }
+        },
+        {
+          label: 'Cash compensation and let people relocate', detail: 'Pay them and accept that the region will empty out.',
+          effects: { 'society.approval': -2 },
+          fn: (st, ctx) => {
+            st.economy.reserves -= st.economy.gdp * 0.008;
+            st.society.inequality -= 1;
+            const scar = (st.scars || []).find((s) => s.deaths);
+            if (scar) { scar.desc += ' The region has lost a third of its population permanently.'; scar.years += 2; }
+          },
+          factions: { provinces: -14, business: +6 }
+        },
+        {
+          label: 'The regions must fund their own recovery', detail: 'Devolve the bill along with the responsibility.',
+          effects: { 'society.approval': -6, 'society.unrest': +6 },
+          fn: (st) => {
+            const scar = (st.scars || []).find((s) => s.deaths);
+            if (scar) { scar.years += 4; scar.severity = Math.min(120, scar.severity + 12); }
+          },
+          factions: { provinces: -22, business: +8 },
+          headline: 'Provinces Told to Fund Their Own Reconstruction'
+        }
+      ]
+    },
+    {
+      id: 'disaster_inquiry', cat: 'civic', dynamic: true, title: 'The Inquiry Reports',
+      from: 'Office of the Attorney General', urgency: 'routine', deadline: 25,
+      brief: (st, ctx) => `<p>The inquiry into the disaster has reported. It finds that warnings existed, that they were not acted on, and that the failures were institutional rather than individual — which is the finding that lets everyone off and satisfies nobody.</p>
+        <p>${ctx.coverUp ? 'It also finds that the official death toll was knowingly understated.' : 'The bereaved families have asked to be in the room when you respond.'}</p>`,
+      advisors: () => [
+        { who: 'Attorney General', role: 'Justice', said: 'Accept the findings in full or reject them in full. Half-accepting is the only option with no defenders.' },
+        { who: 'Political Adviser', role: 'Office', said: 'This story has one more news cycle in it. How long it runs is entirely up to you.' }
+      ],
+      options: [
+        {
+          label: 'Accept every finding and apologise', detail: 'A formal apology, compensation, and the reforms in full.',
+          effects: { 'society.approval': +5, 'quality.admin': +4, 'national.softPower': +4 },
+          fn: (st) => {
+            st.economy.reserves -= st.economy.gdp * 0.006;
+            const scar = (st.scars || []).find((s) => s.deaths);
+            if (scar) { scar.severity *= 0.82; scar.unrest = Math.max(0, scar.unrest - 3); scar.desc += ' The state has accepted responsibility.'; }
+          },
+          factions: { reformers: +12, provinces: +10, intelligentsia: +8 },
+          headline: 'Leader Apologises in Full for Disaster Failures'
+        },
+        {
+          label: 'Accept the findings, resist the compensation', detail: 'Own the failure, not the bill.',
+          effects: { 'society.approval': -1, 'quality.admin': +2 },
+          factions: { reformers: +3, provinces: -4, business: +3 }
+        },
+        {
+          label: 'Reject the report', detail: 'Dispute the methodology and move on.',
+          effects: { 'society.approval': -7, 'society.latent': +10, 'quality.admin': -2 },
+          fn: (st) => {
+            const scar = (st.scars || []).find((s) => s.deaths);
+            if (scar) { scar.severity = Math.min(120, scar.severity + 10); scar.years += 2; scar.unrest += 3; }
+          },
+          factions: { reformers: -14, provinces: -12, intelligentsia: -10 },
+          headline: 'Government Rejects Inquiry Findings; Families Walk Out'
+        },
+        {
+          label: 'Prosecute the officials named', detail: 'Someone will answer for this, whether or not they are the right someone.',
+          effects: { 'society.approval': +6, 'quality.admin': -3, 'society.corruption': -2 },
+          fn: (st) => {
+            const scar = (st.scars || []).find((s) => s.deaths);
+            if (scar) scar.severity *= 0.9;
+          },
+          factions: { reformers: +8, provinces: +6, business: -5 },
+          risk: { p: 0.3, text: 'The prosecutions collapse in court', fn: (st) => { st.society.approval -= 5; st.quality.admin -= 2; } },
+          headline: 'Senior Officials Charged Over Disaster Response'
+        }
       ]
     },
     {
       id: 'pandemic', cat: 'crisis', title: 'A Novel Pathogen',
       from: 'Chief Medical Officer', urgency: 'urgent', deadline: 6,
-      weight: (st) => st.flags.pandemicDone ? 0 : 3,
-      brief: () => `<p>A respiratory pathogen with a high secondary attack rate has been confirmed in three cities. Modelling suggests a wide range of outcomes, all of them bad, differing mainly in how bad.</p>
-        <p>The health system has limited surge capacity. The economy has none.</p>`,
+      weight: (st) => (st.flags.pandemicDone || !S.Aftermath.canCatastrophe(st)) ? 0 : 3,
+      brief: (st, ctx) => {
+        D.ensurePandemic(st, ctx);
+        return `<p>A respiratory pathogen with a high secondary attack rate has been confirmed in three cities. The modelling puts unmitigated deaths at around <b>${S.num(ctx.base)}</b>, with a wide band around it.</p>
+          <p>${st.flags.pandemicPrepared ? 'The stockpile and surge plans you funded are being activated now, and the modelling already reflects them.' : 'There is no stockpile and no surge plan. The health system has limited capacity and the economy has none.'}</p>`;
+      },
       advisors: () => [
-        { who: 'Chief Medical Officer', role: 'Health', said: 'Move early and you will be accused of overreacting. That accusation is the goal.' },
+        { who: 'Chief Medical Officer', role: 'Health', said: 'Move early and you will be accused of overreacting. If it works, that accusation is all the evidence anyone will have.' },
         { who: 'Finance Minister', role: 'Treasury', said: 'A full closure costs a tenth of annual output. I want that number said out loud before you decide.' }
       ],
       options: [
-        { label: 'Immediate national closure', detail: 'Everything stops. Support payments for everyone.',
-          effects: { 'economy.shock': -3.2, 'quality.health': +3, 'society.approval': +3, 'budget.alloc.welfare': +1.2, 'society.unrest': +6 },
-          fn: (st) => { st.flags.pandemicDone = true; st.pop.total *= 0.9993; },
-          factions: { labour: +6, business: -14, reformers: -3 }, headline: 'National Closure Ordered as Pathogen Spreads' },
-        { label: 'Targeted measures and surge capacity', detail: 'Protect the vulnerable, keep the economy breathing.',
-          effects: { 'economy.shock': -1.2, 'budget.alloc.health': +0.6, 'society.approval': +1 },
-          fn: (st) => { st.flags.pandemicDone = true; st.pop.total *= 0.9985; },
-          factions: { business: -4, labour: -2 } },
-        { label: 'Keep the country open', detail: 'Accept the mortality. Protect output.',
+        {
+          label: 'Immediate national closure', detail: 'Everything stops. Support payments for everyone.',
+          effects: { 'economy.shock': -3.2, 'quality.health': +2, 'society.approval': +3, 'budget.alloc.welfare': +1.2, 'society.unrest': +6 },
+          fn: (st, ctx) => {
+            D.ensurePandemic(st, ctx);
+            st.flags.pandemicDone = true;
+            const deaths = Math.round(ctx.base * 0.28);
+            S.Aftermath.markCatastrophe(st);
+            S.Aftermath.addScar(st, {
+              kind: 'pandemic', name: 'The Pandemic',
+              desc: S.num(deaths) + ' dead. The closure held the toll down and emptied the treasury doing it.',
+              severity: 70, years: 6, deaths: deaths,
+              growth: -0.9, approval: -2, unrest: +3, qualityDrag: { health: -8, education: -10 }
+            });
+            S.Aftermath.schedule(st, 'pandemic_aftermath', { deaths: deaths, closure: true }, 500);
+          },
+          factions: { labour: +6, business: -14, reformers: -3 },
+          headline: 'National Closure Ordered as Pathogen Spreads'
+        },
+        {
+          label: 'Targeted measures and surge capacity', detail: 'Protect the vulnerable, keep the economy breathing.',
+          effects: { 'economy.shock': -1.2, 'budget.alloc.health': +0.6 },
+          fn: (st, ctx) => {
+            D.ensurePandemic(st, ctx);
+            st.flags.pandemicDone = true;
+            const deaths = Math.round(ctx.base * 0.58);
+            S.Aftermath.markCatastrophe(st);
+            S.Aftermath.addScar(st, {
+              kind: 'pandemic', name: 'The Pandemic',
+              desc: S.num(deaths) + ' dead. The measures were proportionate and are still argued about.',
+              severity: 62, years: 5, deaths: deaths,
+              growth: -0.6, approval: -1, unrest: +3, qualityDrag: { health: -10, education: -5 }
+            });
+            S.Aftermath.schedule(st, 'pandemic_aftermath', { deaths: deaths }, 500);
+          },
+          factions: { business: -4, labour: -2 }
+        },
+        {
+          label: 'Keep the country open', detail: 'Accept the mortality. Protect output.',
           effects: { 'economy.shock': -0.5, 'quality.health': -5, 'society.approval': -7, 'society.unrest': +8 },
-          fn: (st) => { st.flags.pandemicDone = true; st.pop.total *= 0.9965; },
-          factions: { business: +11, labour: -12, clergy: -5 }, headline: 'Government Rejects Closure; Hospitals Brace' }
+          fn: (st, ctx) => {
+            D.ensurePandemic(st, ctx);
+            st.flags.pandemicDone = true;
+            const deaths = ctx.base;
+            S.Aftermath.markCatastrophe(st);
+            S.Aftermath.addScar(st, {
+              kind: 'pandemic', name: 'The Pandemic',
+              desc: S.num(deaths) + ' dead. The country was never closed and has never stopped arguing about it.',
+              severity: 95, years: 9, deaths: deaths,
+              growth: -0.5, approval: -4, unrest: +6, qualityDrag: { health: -18 }
+            });
+            S.Aftermath.schedule(st, 'pandemic_aftermath', { deaths: deaths, open: true }, 500);
+          },
+          factions: { business: +11, labour: -12, clergy: -5 },
+          headline: 'Government Rejects Closure; Hospitals Brace'
+        }
+      ]
+    },
+    {
+      id: 'pandemic_aftermath', cat: 'social', dynamic: true, title: 'After the Pandemic',
+      from: 'Chief Medical Officer', urgency: 'routine', deadline: 25,
+      brief: (st, ctx) => `<p>The emergency is over. <b>${S.num(ctx.deaths || 0)}</b> people are dead, the health service is exhausted, and a cohort of children has lost the better part of two years of schooling.</p>
+        <p>None of that repairs itself. The question is what the state now does about it, and there is a real temptation to do nothing and let the subject fade.</p>`,
+      advisors: () => [
+        { who: 'Chief Medical Officer', role: 'Health', said: 'My staff are leaving. If you do one thing, make it retention.' },
+        { who: 'Education Minister', role: 'Cabinet', said: 'The learning loss is measurable and it will follow that cohort into the labour market for forty years.' }
+      ],
+      options: [
+        {
+          label: 'Fund recovery across health and schools', detail: 'Catch-up teaching, staff retention, mental health provision.',
+          effects: { 'budget.alloc.health': +0.5, 'budget.alloc.education': +0.5, 'society.approval': +4 },
+          fn: (st) => {
+            const scar = (st.scars || []).find((s) => s.kind === 'pandemic');
+            if (scar) { scar.years = Math.max(2, scar.years - 3); scar.qualityDrag = { health: -4 }; }
+          },
+          factions: { labour: +8, intelligentsia: +8 },
+          headline: 'Major Recovery Package for Health and Schools'
+        },
+        {
+          label: 'Build the preparedness we did not have', detail: 'A permanent agency, a stockpile and a plan, so the next one is different.',
+          effects: { 'budget.alloc.health': +0.3, 'society.approval': +1 },
+          fn: (st) => { st.flags.pandemicPrepared = true; st.flags.pandemicDone = false; st.quality.health += 3; },
+          factions: { intelligentsia: +7, business: -2 }
+        },
+        {
+          label: 'Hold a public inquiry', detail: 'Establish what happened while the witnesses still remember.',
+          effects: { 'quality.admin': +4, 'society.approval': -2 },
+          fn: (st) => {
+            if (st.rng.chance(0.5)) { st.society.scandal -= 7; S.News.custom(st, 'Inquiry Finds Government Delayed Fatally', 'bad'); }
+            else { st.society.approval += 4; S.News.custom(st, 'Inquiry Broadly Clears the Government\'s Handling', 'good'); }
+          },
+          factions: { reformers: +9, intelligentsia: +7 }
+        },
+        {
+          label: 'Declare it over and move on', detail: 'The country is tired of the subject.',
+          effects: { 'society.approval': +2, 'society.latent': +6 },
+          fn: (st) => {
+            const scar = (st.scars || []).find((s) => s.kind === 'pandemic');
+            if (scar) { scar.years += 3; scar.approval -= 1; }
+          },
+          factions: { intelligentsia: -8, labour: -6 }
+        }
       ]
     },
     {
@@ -1037,6 +1345,55 @@
     },
 
     /* --------------------------------------------------- DYNAMIC / EVENT */
+    {
+      id: 'war_memorial', cat: 'social', dynamic: true, title: 'What to Do About the Dead',
+      from: 'Office of the Leader', urgency: 'routine', deadline: 30,
+      brief: (st, ctx) => `<p>${S.num(ctx.dead || 0)} of our people died in ${ctx.war}. The veterans' associations, the bereaved families and the General Staff all want different things, and all three have written to you.</p>
+        <p>How a country buries a war determines how long it takes to stop fighting it.</p>`,
+      advisors: () => [
+        { who: 'Chief of Staff', role: 'Defence', said: 'My people need to know the country thinks it was worth something. Whether it was is a separate question.' },
+        { who: 'Political Adviser', role: 'Office', said: 'A memorial is cheap and lasts a century. A settlement for the wounded is expensive and lasts a generation. You can do both.' }
+      ],
+      options: [
+        {
+          label: 'A national memorial and a full veterans\' settlement', detail: 'Both. Pay for it.',
+          effects: { 'society.cohesion': +7, 'society.approval': +5, 'military.morale': +9 },
+          fn: (st) => {
+            st.economy.reserves -= st.economy.gdp * 0.010;
+            st.policy.mil.veteranCare = S.clamp(st.policy.mil.veteranCare + 18, 0, 100);
+            const scar = (st.scars || []).find((s) => s.tag === 'war');
+            if (scar) { scar.severity *= 0.85; scar.unrest = Math.max(0, scar.unrest - 3); }
+          },
+          factions: { military: +14, nationalists: +10, labour: +5 },
+          headline: 'National Memorial Unveiled; Veterans\' Settlement Passes'
+        },
+        {
+          label: 'A memorial only', detail: 'The stone is affordable. The pensions are not.',
+          effects: { 'society.cohesion': +4, 'military.morale': +2 },
+          factions: { nationalists: +7, military: -3 }
+        },
+        {
+          label: 'A public reckoning instead', detail: 'An honest accounting of why it happened and who decided it.',
+          effects: { 'quality.admin': +4, 'national.softPower': +5, 'society.approval': -3 },
+          fn: (st) => {
+            const scar = (st.scars || []).find((s) => s.tag === 'war');
+            if (scar) { scar.years = Math.max(2, scar.years - 2); scar.unrest = Math.max(0, scar.unrest - 4); }
+            st.national.aggressionScore = Math.max(0, st.national.aggressionScore - 15);
+          },
+          factions: { intelligentsia: +12, reformers: +10, military: -12, nationalists: -12 },
+          headline: 'Government Orders Full Public Reckoning on the War'
+        },
+        {
+          label: 'Move on quietly', detail: 'No ceremony, no inquiry, no line in the budget.',
+          effects: { 'society.approval': -4, 'military.morale': -8, 'society.latent': +6 },
+          fn: (st) => {
+            const scar = (st.scars || []).find((s) => s.tag === 'war');
+            if (scar) { scar.years += 3; scar.unrest += 3; }
+          },
+          factions: { military: -16, nationalists: -14 }
+        }
+      ]
+    },
     {
       id: 'election_approaching', cat: 'civic', dynamic: true, title: 'The Election Is Next Year',
       from: 'Chief of Staff, Office of the Leader', urgency: 'pressing', deadline: 40,
