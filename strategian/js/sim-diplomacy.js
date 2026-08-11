@@ -204,7 +204,11 @@
     n.treaties.push(kind);
     st.diplomacy.treaties.push({ nation: nationId, kind: kind, since: S.dateLabel(st.date) });
     n.relation += 12;
-    if (kind === 'defense') n.allyOfUs = true;
+    if (kind === 'defense') {
+      n.allyOfUs = true;
+      // An alliance is a promise that gets called in sooner or later.
+      S.Aftermath.schedule(st, 'ally_calls_it_in', { nation: nationId }, st.rng.int(1100, 3200));
+    }
     if (kind === 'arms' || kind === 'climate') st.world.tension -= 3;
     if (kind === 'intel') st.intel.strength += 3;
     st.national.diplomaticWins++;

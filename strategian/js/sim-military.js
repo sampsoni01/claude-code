@@ -402,6 +402,7 @@
         tag: 'war'
       });
       S.Aftermath.schedule(st, 'war_memorial', { war: w.name, dead: dead, outcome: outcome }, 150);
+      S.Aftermath.schedule(st, 'demobilisation', {}, 260);
     }
 
     if (outcome === 'victory') {

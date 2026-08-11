@@ -112,7 +112,7 @@
         tension: 32, climate: 30, techLevel: 100, globalWars: 0
       },
       wars: [], foreignWars: [],
-      scars: [], scheduled: [], programmes: [], actionCooldown: {},
+      scars: [], scheduled: [], programmes: [], actionCooldown: {}, rulings: {},
       autoPaused: false, resumeSpeed: 1,
       inbox: [], headlines: [], log: [], news: {},
       flags: { aidRecipient: arch.tags.indexOf('Aid dependent') >= 0 || arch.tags.indexOf('IMF programme') >= 0 },
@@ -448,13 +448,13 @@
   };
 
   G.decisionInterval = function (st) {
-    // Crises come faster; calm periods breathe. The base is deliberately
-    // long: at the old cadence the library was exhausted inside a year.
-    let base = 27;
-    if (st.wars.length) base -= 5;
-    if (st.society.unrest > 55) base -= 3;
-    if (st.society.stability > 75 && !st.wars.length) base += 6;
-    return S.clamp(base + st.rng.int(-7, 11), 9, 48);
+    // Crises come faster; calm periods breathe. A busy desk is the point —
+    // what keeps it from exhausting the library is the size of the library.
+    let base = 15;
+    if (st.wars.length) base -= 3;
+    if (st.society.unrest > 55) base -= 2;
+    if (st.society.stability > 75 && !st.wars.length) base += 5;
+    return S.clamp(base + st.rng.int(-4, 7), 6, 30);
   };
 
   G.updateIntel = function (st, dt) {
@@ -525,7 +525,7 @@
   /* Every world deals from its own deck. Without this, a small pool plus a
      fixed cooldown produced a near-complete rotation of the whole library
      every couple of years, identical in content across playthroughs. */
-  G.ROSTER_SHARE = 0.66;
+  G.ROSTER_SHARE = 0.72;
 
   G.buildRoster = function (st) {
     const pool = S.Decisions.LIB.filter((d) => !d.dynamic);
@@ -562,7 +562,7 @@
       if (st.roster.indexOf(d.id) < 0) return false;
       const cd = st.counters.decisionCooldown[d.id];
       // Recurrence is spaced unevenly, so nothing comes back on a metronome.
-      if (cd && abs - cd < (gaps[d.id] || 1200)) return false;
+      if (cd && abs - cd < (gaps[d.id] || 1100)) return false;
       if (st.inbox.some((i) => i.def.id === d.id)) return false;
       const w = typeof d.weight === 'function' ? d.weight(st) : (d.weight || 5);
       return w > 0;
@@ -575,7 +575,7 @@
       return Math.max(0.5, w) * st.rng.range(0.45, 1.75);
     });
     if (pick) {
-      gaps[pick.id] = st.rng.int(900, 2400);
+      gaps[pick.id] = st.rng.int(700, 1900);
       G.pushDecision(pick.id, {});
     }
   };
@@ -682,6 +682,23 @@
     st.national.prestige = S.clamp(st.national.prestige, 0, 100);
     st.intel.strength = S.clamp(st.intel.strength, 0, 100);
     st.military.readiness = S.clamp(st.military.readiness, 0, 100);
+
+    // The record of what you decided, so later matters can refer back to it.
+    st.rulings = st.rulings || {};
+    st.rulings[item.def.id] = {
+      i: item.def.options.indexOf(option), label: option.label,
+      day: S.absDay(st.date), year: st.date.year
+    };
+
+    // Consequences that were always going to arrive later.
+    if (option.then) {
+      const chain = Array.isArray(option.then) ? option.then : [option.then];
+      chain.forEach((t) => {
+        if (t.chance != null && !st.rng.chance(t.chance)) return;
+        const ctx = Object.assign({}, item.ctx, t.ctx || {});
+        S.Aftermath.schedule(st, t.id, ctx, t.days || 400);
+      });
+    }
 
     if (option.headline) S.News.custom(st, option.headline, option.tone || '');
     if (!silent) {
@@ -878,6 +895,7 @@
     st.actionCooldown = st.actionCooldown || {};
     st.counters.decisionGap = st.counters.decisionGap || {};
     if (!st.roster) G.buildRoster(st);
+    st.rulings = st.rulings || {};
     st.autoPaused = false;
     st.settings = st.settings || {};
     if (st.settings.autoResume == null) st.settings.autoResume = true;

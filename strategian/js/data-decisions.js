@@ -79,6 +79,32 @@
     return ctx._f;
   };
 
+  /* ------------------------------------------------- the paper trail ----
+     Matters can look back at what you decided before. This is what lets a
+     nationalisation produce an arbitration ruling two years later, or a
+     press crackdown produce a foreign delegation asking about it.       */
+  D.ruled = function (st, id) { return !!(st.rulings && st.rulings[id]); };
+  D.chose = function (st, id, i) {
+    const r = st.rulings && st.rulings[id];
+    if (!r) return false;
+    return Array.isArray(i) ? i.indexOf(r.i) >= 0 : r.i === i;
+  };
+  D.ruling = function (st, id) { return (st.rulings && st.rulings[id]) || null; };
+  D.yearsSince = function (st, id) {
+    const r = D.ruling(st, id);
+    return r ? (S.absDay(st.date) - r.day) / 365 : null;
+  };
+  // "the nationalisation of four years ago" — phrasing for callbacks.
+  D.ago = function (st, id) {
+    const y = D.yearsSince(st, id);
+    if (y == null) return 'earlier';
+    if (y < 1.2) return 'last year';
+    if (y < 2.2) return 'two years ago';
+    if (y < 3.2) return 'three years ago';
+    if (y < 6) return Math.round(y) + ' years ago';
+    return 'a long time ago now';
+  };
+
   /* Some decisions generate their own scenario. That has to happen the first
      time anything asks for it — the brief, an option, or the deadline
      lapsing — because a player who never opens the file still lives in the
@@ -238,6 +264,7 @@
           label: 'Approach the multilateral lenders', detail: 'A programme, with conditions written by strangers.',
           effects: { 'economy.reserves': 0, 'society.approval': -7, 'national.prestige': -6, 'economy.reserveStatus': +14 },
           fn: (st) => { st.economy.reserves += st.economy.gdp * 0.04; st.flags.imfProgramme = true; st.policy.econ.subsidies = Math.max(0, st.policy.econ.subsidies - 15); },
+          then: { id: 'imf_review', days: 540 },
           factions: { nationalists: -12, business: +6, labour: -8 },
           headline: 'Government Enters Multilateral Lending Programme'
         }
@@ -320,6 +347,7 @@
         { label: 'Nationalise the complex', detail: 'Seize it. Compensate at book value, eventually.',
           effects: { 'policy.econ.stateOwnership': +12, 'economy.businessConfidence': -18, 'national.prestige': -4, 'society.approval': +7, 'economy.reserves': +0 },
           fn: (st) => { st.economy.reserves += st.economy.gdp * 0.012; st.diplomacy.nations.forEach((n) => { n.relation -= 5; }); },
+          then: [{ id: 'arbitration_ruling', days: 620 }, { id: 'soe_performance', days: 1500 }],
           factions: { nationalists: +14, labour: +9, business: -18 },
           risk: { p: 0.4, text: 'Arbitration award against us', fn: (st) => { st.economy.debt += st.economy.gdp * 0.02; } },
           headline: 'Government Nationalises Foreign-Owned Complex' },
@@ -758,10 +786,12 @@
           effects: { 'society.corruption': -12, 'quality.admin': +5, 'society.approval': +6, 'economy.businessConfidence': -5 },
           factions: { reformers: +16, intelligentsia: +9, business: -10, provinces: -8, military: -5 },
           risk: { p: 0.3, text: 'Allies indicted', fn: (st) => { st.society.scandal -= 6; st.factions.forEach((f) => { if (f.id === 'provinces' || f.id === 'business') f.loyalty -= 6; }); } },
+          then: { id: 'purge_backlash', days: 1100, chance: 0.55 },
           headline: 'Independent Anti-Corruption Commission Established' },
         { label: 'Targeted campaign against rivals', detail: 'Selective enforcement. Very effective, entirely cynical.',
           effects: { 'society.corruption': -3, 'society.approval': +4, 'society.latent': +6, 'policy.interior.surveillance': +8 },
           factions: { reformers: -8, business: -6, nationalists: +5 },
+          then: { id: 'purge_backlash', days: 900, chance: 0.8 },
           headline: 'High-Profile Arrests as Anti-Corruption Drive Begins' },
         { label: 'Administrative reform instead', detail: 'Digitise, simplify, pay officials properly. Boring and effective.',
           effects: { 'society.corruption': -7, 'quality.admin': +6, 'budget.alloc.admin': +0.3 },
@@ -1289,6 +1319,7 @@
             if (scar) { scar.severity = Math.min(120, scar.severity + 10); scar.years += 2; scar.unrest += 3; }
           },
           factions: { reformers: -14, provinces: -12, intelligentsia: -10 },
+          then: { id: 'inquiry_vindicated', days: 1300, chance: 0.7 },
           headline: 'Government Rejects Inquiry Findings; Families Walk Out'
         },
         {

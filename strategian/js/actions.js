@@ -195,6 +195,7 @@
           if (n.power > 55 && st.rng.chance(0.5)) n.sanctioningUs = true;
         });
         S.News.custom(st, 'Nuclear Test Confirmed; Capitals Condemn', 'bad');
+        S.Aftermath.schedule(st, 'sanctions_bite', {}, st.rng.int(400, 800));
         return 'The seismographs picked it up before our own announcement did. Ambassadors are being summoned everywhere.';
       }
     },
@@ -472,6 +473,7 @@
         Act.startProgramme(st, prog('rail', 'High-Speed Rail Spine', 'infra', 8, 1.20,
           'A national high-speed corridor.', { 'quality.infra': 0.8, 'national.prestige': 0.5 },
           'High-Speed Rail Spine Approved After Years of Argument'));
+        S.Aftermath.schedule(st, 'rail_overrun', {}, st.rng.int(900, 1600));
         return 'The route is fixed and the compulsory purchases have begun. So have the lawsuits.';
       }
     },
@@ -578,6 +580,7 @@
           if (f.id === 'military' || f.id === 'nationalists') f.loyalty -= 7;
         });
         S.News.custom(st, 'General Amnesty Declared; Prisoners Walk Free', 'good');
+        S.Aftermath.schedule(st, 'amnesty_consequence', {}, st.rng.int(1400, 2400));
         return 'The gates opened at dawn. Some of those released will lead the opposition; that was always the trade.';
       }
     },

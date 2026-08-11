@@ -38,6 +38,7 @@
         { label: 'Leave it to a successor', detail: 'It is a fifty-year problem and you have four years.',
           effects: { 'society.approval': +2 },
           fn: (st) => { st.flags.pensionDeferred = (st.flags.pensionDeferred || 0) + 1; },
+          then: { id: 'pension_reckoning', days: 2100 },
           factions: { reformers: -7, labour: +4 } }
       ]
     },
@@ -134,9 +135,11 @@
           effects: { 'society.inequality': -8, 'society.approval': +6, 'economy.businessConfidence': -14, 'economy.shock': -0.8, 'society.unrest': +5 },
           factions: { labour: +14, provinces: +8, business: -16, clergy: -6 },
           risk: { p: 0.35, text: 'Output collapses on the redistributed land', fn: (st) => { st.economy.shock -= 1.2; st.world.grain *= 1.06; } },
+          then: { id: 'harvest_result', days: 500 },
           headline: 'Land Expropriation Begins in the Provinces' },
         { label: 'Title the tenants where they farm', detail: 'No seizure — formalise what already exists.',
           effects: { 'society.inequality': -4, 'economy.shock': +0.5, 'economy.informal': -3, 'society.approval': +4 },
+          then: { id: 'harvest_result', days: 500 },
           factions: { labour: +8, provinces: +7, business: -3, reformers: +8 } },
         { label: 'Market-led reform with state credit', detail: 'Lend tenants the money to buy.',
           effects: { 'society.inequality': -2, 'economy.debt': 0, 'economy.shock': +0.3 },
@@ -439,6 +442,7 @@
           effects: { 'national.prestige': -3, 'society.approval': -5, 'world.tension': +5, 'national.concessions': +1 },
           fn: (st, ctx) => { const n = S.dip(st, ctx.nation); if (n) { n.relation += 25; n.allyOfUs = true; } st.economy.reserves += st.economy.gdp * 0.012; st.military.equipment += 4; },
           factions: { nationalists: -16, military: +6, business: +5 },
+          then: { id: 'base_incident', days: 1000, chance: 0.7 },
           headline: 'Foreign Military Base Agreed' },
         { label: 'Grant limited access rights only', detail: 'Port visits and overflight. No garrison.',
           effects: { 'world.tension': +2 },
@@ -672,6 +676,7 @@
         { label: 'Refuse to sign', detail: 'Our development is not negotiable.',
           effects: { 'national.softPower': -7, 'economy.businessConfidence': +4 },
           fn: (st) => { st.world.climate += 1; st.diplomacy.nations.forEach((n) => { if (n.ideology === 'liberal') n.relation -= 8; }); },
+          then: { id: 'carbon_border_tax', days: 800, chance: 0.75 },
           factions: { business: +9, nationalists: +8, intelligentsia: -10 } }
       ]
     },

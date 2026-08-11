@@ -88,12 +88,27 @@ it goes wrong and what happens if it does. Those figures are the ministry's
 error band narrows as your administrative capacity improves. Policy settings
 and budget lines are exact — you pull those levers yourself.
 
+There are **135 decisions**: 101 dealt from the rotating pool and 34 that only
+exist as consequences of something else.
+
 Issues are dealt from a **per-world roster**: at setup each world draws about
-two-thirds of the decision library, so two playthroughs are not the same deck
-in a different order. Roughly 40% of the roster turns over every six years, so
-the back half of a long game is not the front half again. Recurrence gaps are
-randomised between about two and a half and six and a half years, so nothing
-comes back on a metronome.
+72% of the rotating pool, so two playthroughs are not the same deck in a
+different order. An eighth of the roster turns over every six years, so the
+back half of a long game is not the front half again. Recurrence gaps are
+randomised between roughly two and seven years, so nothing comes back on a
+metronome.
+
+Two relationships govern how varied this can be, and both are worth knowing if
+you want to tune it:
+
+    library needed  =  arrivals per year × mean recurrence gap ÷ roster share
+    overlap between two games  ≈  share² ÷ (1 − (1 − share)²)
+
+At the current cadence (~24 arrivals a year) and a 3.3-year mean gap, a 101-card
+pool supports a roster share of about 0.72, which puts overlap between two
+playthroughs at roughly 55%. Driving overlap down to 40% means a share near
+0.55, which needs about 145 cards; 30% needs a share near 0.45 and about 200.
+The pool size is the only real lever — everything else is arithmetic.
 
 On top of that, each arrival draws its own framing and its own specifics — a
 named region, industry, firm, union or official — once, and the brief, the
@@ -114,6 +129,26 @@ made yourself is never undone for you.
 
 Random events fire without warning: harvests fail, banks collapse, ministers
 are found with property portfolios nobody declared, governments fall abroad.
+
+## Consequences
+
+Nothing arrives in a vacuum. Thirty-four decisions exist only as the result of
+something you already did, and say so in the brief.
+
+Expropriate a foreign-owned complex and an international tribunal rules against
+you two years later, then the ministry reports on how the nationalised plant is
+actually performing two years after that. Sign a defence pact and it gets
+invoked, at a time you do not choose. Defer the pension question twice and the
+fund runs out. Refuse the emissions treaty and a carbon border tax lands on your
+exports. Run a selective anti-corruption campaign and the appeal courts start
+quashing the convictions. Grant a foreign base and there is an incident at its
+gates. Test a warhead and the sanctions arrive. Declare an amnesty and one of
+the people you released is leading the opposition a few years on. Win a war and
+you still have to decide what to do with the army and the dead.
+
+Decisions can also look back at the record: the brief will refer to *the
+expropriation we carried out three years ago* because it knows you carried it
+out three years ago.
 
 ## Aftermath
 
