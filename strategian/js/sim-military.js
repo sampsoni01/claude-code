@@ -391,7 +391,7 @@
       const share = dead / 1e6 / Math.max(0.1, st.pop.total); // dead per head
       S.Aftermath.addScar(st, {
         kind: 'war_' + w.id, name: w.name,
-        desc: S.people(dead / 1e6) + ' of our people dead. ' +
+        desc: S.headcount(dead / 1e6) + ' of our people dead. ' +
           (outcome === 'victory' ? 'Won.' : outcome === 'defeat' ? 'Lost.' : 'Settled.'),
         severity: S.clamp(35 + share * 900 + (outcome === 'defeat' ? 25 : 0), 20, 110),
         years: S.clamp(4 + share * 60, 3, 12), deaths: dead,

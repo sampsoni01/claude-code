@@ -83,10 +83,23 @@ window.S = window.S || {};
       minimumFractionDigits: d || 0, maximumFractionDigits: d || 0
     });
   };
-  S.people = function (v) { // v in millions
-    if (v >= 1000) return (v / 1000).toFixed(2) + 'bn';
-    if (v >= 1) return v.toFixed(1) + 'm';
-    return (v * 1000).toFixed(0) + 'k';
+  // Compact form for tables and cards. `v` is in millions throughout.
+  S.people = function (v) {
+    const n = Math.abs(v);
+    if (n >= 1000) return (v / 1000).toFixed(2) + 'bn';
+    if (n >= 1) return v.toFixed(n >= 100 ? 0 : n >= 10 ? 1 : 2) + 'm';
+    if (n >= 0.001) return S.num(Math.round(v * 1e6 / 1000)) + 'k';
+    return S.num(Math.round(v * 1e6));
+  };
+
+  // Long form for prose — briefings and briefs read as sentences, so they get
+  // "2.94 million" rather than "2938 thousand".
+  S.headcount = function (v) { // v in millions
+    const n = Math.abs(v);
+    if (n >= 1000) return (v / 1000).toFixed(2) + ' billion';
+    if (n >= 1) return v.toFixed(n >= 100 ? 0 : n >= 10 ? 1 : 2) + ' million';
+    if (n >= 0.0005) return S.num(Math.round(v * 1e6 / 1000) * 1000);
+    return S.num(Math.round(v * 1e6));
   };
   S.ordinal = function (n) {
     const s = ['th', 'st', 'nd', 'rd'], v = n % 100;

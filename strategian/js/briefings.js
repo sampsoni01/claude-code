@@ -92,7 +92,7 @@
     sections.push({
       h: 'Force Status',
       body: [
-        'Establishment <b>' + S.round(m.manpower * 1000, 0) + ' thousand</b> under arms. Readiness <b>' +
+        'Establishment <b>' + S.headcount(m.manpower) + '</b> under arms. Readiness <b>' +
         S.round(m.readiness, 0) + '</b>, equipment <b>' + S.round(m.equipment, 0) + '</b>, technology <b>' +
         S.round(m.tech, 0) + '</b>, logistics <b>' + S.round(m.logistics, 0) + '</b>.',
         'Combat effectiveness index <b>' + S.round(m.quality, 0) + '/100</b>. Global power ranking: <b>' +
@@ -114,8 +114,8 @@
           'Current posture: <b>' + post.name + '</b>. Operational tempo ' + S.round(w.intensity, 0) + '/100.',
           'Position: <b>' + (w.score > 25 ? 'advantageous' : w.score < -25 ? 'unfavourable' : 'contested') +
           '</b> (score ' + S.signed(w.score, 0) + ').',
-          'Our losses to date: <b>' + S.people(w.casualties / 1e6) + '</b>' +
-          (w.enemyCasualties ? '; assessed enemy losses ' + S.people(w.enemyCasualties / 1e6) : '') + '.',
+          'Our losses to date: <b>' + S.headcount(w.casualties / 1e6) + '</b>' +
+          (w.enemyCasualties ? '; assessed enemy losses ' + S.headcount(w.enemyCasualties / 1e6) : '') + '.',
           'Force exhaustion <b>' + S.round(w.exhaustion, 0) + '</b>; assessed enemy exhaustion <b>' +
           S.round(S.Dip.observed(st, w.enemyExhaustion, 14), 0) + '</b>.',
           'Home front support: <b>' + S.round(w.homeSupport, 0) + '%</b>' +

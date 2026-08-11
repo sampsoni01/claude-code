@@ -275,6 +275,31 @@
     { id: 'provinces', short: 'Provinces', name: 'Regional Governors',   desc: 'The periphery. Cares about transfers, autonomy and being remembered.' }
   ];
 
+  /* ============================================================== FLAVOUR
+     Specifics that let the same issue arrive wearing different clothes. A
+     decision draws from these once and remembers what it drew, so the brief,
+     the advisers and the options all describe the same situation.        */
+  S.FLAVOUR = {
+    regions: ['the eastern provinces', 'the coastal belt', 'the northern uplands',
+      'the delta region', 'the western marches', 'the southern basin',
+      'the old industrial corridor', 'the border districts'],
+    cities: ['the capital', 'the second city', 'the northern port', 'the river cities',
+      'the industrial suburbs', 'the university towns', 'the mining settlements'],
+    industries: ['steel', 'textiles', 'shipbuilding', 'automotive assembly', 'chemicals',
+      'electronics', 'agricultural machinery', 'pharmaceuticals', 'cement', 'paper and pulp',
+      'refining', 'food processing'],
+    firms: ['Meridian Holdings', 'the Halvard Group', 'Ostrey Industrial', 'Cantor & Vale',
+      'the Brannick Combine', 'Severin Works', 'Adler-Roth', 'the Tessaly Consortium',
+      'Kirchoff Manufacturing', 'the Delane Trust'],
+    officials: ['the Deputy Minister for Procurement', 'the Governor of the Central Region',
+      'the Permanent Secretary at the Interior', 'the Director of the State Investment Board',
+      'the Commissioner of Customs', 'the Chair of the Public Works Authority'],
+    unions: ['the Transport Federation', 'the Dockers\' Union', 'the Public Sector Alliance',
+      'the Metalworkers', 'the Teachers\' Congress', 'the Rail and Haulage Union'],
+    universities: ['the National University', 'the Technical Institute', 'the Academy of Sciences',
+      'the Eastern Polytechnic', 'the Royal College']
+  };
+
   /* ============================================================== OUTLETS */
   S.OUTLETS = [
     { id: 'state',     name: 'State Broadcasting',   bias: 'state',    color: 'gold'  },

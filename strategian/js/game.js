@@ -585,12 +585,24 @@
     if (option) G.applyOption(st, item, option, true);
   };
 
+  /* The numbers on an option are the ministry's estimate, not a contract.
+     How close the outcome lands depends on the quality of the people who
+     produced the estimate — which is one more reason to fund them. Policy
+     settings and budget lines are exempt: those are levers you pull
+     yourself, not results you hope for. */
+  G.effectNoise = function (st) {
+    const sd = 0.26 * (1 - S.clamp(st.quality.admin, 0, 100) / 170);
+    return S.clamp(1 + st.rng.normal(0, sd), 0.55, 1.45);
+  };
+
   G.applyOption = function (st, item, option, silent) {
     if (!option) return;
+    const noise = G.effectNoise(st);
     // numeric effects
     if (option.effects) {
       for (const path in option.effects) {
-        const delta = option.effects[path];
+        const isLever = path.indexOf('policy.') === 0 || path.indexOf('budget.') === 0;
+        const delta = isLever ? option.effects[path] : option.effects[path] * noise;
         if (path.indexOf('budget.alloc.') === 0) {
           const key = path.split('.')[2];
           st.budget.alloc[key] = S.clamp((st.budget.alloc[key] || 0) + delta, 0, 30);
@@ -605,7 +617,7 @@
     if (option.factions) {
       for (const fid in option.factions) {
         const f = st.factions.find((x) => x.id === fid);
-        if (f) f.loyalty = S.clamp(f.loyalty + option.factions[fid], 0, 100);
+        if (f) f.loyalty = S.clamp(f.loyalty + option.factions[fid] * noise, 0, 100);
       }
     }
     if (option.fn) { try { option.fn(st, item.ctx); } catch (e) { console.warn(e); } }

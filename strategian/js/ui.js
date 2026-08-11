@@ -1018,7 +1018,7 @@
             { label: 'Stability', values: (st.history || {}).stability || [], color: 'sage' }
           ], { h: 160, legend: true, min: 0, max: 100 }) +
           (s.latent > 55 ? '<div class="notice bad" style="margin-top:8px">Resentment is far ahead of visible unrest. Control is holding the lid down, not solving anything.</div>' : '')) +
-        card('Population', S.people(st.pop.total) + ' people',
+        card('Population', S.headcount(st.pop.total) + ' people',
           S.barRow('Urban share', st.pop.urban, 100, 'steel', S.round(st.pop.urban, 0) + '%') +
           S.barRow('Working age', st.pop.workingAge, 100, 'sage', S.round(st.pop.workingAge, 0) + '%') +
           S.barRow('Youth share', st.pop.youthShare, 35, 'gold', S.round(st.pop.youthShare, 0) + '%') +
@@ -1183,7 +1183,7 @@
       live.innerHTML = '<div class="grid g4" style="margin-bottom:14px">' +
         '<div class="card tight">' + kpi('Force Index', S.round(m.power, 1), S.ordinal(rank.findIndex((x) => x.self) + 1) + ' in the world') + '</div>' +
         '<div class="card tight">' + kpi('Readiness', S.round(m.readiness, 0), 'Morale ' + S.round(m.morale, 0), m.readiness < 40 ? 'c-bad' : '') + '</div>' +
-        '<div class="card tight">' + kpi('Manpower', S.round(m.manpower * 1000, 0) + 'k', 'Equipment ' + S.round(m.equipment, 0) + ' · tech ' + S.round(m.tech, 0)) + '</div>' +
+        '<div class="card tight">' + kpi('Manpower', S.people(m.manpower), 'Equipment ' + S.round(m.equipment, 0) + ' · tech ' + S.round(m.tech, 0)) + '</div>' +
         '<div class="card tight">' + kpi('Defence Spend', S.money(m.spendAbs), S.round(st.budget.alloc.defense, 2) + '% of GDP') + '</div>' +
         '</div>';
 
@@ -1476,6 +1476,7 @@
       kpi('Government', S.gov(st).name, st.nation.leaderTitle + ' ' + st.nation.leader) +
       kpi('Last election', st.national.lastElection ? st.national.lastElection.year + ' — ' + st.national.lastElection.share + '%' : '—',
         S.govMods(st).elections ? 'Every ' + S.govMods(st).elections + ' years' : 'No elections') +
+      kpi('World seed', String(st.seed), 'Enter this at setup to replay this world') +
       '</div>' +
       '<div class="btn-row" style="margin-top:14px">' +
       '<button class="btn" id="btnSave">Save</button>' +
@@ -1569,7 +1570,12 @@
         '<div class="advisor"><div class="who"><b>' + esc(a.who) + '</b>' + esc(a.role || '') + '</div>' +
         '<div class="said">“' + esc(a.said) + '”</div></div>').join('') + '</div>';
     }
-    body += '<div class="caps" style="margin:16px 0 6px">Your ruling</div><div class="options">';
+    const band = S.round(26 * (1 - S.clamp(st.quality.admin, 0, 100) / 170), 0);
+    body += '<div class="caps" style="margin:16px 0 6px">Your ruling</div>' +
+      '<div class="tiny dim" style="margin:-2px 0 8px">Figures are the ministry\'s estimate. ' +
+      'Outcomes vary by roughly \u00b1' + band + '% with the quality of your administration ' +
+      '(currently ' + S.round(st.quality.admin, 0) + '/100). Policy settings and budget lines are exact.</div>' +
+      '<div class="options">';
     opts.forEach((o, i) => {
       body += '<div class="option" data-opt="' + i + '"><div class="ol">' + esc(o.label) + '</div>' +
         '<div class="od">' + esc(o.detail || '') + '</div>' +
@@ -1852,7 +1858,7 @@
           '<h4>' + esc(a.name) + '</h4><div class="sub">' + esc(a.sub) + '</div>' +
           '<div class="desc">' + esc(a.desc) + '</div>' +
           '<div class="stats">' + a.tags.map((t) => '<span class="tag c-mute tiny">' + esc(t) + '</span>').join('') + '</div>' +
-          '<div class="small dim" style="margin-top:8px">' + S.people(a.pop) + ' people · ' + S.fmtScaled(a.gdp, '$') + ' output · ' +
+          '<div class="small dim" style="margin-top:8px">' + S.headcount(a.pop) + ' people · ' + S.fmtScaled(a.gdp, '$') + ' output · ' +
           S.round(a.gdp * 1000 / a.pop, 0) + ' per head</div>' +
           '<div class="tiny dim" style="margin-top:6px;font-style:italic">' + esc(a.notes) + '</div></div>';
       });
@@ -1883,12 +1889,15 @@
         '<div style="display:flex;gap:8px"><input type="text" id="setCur" value="' + esc(s.currencyName || arch.currency.name) + '">' +
         '<input type="text" id="setSym" style="max-width:80px" value="' + esc(s.currencySymbol || arch.currency.symbol) + '"></div>' +
         '<div class="desc">The name and symbol used throughout the treasury. You can change both later.</div></div>' +
+        '<div class="field"><div class="field-h"><label>World seed</label></div>' +
+        '<input type="text" id="setSeed" placeholder="leave blank for a new world" value="' + esc(s.seed || '') + '">' +
+        '<div class="desc">Every world is generated fresh. Enter a seed from a previous game\'s Records screen to replay that exact world.</div></div>' +
         '<div class="btn-row"><button class="btn sm ghost" id="rollName">Suggest a name</button></div>' +
         '</div>' +
         '<div class="card"><div class="card-h"><h3>Opening Position</h3></div>' +
         '<div class="assess-row"><span class="k">Country</span><span class="v">' + esc(arch.name) + '</span></div>' +
         '<div class="assess-row"><span class="k">Government</span><span class="v">' + esc(gov.name) + '</span></div>' +
-        '<div class="assess-row"><span class="k">Population</span><span class="v">' + S.people(arch.pop) + '</span></div>' +
+        '<div class="assess-row"><span class="k">Population</span><span class="v">' + S.headcount(arch.pop) + '</span></div>' +
         '<div class="assess-row"><span class="k">Output</span><span class="v">' + S.fmtScaled(arch.gdp, '$') + '</span></div>' +
         '<div class="assess-row"><span class="k">Debt</span><span class="v">' + arch.economy.debtGdp + '% of GDP</span></div>' +
         '<div class="assess-row"><span class="k">Inflation</span><span class="v">' + arch.economy.inflation + '%</span></div>' +
@@ -1938,10 +1947,13 @@
         s.leaderName = (document.getElementById('setLeader') || {}).value || 'Alvara Denn';
         s.currencyName = (document.getElementById('setCur') || {}).value || 'Unit';
         s.currencySymbol = (document.getElementById('setSym') || {}).value || '¤';
+        const rawSeed = ((document.getElementById('setSeed') || {}).value || '').trim();
+        const seed = /^\d+$/.test(rawSeed) ? (parseInt(rawSeed, 10) & 0x7fffffff) : 0;
         S.game.newGame({
           archetypeId: s.archetypeId, governmentId: s.governmentId,
           nationName: s.nationName, leaderName: s.leaderName,
-          currencyName: s.currencyName, currencySymbol: s.currencySymbol
+          currencyName: s.currencyName, currencySymbol: s.currencySymbol,
+          seed: seed || undefined
         });
         wrap.parentNode.removeChild(wrap);
         UI.init();

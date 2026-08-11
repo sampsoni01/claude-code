@@ -49,6 +49,36 @@
   };
   D.FACTION_LABEL = FACTION_LABEL;
 
+  /* ===================================================== VARIATION =======
+     The library is finite, so the same issue will come round again across
+     playthroughs. What stops it reading identically is that each instance
+     draws its own framing and its own specifics, once, and remembers them
+     in the decision's context — which is also what makes the brief, the
+     advisers and the options describe one coherent situation.           */
+  D.variant = function (st, ctx, key, arr) {
+    ctx._v = ctx._v || {};
+    if (ctx._v[key] == null) ctx._v[key] = st.rng.int(0, arr.length - 1);
+    return arr[ctx._v[key] % arr.length];
+  };
+
+  // Concrete nouns: a named region, industry, firm, union, official.
+  D.flavour = function (st, ctx) {
+    if (ctx._f) return ctx._f;
+    const F = S.FLAVOUR;
+    ctx._f = {
+      region: st.rng.pick(F.regions),
+      region2: st.rng.pick(F.regions),
+      city: st.rng.pick(F.cities),
+      industry: st.rng.pick(F.industries),
+      industry2: st.rng.pick(F.industries),
+      firm: st.rng.pick(F.firms),
+      official: st.rng.pick(F.officials),
+      union: st.rng.pick(F.unions),
+      university: st.rng.pick(F.universities)
+    };
+    return ctx._f;
+  };
+
   /* Some decisions generate their own scenario. That has to happen the first
      time anything asks for it — the brief, an option, or the deadline
      lapsing — because a player who never opens the file still lives in the
@@ -134,8 +164,15 @@
       id: 'tax_reform', cat: 'budget', title: 'Tax Reform Commission Reports',
       from: 'Revenue Service', urgency: 'routine', deadline: 30,
       weight: (st) => 8 + (st.economy.deficit / st.economy.gdp * 100) * 2,
-      brief: (st) => `<p>The commission you appointed has reported. It finds an effective income tax of ${st.policy.tax.income}%, a corporate rate of ${st.policy.tax.corporate}%, and an informal economy consuming ${S.round(st.economy.informal, 0)}% of activity.</p>
-        <p>Its central finding is uncomfortable: we are taxing the compliant heavily and the evasive not at all.</p>`,
+      brief: (st, ctx) => {
+        const f = D.flavour(st, ctx);
+        const framing = D.variant(st, ctx, 'frame', [
+          `<p>The commission you appointed has reported. Its central finding is uncomfortable: we are taxing the compliant heavily and the evasive not at all.</p>`,
+          `<p>A leak has put ${f.firm}'s tax affairs on every front page. The arrangement was legal, which has made the coverage worse rather than better.</p>`,
+          `<p>The Revenue Service has quietly told the Treasury it is losing the war. Collection in ${f.region} has become notional, and the professions have discovered the same three structures that ${f.firm} uses.</p>`
+        ]);
+        return framing + `<p>Effective income tax stands at ${st.policy.tax.income}%, corporation tax at ${st.policy.tax.corporate}%, and the informal economy consumes ${S.round(st.economy.informal, 0)}% of activity. Revenue is ${S.round(st.economy.revenue / st.economy.gdp * 100, 1)}% of output against spending of ${S.round(st.economy.spending / st.economy.gdp * 100, 1)}%.</p>`;
+      },
       advisors: () => [
         { who: 'Revenue Commissioner', role: 'Collection', said: 'Give me enforcement powers and I will find you more money than any rate rise.' },
         { who: 'Business Council', role: 'Industry', said: 'Every point on the corporate rate is a factory that opens somewhere else.' },
@@ -265,8 +302,15 @@
       id: 'nationalisation', cat: 'economy', title: 'The Strategic Industry Question',
       from: 'Ministry of Industry', urgency: 'routine', deadline: 28,
       weight: (st) => 9 + (st.economy.sectors.resources > 12 ? 8 : 0),
-      brief: () => `<p>A foreign consortium controls the largest processing complex in the country. It is efficient, it is profitable, and almost none of that profit stays here.</p>
-        <p>The nationalist bloc has been running the story for a month. The legal advice is that expropriation is available to us and would cost us in arbitration for a decade.</p>`,
+      brief: (st, ctx) => {
+        const f = D.flavour(st, ctx);
+        const framing = D.variant(st, ctx, 'frame', [
+          `<p>A foreign consortium controls the largest ${f.industry} complex in the country. It is efficient, it is profitable, and almost none of that profit stays here.</p>`,
+          `<p>${f.firm} has announced it is moving its ${f.industry} profits offshore through a structure our own lawyers helped design in the nineties.</p>`,
+          `<p>The ${f.industry} concession in ${f.region} comes up for renewal this year. The current terms were signed by a government nobody now defends.</p>`
+        ]);
+        return framing + `<p>The nationalist bloc has been running the story for a month. The legal advice is that expropriation is available to us and would cost us in arbitration for a decade. State ownership currently stands at ${S.round(st.policy.econ.stateOwnership, 0)}/100.</p>`;
+      },
       advisors: (st) => [
         { who: 'Industry Minister', role: 'Cabinet', said: 'We could run it. Not as well, and not immediately, but we could run it.' },
         { who: 'Foreign Minister', role: 'Diplomacy', said: 'Take it and every investor in the world reprices this country tomorrow morning.' },
@@ -342,8 +386,17 @@
       id: 'tariff_pressure', cat: 'economy', title: 'Domestic Industry Demands Protection',
       from: 'Ministry of Trade', urgency: 'routine', deadline: 24,
       weight: (st) => st.economy.unemployment > 7 ? 18 : 8,
-      brief: (st) => `<p>Cheap imports have taken a third of the domestic market in steel, textiles and agricultural machinery in four years. Forty thousand jobs sit in the affected regions, which is to say in five parliamentary districts.</p>
-        <p>Our current average tariff is ${S.round(st.policy.trade.tariff, 1)}%.</p>`,
+      brief: (st, ctx) => {
+        const f = D.flavour(st, ctx);
+        const jobs = Math.round(st.pop.total * 1000 * st.rng.range(0.3, 1.1));
+        ctx.jobs = ctx.jobs || jobs;
+        const framing = D.variant(st, ctx, 'frame', [
+          `<p>Cheap imports have taken a third of the domestic market in ${f.industry} and ${f.industry2} in four years. <b>${S.num(ctx.jobs)}</b> jobs sit in ${f.region}, which is to say in five parliamentary districts.</p>`,
+          `<p>${f.firm} has announced it will close its ${f.industry} works in ${f.region} unless the government acts on import competition. <b>${S.num(ctx.jobs)}</b> jobs go with it, and it is the only employer for forty miles.</p>`,
+          `<p>${f.union} has occupied the ${f.industry} plants in ${f.region} and will not leave until the government says something about imports. <b>${S.num(ctx.jobs)}</b> jobs are at stake and the pictures are on every bulletin.</p>`
+        ]);
+        return framing + `<p>Our current average tariff is ${S.round(st.policy.trade.tariff, 1)}%. Unemployment stands at ${S.round(st.economy.unemployment, 1)}%.</p>`;
+      },
       advisors: () => [
         { who: 'Trade Minister', role: 'Cabinet', said: 'Protection is a tax on our own consumers that we pay to a small number of firms. It is also how those firms survive to next year.' },
         { who: 'Regional Governors', role: 'Provinces', said: 'Those towns have one employer. When it closes there is nothing else.' }
@@ -396,8 +449,15 @@
       id: 'procurement_scandal', cat: 'military', title: 'The Procurement Programme Is in Trouble',
       from: 'Chief of the General Staff', urgency: 'pressing', deadline: 20,
       weight: (st) => st.society.corruption > 35 ? 16 : 8,
-      brief: (st) => `<p>The main combat systems programme is four years late and has consumed twice its authorisation. The auditor has found irregularities in three of the five prime contracts.</p>
-        <p>Readiness stands at ${S.round(st.military.readiness, 0)}. Cancelling leaves a capability gap; continuing rewards failure.</p>`,
+      brief: (st, ctx) => {
+        const f = D.flavour(st, ctx);
+        const framing = D.variant(st, ctx, 'frame', [
+          `<p>The main combat systems programme is four years late and has consumed twice its authorisation. The auditor has found irregularities in three of the five prime contracts, all of them held by ${f.firm}.</p>`,
+          `<p>${f.official} has resigned rather than sign off the annual procurement accounts. The letter of resignation is two pages long and names ${f.firm} on both of them.</p>`,
+          `<p>A shipment of equipment arrived at the ${f.region} depot and turned out to be a quarter of what was invoiced. The paperwork was in order, which is the part that worries the auditor.</p>`
+        ]);
+        return framing + `<p>Readiness stands at ${S.round(st.military.readiness, 0)} and equipment at ${S.round(st.military.equipment, 0)}. Cancelling leaves a capability gap; continuing rewards failure.</p>`;
+      },
       advisors: () => [
         { who: 'Chief of Staff', role: 'Defence', said: 'Whatever you decide, decide it this month. My commanders are training on equipment we told them would be replaced.' },
         { who: 'Auditor General', role: 'Oversight', said: 'I can name the officials. Whether you want them named is a political question, not an accounting one.' }
@@ -424,7 +484,7 @@
       id: 'conscription_debate', cat: 'military', title: 'The Manpower Question',
       from: 'Ministry of Defence', urgency: 'routine', deadline: 26,
       weight: (st) => (st.wars.length ? 22 : 8) + (st.military.readiness < 45 ? 8 : 0),
-      brief: (st) => `<p>The armed forces are ${S.round(st.military.manpower * 1000, 0)} thousand strong against an establishment they cannot fill. Recruitment has missed target for three years running.</p>
+      brief: (st) => `<p>The armed forces are ${S.headcount(st.military.manpower)} strong against an establishment they cannot fill. Recruitment has missed target for three years running.</p>
         <p>Conscription currently sits at ${st.policy.mil.conscription} on the national scale.</p>`,
       advisors: (st) => [
         { who: 'Chief of Staff', role: 'Defence', said: st.wars.length ? 'I am rotating exhausted formations because there is nobody to replace them.' : 'A conscript army is a large army of indifferent soldiers. I would rather have fewer good ones.' },
@@ -644,8 +704,15 @@
       id: 'press_crackdown', cat: 'civic', title: 'The Press Has Gone Too Far',
       from: 'Ministry of Information', urgency: 'routine', deadline: 20,
       weight: (st) => (st.society.approval < 45 && st.policy.interior.pressFreedom > 25) ? 15 : 5,
-      brief: (st) => `<p>Three outlets have run coordinated investigations into the government. Some of it is accurate. Some of it is not. All of it is damaging.</p>
-        <p>Press freedom currently sits at ${st.policy.interior.pressFreedom}/100. Approval is ${S.round(st.society.approval, 0)}%.</p>`,
+      brief: (st, ctx) => {
+        const f = D.flavour(st, ctx);
+        const framing = D.variant(st, ctx, 'frame', [
+          `<p>Three outlets have run coordinated investigations into the government. Some of it is accurate. Some of it is not. All of it is damaging.</p>`,
+          `<p>A single reporter has spent eight months on ${f.official} and published the result this morning. Nobody has disputed a line of it.</p>`,
+          `<p>A broadcaster has been running nightly items from ${f.region} about what the government has not done there. The footage is unanswerable and the ratings are enormous.</p>`
+        ]);
+        return framing + `<p>Press freedom currently sits at ${st.policy.interior.pressFreedom}/100 and approval at ${S.round(st.society.approval, 0)}%. Corruption is measured at ${S.round(st.society.corruption, 0)}/100.</p>`;
+      },
       advisors: (st) => [
         { who: 'Information Minister', role: 'Cabinet', said: 'Licensing is the quiet instrument. Nobody riots over a licensing regime.' },
         { who: 'Attorney General', role: 'Justice', said: 'Everything you are considering is legal. That is not the same as wise.' },
@@ -673,7 +740,15 @@
       id: 'corruption_purge', cat: 'civic', title: 'An Anti-Corruption Campaign',
       from: 'Office of the Leader', urgency: 'routine', deadline: 26,
       weight: (st) => st.society.corruption > 45 ? 18 : 6,
-      brief: (st) => `<p>Corruption is measured at ${S.round(st.society.corruption, 0)}/100 and is now visible enough that ordinary people discuss it openly. A campaign would be popular. It would also be a weapon, and weapons get used.</p>`,
+      brief: (st, ctx) => {
+        const f = D.flavour(st, ctx);
+        const framing = D.variant(st, ctx, 'frame', [
+          `<p>Corruption is measured at ${S.round(st.society.corruption, 0)}/100 and is now visible enough that ordinary people discuss it openly.</p>`,
+          `<p>${f.official} was filmed accepting a bag in a car park in ${f.city}. The footage is nineteen seconds long and has been watched by most of the country.</p>`,
+          `<p>An audit of public works in ${f.region} found that a third of the money never reached a construction site. Corruption stands at ${S.round(st.society.corruption, 0)}/100.</p>`
+        ]);
+        return framing + `<p>A campaign would be popular. It would also be a weapon, and weapons get used.</p>`;
+      },
       advisors: () => [
         { who: 'Interior Minister', role: 'Security', said: 'Give me the files and I will give you arrests within the month.' },
         { who: 'Political Adviser', role: 'Office', said: 'Half the people you would arrest funded your last campaign. Choose carefully whose corruption this is about.' }
@@ -700,8 +775,15 @@
       id: 'surveillance_bill', cat: 'civic', title: 'The Surveillance Powers Bill',
       from: 'Ministry of the Interior', urgency: 'routine', deadline: 24,
       weight: (st) => (st.society.unrest > 35 || st.wars.length) ? 16 : 7,
-      brief: (st) => `<p>The security services want bulk collection powers, real-time access to communications metadata, and the ability to compel decryption.</p>
-        <p>Surveillance currently sits at ${st.policy.interior.surveillance}/100; civil liberties at ${st.policy.interior.civilLiberties}/100.</p>`,
+      brief: (st, ctx) => {
+        const f = D.flavour(st, ctx);
+        const framing = D.variant(st, ctx, 'frame', [
+          `<p>The security services want bulk collection powers, real-time access to communications metadata, and the ability to compel decryption.</p>`,
+          `<p>A plot was disrupted in ${f.city} last month. The services have used the fortnight since to submit a bill they have plainly had drafted for years.</p>`,
+          `<p>The Intelligence Director has asked for compelled decryption, and has brought a folder of cases she says were lost without it. The folder is persuasive and impossible to verify.</p>`
+        ]);
+        return framing + `<p>Surveillance currently sits at ${st.policy.interior.surveillance}/100; civil liberties at ${st.policy.interior.civilLiberties}/100. Collection capability is rated ${S.round(st.intel.strength, 0)}.</p>`;
+      },
       advisors: () => [
         { who: 'Intelligence Chief', role: 'Services', said: 'Every plot we have stopped in five years came from communications data. Every one.' },
         { who: 'Attorney General', role: 'Justice', said: 'Powers granted for terrorism are used for tax evasion within a decade. That is not cynicism, it is the record.' }
@@ -722,8 +804,15 @@
       id: 'strike_wave', cat: 'civic', title: 'A General Strike',
       from: 'Ministry of Labour', urgency: 'urgent', deadline: 7,
       weight: (st) => (st.economy.inflation > 8 || S.Soc.factionLoyalty(st, 'labour') < 35) ? 22 : 3,
-      brief: (st) => `<p>The union congress has called an indefinite general strike. Transport, ports and power generation are affected. Inflation at ${S.round(st.economy.inflation, 1)}% has done what no organiser could.</p>
-        <p>Every day costs roughly ${S.money(st.economy.gdp * 0.0016)} in lost output.</p>`,
+      brief: (st, ctx) => {
+        const f = D.flavour(st, ctx);
+        const framing = D.variant(st, ctx, 'frame', [
+          `<p>The union congress has called an indefinite general strike. Transport, ports and power generation are affected. Inflation at ${S.round(st.economy.inflation, 1)}% has done what no organiser could.</p>`,
+          `<p>${f.union} walked out on Monday and by Thursday four other unions had joined them. There is no central committee running this and therefore nobody with the authority to call it off.</p>`,
+          `<p>What began as a dispute at ${f.firm} over a pay formula has become a general strike. The ${f.city} are shut and the ports have stopped.</p>`
+        ]);
+        return framing + `<p>Every day costs roughly ${S.money(st.economy.gdp * 0.0016)} in lost output. Real wages have fallen for ${st.rng.int(2, 5)} consecutive quarters.</p>`;
+      },
       advisors: () => [
         { who: 'Labour Minister', role: 'Cabinet', said: 'They want an indexation formula. That is expensive but it is a number, and numbers can be negotiated.' },
         { who: 'Interior Minister', role: 'Security', said: 'I can clear the ports in a day. I cannot make anyone work afterwards.' }
@@ -779,7 +868,15 @@
       id: 'health_crisis', cat: 'social', title: 'The Hospitals Are Failing',
       from: 'Minister of Health', urgency: 'pressing', deadline: 14,
       weight: (st) => st.quality.health < 55 ? 20 : 6,
-      brief: (st) => `<p>Waiting lists have reached levels that are being reported as a national scandal. Health quality is at ${S.round(st.quality.health, 0)}/100. Staff are leaving for better-paid work abroad.</p>`,
+      brief: (st, ctx) => {
+        const f = D.flavour(st, ctx);
+        const framing = D.variant(st, ctx, 'frame', [
+          `<p>Waiting lists have reached levels that are being reported as a national scandal. Staff are leaving for better-paid work abroad faster than they can be replaced.</p>`,
+          `<p>The main hospital in ${f.region} has stopped admitting anyone who is not dying. The regional health board wrote to the ministry six times before it wrote to the newspapers.</p>`,
+          `<p>A child died in a corridor in ${f.city} waiting for a bed. The inquest has not reported and the country has already reached its verdict.</p>`
+        ]);
+        return framing + `<p>Health quality stands at ${S.round(st.quality.health, 0)}/100 against a health budget of ${S.round(st.budget.alloc.health, 2)}% of output.</p>`;
+      },
       advisors: () => [
         { who: 'Health Minister', role: 'Cabinet', said: 'There is no clever answer. It is money, staff and time, in that order.' },
         { who: 'Treasury', role: 'Finance', said: 'Health absorbs every additional unit you give it and asks for more. That is not an argument against giving it, but you should know.' }
@@ -834,8 +931,15 @@
       id: 'housing_crisis', cat: 'social', title: 'Nobody Can Afford to Live in the Cities',
       from: 'Ministry of Infrastructure', urgency: 'routine', deadline: 25,
       weight: (st) => st.pop.urban > 55 ? 14 : 6,
-      brief: () => `<p>Housing costs in the three largest cities have outpaced wages for a decade. Young professionals are leaving; essential workers commute two hours each way.</p>
-        <p>It is the single most-cited grievance in every focus group, and it has no fast solution.</p>`,
+      brief: (st, ctx) => {
+        const f = D.flavour(st, ctx);
+        const framing = D.variant(st, ctx, 'frame', [
+          `<p>Housing costs in the three largest cities have outpaced wages for a decade. Young professionals are leaving; essential workers commute two hours each way.</p>`,
+          `<p>A tent encampment has appeared along the approach road to ${f.city}, and a good proportion of the people in it have jobs.</p>`,
+          `<p>${f.union} has published a survey showing its members now spend more than half their income on rent. The figure has been on the front pages for a week.</p>`
+        ]);
+        return framing + `<p>It is the single most-cited grievance in every focus group and it has no fast solution. Inequality is measured at ${S.round(st.society.inequality, 0)}/100; ${S.round(st.pop.urban, 0)}% of the country is urban.</p>`;
+      },
       advisors: () => [
         { who: 'Infrastructure Minister', role: 'Cabinet', said: 'Build. It is the only thing that has ever worked, and it takes six years.' },
         { who: 'Finance Minister', role: 'Treasury', said: 'Half the household wealth in this country is in the value of those houses. Be careful what you wish for.' }
@@ -1430,7 +1534,7 @@
         const n = w && w.enemyId ? S.dip(st, w.enemyId) : null;
         if (!w) return '<p>The moment has passed.</p>';
         return `<p>A third party has passed a message. ${n ? n.name : 'The enemy'} would receive a delegation.</p>
-          <p>War score stands at ${S.round(w.score, 0)} in ${w.score > 0 ? 'our' : 'their'} favour. Home support for the war is ${S.round(w.homeSupport, 0)}%. Our forces have taken roughly ${S.people(w.casualties / 1e6)} casualties.</p>`;
+          <p>War score stands at ${S.round(w.score, 0)} in ${w.score > 0 ? 'our' : 'their'} favour. Home support for the war is ${S.round(w.homeSupport, 0)}%. Our forces have taken roughly ${S.headcount(w.casualties / 1e6)} casualties.</p>`;
       },
       advisors: (st, ctx) => {
         const w = st.wars.find((x) => x.id === ctx.war);

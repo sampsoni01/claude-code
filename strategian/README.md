@@ -83,7 +83,16 @@ grave asks you to confirm.
 Matters arrive on your desk with a source, a brief, advisers who disagree with
 each other, and a deadline. Some are yes-or-no; most have three or four paths.
 Each option shows its expected effects and, where relevant, the probability that
-it goes wrong and what happens if it does.
+it goes wrong and what happens if it does. Those figures are the ministry's
+*estimate*: what actually lands varies by up to a quarter either way, and the
+error band narrows as your administrative capacity improves. Policy settings
+and budget lines are exact — you pull those levers yourself.
+
+The library is finite, so issues recur across playthroughs. What stops them
+reading identically is that each arrival draws its own framing and its own
+specifics — a named region, industry, firm, union or official — once, and the
+brief, the advisers and the options all describe that same situation. The most
+frequently-seen decisions have several genuinely different framings.
 
 Ignoring a decision is itself a decision: when the deadline passes the most
 passive available course is taken for you, and it costs you.
@@ -161,6 +170,14 @@ collapse, removal from office at an election, deposition.
 Games are meant to run for decades of game time across several sessions. It
 autosaves every year; you can also save on demand, and export a save to a file
 and import it back.
+
+Every world is generated from a random seed, shown on the Records screen. Enter
+it at setup to replay that exact world, or leave the field blank for a new one.
+
+For calibration: across 80 games driven by a decision-maker choosing uniformly
+at random, the median administration lasts about 10 years — 38% end in military
+defeat, 34% in civil war, 10% at the ballot box, and 11% survive the full forty
+years. A player who reads the briefs should do considerably better than that.
 
 ## Controls
 

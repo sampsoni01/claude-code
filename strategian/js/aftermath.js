@@ -107,7 +107,7 @@
       'Recovery from ' + s.name + ' Still Incomplete After ' + years + ' Years'
     ];
     S.News.custom(st, st.rng.pick(lines), s.severity > 45 ? 'bad' : '',
-      s.deaths > 0 ? S.people(s.deaths / 1e6) + ' dead · ' + S.round(s.severity, 0) + '/100 of the damage remains'
+      s.deaths > 0 ? S.num(s.deaths) + ' dead · ' + S.round(s.severity, 0) + '/100 of the damage remains'
         : S.round(s.severity, 0) + '/100 of the damage remains');
     // Grief and anger both spike briefly.
     st.society.cohesion += 2;
