@@ -15,32 +15,51 @@
       id: S.uid('prog'), key: spec.key, name: spec.name, dept: spec.dept,
       desc: spec.desc || '', years: spec.years, elapsed: 0,
       costPct: spec.costPct, perYear: spec.perYear || {}, onComplete: spec.key,
+      covert: !!spec.covert,
       started: S.dateLabel(st.date)
     };
     st.programmes.push(p);
-    S.News.custom(st, spec.headline || (spec.name + ' Begins'), 'good',
-      S.round(spec.costPct, 2) + '% of output a year for ' + spec.years + ' years');
+    // Covert programmes do not get announced in the press.
+    if (!spec.covert) {
+      S.News.custom(st, spec.headline || (spec.name + ' Begins'), 'good',
+        S.round(spec.costPct, 2) + '% of output a year for ' + spec.years + ' years');
+    }
     return p;
   };
 
   // Completion payoffs, keyed by programme. Kept separate so a programme
   // survives a save/load round trip without carrying functions.
   Act.COMPLETION = {
-    hospitals: (st) => { st.quality.health += 10; st.society.approval += 5; return 'The last of the new hospitals has opened. Waiting lists are visibly shorter.'; },
+    hospitals: (st) => { st.quality.health += 10; st.society.approval += 5; return 'The last of the new hospitals has opened. Waiting lists are measurably shorter.'; },
     vaccination: (st) => { st.quality.health += 6; st.pop.growth += 0.05; return 'The immunisation campaign has reached national coverage.'; },
-    literacy: (st) => { st.quality.education += 9; st.economy.productivity += 3; return 'The literacy campaign has closed. A generation reads that would not have.'; },
+    literacy: (st) => { st.quality.education += 9; st.economy.productivity += 3; return 'The literacy campaign has closed with attainment sharply higher.'; },
     universities: (st) => { st.quality.science += 10; st.quality.education += 4; return 'The new university campuses have graduated their first cohort.'; },
     scholarships: (st) => { st.diplomacy.nations.forEach((n) => { n.affinity += 9; }); st.national.softPower += 6; return 'A decade of foreign graduates now hold posts in ministries abroad.'; },
-    arts: (st) => { st.quality.culture += 10; st.national.softPower += 8; return 'Our films, music and broadcasting have found a permanent foreign audience.'; },
-    nationalinfra: (st) => { st.quality.infra += 12; st.economy.productivity += 3; return 'The national infrastructure programme is complete and running.'; },
-    gridharden: (st) => { st.quality.energy += 12; st.flags.gridHardened = true; return 'The grid has been hardened. Outages have become a rarity.'; },
-    rail: (st) => { st.quality.infra += 10; st.national.prestige += 6; st.factions.forEach((f) => { if (f.id === 'provinces') f.loyalty += 12; }); return 'The rail spine is open end to end. The provinces are three hours closer.'; },
-    ports: (st) => { st.economy.exports *= 1.06; st.military.logistics += 8; st.quality.infra += 5; return 'The expanded port is handling traffic it could not have taken before.'; },
+    arts: (st) => { st.quality.culture += 10; st.national.softPower += 8; return 'Our films, music and broadcasting now reach a permanent foreign audience.'; },
+    nationalinfra: (st) => { st.quality.infra += 12; st.economy.productivity += 3; return 'The national infrastructure programme is complete and in service.'; },
+    gridharden: (st) => { st.quality.energy += 12; st.flags.gridHardened = true; return 'The grid has been hardened. Outages are now rare.'; },
+    rail: (st) => { st.quality.infra += 10; st.national.prestige += 6; st.factions.forEach((f) => { if (f.id === 'provinces') f.loyalty += 12; }); return 'The rail spine is open end to end. Journey times between the major cities have fallen by more than half.'; },
+    ports: (st) => { st.economy.exports *= 1.06; st.military.logistics += 8; st.quality.infra += 5; return 'The expanded port is handling volumes the old one could not.'; },
     housing: (st) => { st.society.inequality -= 5; st.society.approval += 6; st.quality.infra += 4; return 'The housing programme has delivered. Rents in the cities have stopped climbing.'; },
     policereform: (st) => { st.quality.security += 10; st.society.crime -= 8; st.society.latent -= 6; return 'Police reform is complete. Complaints are down and clearance rates are up.'; },
     cyber: (st) => { st.intel.strength += 10; st.flags.cyberCapable = true; return 'The offensive cyber programme has reached initial operating capability.'; },
     watersan: (st) => { st.quality.health += 8; st.quality.infra += 4; return 'Clean water and sanitation now reach the districts that had neither.'; },
-    ruralclinics: (st) => { st.quality.health += 7; st.factions.forEach((f) => { if (f.id === 'provinces') f.loyalty += 8; }); return 'The rural clinic network is staffed and open.'; }
+    ruralclinics: (st) => { st.quality.health += 7; st.factions.forEach((f) => { if (f.id === 'provinces') f.loyalty += 8; }); return 'The rural clinic network is staffed and open.'; },
+    shadowexports: (st) => {
+      const take = st.economy.gdp * 0.012;
+      st.economy.reserves += take;
+      return 'The network has been wound down on schedule. ' + S.money(take) + ' in restricted trade cleared through intermediaries, none of it on the public accounts.';
+    },
+    blackpropaganda: (st) => {
+      st.policy.interior.propaganda = S.clamp(st.policy.interior.propaganda + 12, 0, 100);
+      st.society.approval += 3;
+      return 'The directorate has embedded its placement network across print, broadcast and online outlets.';
+    },
+    darkmoney: (st) => {
+      st.diplomacy.nations.forEach((n) => { if (!n.absorbedBy) n.affinity += 6; });
+      st.national.diplomaticWins++;
+      return 'The accounts have run their course. A layer of editors, officials and party treasurers abroad now owes us their position.';
+    }
   };
 
   Act.programmeTick = function (st, dt) {
@@ -57,7 +76,7 @@
         const fn = Act.COMPLETION[p.key];
         const text = fn ? fn(st) : (p.name + ' is complete.');
         S.game.event(text, 'good');
-        S.News.custom(st, p.name + ' Completed', 'good');
+        if (!p.covert) S.News.custom(st, p.name + ' Completed', 'good');
       }
     }
     st.economy.programmeSpending = cost;
@@ -68,6 +87,10 @@
     if (i < 0) return;
     const p = st.programmes[i];
     st.programmes.splice(i, 1);
+    if (p.covert) {
+      S.game.event(p.name + ' has been quietly dismantled. The money already spent is gone.', '');
+      return;
+    }
     st.society.approval -= 3;
     st.national.prestige -= 1;
     S.game.event(p.name + ' has been cancelled. The money already spent is gone.', 'bad');
@@ -75,8 +98,24 @@
   };
 
   /* ========================================================== HELPERS */
-  function pay(st, pct) {
-    const amount = (pct / 100) * st.economy.gdp;
+  /* Operations have real price tags that do not scale linearly with the
+     economy: a nuclear test costs what a nuclear test costs. `cost.money`
+     is an absolute figure (billions, at a mid-sized economy) scaled gently
+     by economic weight; `cost.moneyPct` scales with GDP. When both are
+     present the charge is the smaller — %GDP for small economies, the
+     absolute figure as a cap for large ones. */
+  Act.opScale = function (st) {
+    return S.clamp(Math.pow(st.economy.gdp / 2000, 0.35), 0.25, 4);
+  };
+  Act.opCost = function (st, a) {
+    if (!a.cost) return 0;
+    const pct = a.cost.moneyPct ? (a.cost.moneyPct / 100) * st.economy.gdp : null;
+    const abs = a.cost.money != null ? a.cost.money * Act.opScale(st) : null;
+    if (pct != null && abs != null) return Math.min(pct, abs);
+    return pct != null ? pct : (abs != null ? abs : 0);
+  };
+
+  function pay(st, amount) {
     const fromReserves = Math.min(st.economy.reserves, amount);
     st.economy.reserves -= fromReserves;
     st.economy.debt += amount - fromReserves;
@@ -101,12 +140,12 @@
         st.military.manpower *= 1.30;
         st.world.tension += 4;
         st.factions.forEach((f) => { if (f.id === 'military') f.loyalty += 5; });
-        return 'Reserve formations have been called up. The barracks are full and the economy is short of them.';
+        return 'Reserve formations have been called up. Readiness and manpower are up; the civilian economy is short the same people.';
       }
     },
     {
       id: 'standdown', dept: 'war', name: 'Stand Down to Peacetime Posture',
-      desc: 'Release the reserves, cut the tempo, and let the force rest and refit.',
+      desc: 'Release the reserves, cut the operational tempo, and reduce the defence line.',
       cost: { approval: 2 }, cooldown: 400,
       requires: (st) => !st.wars.length && st.military.readiness > 45,
       unavailable: () => 'Not while there is fighting.',
@@ -115,13 +154,13 @@
         st.military.morale += 5; st.military.equipment += 3;
         st.world.tension -= 3;
         st.budget.alloc.defense = Math.max(0.5, st.budget.alloc.defense * 0.93);
-        return 'The force has stood down. Units are refitting and the defence line has come off the budget.';
+        return 'The force has stood down. Units are refitting and the defence budget line has been reduced.';
       }
     },
     {
       id: 'exercise', dept: 'war', name: 'Stage a Major Exercise',
-      desc: 'A large joint exercise: sharpens the force, reassures allies, alarms everyone else.',
-      cost: { moneyPct: 0.22 }, cooldown: 500,
+      desc: 'A large joint exercise. Raises readiness and reassures allies; rivals read it as signalling.',
+      cost: { moneyPct: 0.22, money: 1.5 }, cooldown: 500,
       run: (st) => {
         st.military.readiness = S.clamp(st.military.readiness + 9, 0, 100);
         st.military.morale += 5; st.military.logistics += 3;
@@ -131,23 +170,23 @@
           else if (n.relation < -20) { n.threatPerception += 8; n.relation -= 3; }
         });
         S.News.custom(st, 'Largest Military Exercise in Years Begins', '');
-        return 'Three corps manoeuvred for a fortnight. Allies sent observers; rivals sent trawlers.';
+        return 'Three corps manoeuvred for two weeks. Readiness and logistics have improved; hostile capitals have protested.';
       }
     },
     {
       id: 'procure', dept: 'war', name: 'Emergency Procurement',
-      desc: 'Buy equipment off the shelf at premium prices rather than waiting for the programme.',
+      desc: 'Buy equipment off the shelf at premium prices rather than waiting for the standard programme.',
       cost: { moneyPct: 1.10 }, cooldown: 700,
       requires: (st) => st.military.equipment < 85,
       run: (st) => {
         st.military.equipment = S.clamp(st.military.equipment + 12, 0, 100);
         st.economy.businessConfidence += 2;
-        return 'Crates are arriving faster than the training pipeline can absorb them, but they are arriving.';
+        return 'Deliveries begin immediately at above-market prices. Equipment levels are rising faster than training can absorb them.';
       }
     },
     {
       id: 'veterans', dept: 'war', name: 'Veterans\' Settlement',
-      desc: 'Pensions, healthcare and housing for those who served. Overdue in most countries.',
+      desc: 'Pensions, healthcare and housing for former service personnel.',
       cost: { moneyPct: 0.35, approval: 4 }, cooldown: 1200,
       run: (st) => {
         st.policy.mil.veteranCare = S.clamp(st.policy.mil.veteranCare + 22, 0, 100);
@@ -156,13 +195,13 @@
           if (f.id === 'military') f.loyalty += 12;
           if (f.id === 'nationalists') f.loyalty += 6;
         });
-        return 'The settlement passed without a division. The General Staff noticed who signed it.';
+        return 'The settlement is law. Veteran support has risen sharply and the officer corps has registered it.';
       }
     },
     {
       id: 'peacekeepers', dept: 'war', name: 'Deploy Peacekeepers',
-      desc: 'Commit forces to an international stabilisation mission. Prestige abroad, risk at home.',
-      cost: { moneyPct: 0.30 }, cooldown: 800,
+      desc: 'Commit forces to an international stabilisation mission. Builds prestige; carries casualty risk.',
+      cost: { moneyPct: 0.30, money: 1.8 }, cooldown: 800,
       requires: (st) => st.military.readiness > 40 && !st.wars.length,
       unavailable: () => 'Requires a rested force and no war of our own.',
       run: (st) => {
@@ -174,15 +213,15 @@
           const dead = st.rng.int(20, 140);
           st.society.approval -= 4;
           S.News.custom(st, 'Peacekeepers Killed in Ambush', 'bad', S.num(dead) + ' of our soldiers dead');
-          return 'The deployment is holding, but we have taken casualties and the coffins came home on television.';
+          return 'The deployment continues, but we have taken casualties and support at home has fallen.';
         }
-        return 'Our contingent has deployed under the international flag. The mission is quiet and the credit is real.';
+        return 'Our contingent has deployed under the international flag. The mission is stable and the diplomatic credit is real.';
       }
     },
     {
       id: 'nucleartest', dept: 'war', name: 'Conduct a Nuclear Test',
-      desc: 'Demonstrate the deterrent. There is no ambiguity afterwards, which is the point and the problem.',
-      cost: { moneyPct: 0.20 }, cooldown: 1800, danger: true,
+      desc: 'An underground test to confirm and demonstrate the deterrent. Triggers condemnation and sanctions risk.',
+      cost: { money: 0.35 }, cooldown: 1800, danger: true,
       requires: (st) => st.policy.mil.nuclearPosture !== 'renounced' && st.quality.science > 40,
       unavailable: () => 'Requires a nuclear posture and a scientific base.',
       run: (st) => {
@@ -196,39 +235,39 @@
         });
         S.News.custom(st, 'Nuclear Test Confirmed; Capitals Condemn', 'bad');
         S.Aftermath.schedule(st, 'sanctions_bite', {}, st.rng.int(400, 800));
-        return 'The seismographs picked it up before our own announcement did. Ambassadors are being summoned everywhere.';
+        return 'Seismic stations worldwide registered the test within minutes. Several governments are drafting sanctions.';
       }
     },
     {
       id: 'armsdeal', dept: 'war', name: 'Arms Export Package', target: 'nation',
-      desc: 'Sell weapons to a foreign government. Money now, entanglement later.',
+      desc: 'Sell weapons to a foreign government. Immediate income; a long-term entanglement.',
       cost: {}, cooldown: 500,
       requires: (st) => st.military.equipment > 40,
-      unavailable: () => 'Nobody buys equipment we would not field ourselves.',
+      unavailable: () => 'Our equipment is not competitive on the export market.',
       run: (st, n) => {
         const take = st.economy.gdp * 0.010 * (n.gdp / 3000 + 0.4);
         st.economy.reserves += take;
         n.relation += 14; n.milPower *= 1.03;
         st.world.tension += 3;
         st.economy.businessConfidence += 3;
-        return 'The contract with ' + n.name + ' is signed: ' + S.money(take) + ', and a customer who now needs our spare parts.';
+        return 'The contract with ' + n.name + ' is signed: ' + S.money(take) + ' now, plus a long-term dependency on our spare parts and training.';
       }
     },
     {
       id: 'milaid', dept: 'war', name: 'Military Assistance Package', target: 'nation',
       desc: 'Equip and train a partner\'s forces at our expense.',
-      cost: { moneyPct: 0.30 }, cooldown: 500,
+      cost: { moneyPct: 0.30, money: 4 }, cooldown: 500,
       run: (st, n) => {
         n.relation += 20; n.warSupport = (n.warSupport || 1) + 0.25;
         n.milPower *= 1.05;
         st.world.tension += 4;
         st.diplomacy.nations.forEach((o) => { if (o.relation < -30 && o.id !== n.id) o.relation -= 4; });
-        return 'Trainers and equipment are on their way to ' + n.name + '. Their rivals have noticed.';
+        return 'Trainers and equipment are on their way to ' + n.name + '. Their rivals have registered it.';
       }
     },
     {
       id: 'declarewar', dept: 'war', name: 'Declare War', target: 'nation',
-      desc: 'The final instrument. Everything else on this page is an alternative to it.',
+      desc: 'Open hostilities against a chosen state. Requires a ready force; the consequences are permanent.',
       cost: {}, cooldown: 200, danger: true, confirm: true,
       requires: (st) => st.military.readiness > 30,
       unavailable: () => 'The force is not ready to fight anyone.',
@@ -241,14 +280,14 @@
           if (f.id === 'nationalists') f.loyalty += 8;
           if (f.id === 'intelligentsia' || f.id === 'reformers') f.loyalty -= 10;
         });
-        return 'We are at war with ' + n.name + '. Every other government in the world has just recalculated.';
+        return 'We are at war with ' + n.name + '. Foreign governments are re-evaluating their positions toward us.';
       }
     },
 
     /* -------------------------------------------------------- FOREIGN */
     {
       id: 'denounce', dept: 'foreign', name: 'Denounce a Government', target: 'nation',
-      desc: 'Condemn them publicly and by name. Cheap, satisfying, and not free.',
+      desc: 'Condemn their government publicly and by name. Plays well with their critics; damages relations with them.',
       cost: {}, cooldown: 240,
       run: (st, n) => {
         n.relation -= 18; n.grievance = (n.grievance || 0) + 10;
@@ -262,25 +301,25 @@
           st.diplomacy.nations.forEach((o) => { if (o.id !== n.id && S.Dip.ideologyGap(st, o) < 25) o.relation += 4; });
         } else { st.national.softPower -= 2; }
         S.News.custom(st, 'Government Condemns ' + n.name + ' in Unusually Direct Terms', '');
-        return 'The statement named ' + n.name + ' and did not soften it. Their ambassador has been recalled for consultations.';
+        return 'The statement named ' + n.name + ' directly. Their ambassador has been recalled for consultations.';
       }
     },
     {
       id: 'statevisit', dept: 'foreign', name: 'State Visit', target: 'nation',
-      desc: 'Full honours, a banquet, and three days of substantive meetings.',
-      cost: { moneyPct: 0.04 }, cooldown: 300,
+      desc: 'Full honours and three days of substantive meetings.',
+      cost: { money: 0.04 }, cooldown: 300,
       run: (st, n) => {
         n.relation += 15; n.affinity += 4; n.grievance = Math.max(0, (n.grievance || 0) - 8);
         st.national.prestige += 2;
-        return 'The visit to ' + n.name + ' went well enough that both sides briefed it as a breakthrough.';
+        return 'The visit to ' + n.name + ' concluded with agreements on trade facilitation and consular access. Relations have improved.';
       }
     },
     {
       id: 'conference', dept: 'foreign', name: 'Convene an International Conference',
-      desc: 'Host the powers on a standing dispute. Expensive, slow, and the only thing that lowers world tension on demand.',
-      cost: { moneyPct: 0.12 }, cooldown: 900,
+      desc: 'Host the major powers on a standing dispute. Lowers world tension; requires the standing to convene them.',
+      cost: { money: 0.35 }, cooldown: 900,
       requires: (st) => st.national.prestige > 35,
-      unavailable: () => 'Nobody would come.',
+      unavailable: () => 'Our standing is too low to convene the powers.',
       run: (st) => {
         const drop = 6 + st.national.prestige * 0.10;
         st.world.tension -= drop;
@@ -288,7 +327,7 @@
         st.national.diplomaticWins++;
         st.diplomacy.nations.forEach((n) => { n.relation += 5; n.grievance = Math.max(0, (n.grievance || 0) - 6); });
         S.News.custom(st, 'Powers Gather in Our Capital for Landmark Conference', 'good');
-        return 'The communiqué says less than we wanted and more than anyone expected. World tension is down ' + S.round(drop, 0) + '.';
+        return 'The conference closed with an agreed communiqué. World tension is down ' + S.round(drop, 0) + ' points.';
       }
     },
     {
@@ -299,42 +338,42 @@
         n.relation -= 14; n.grievance = (n.grievance || 0) + 12;
         st.intel.strength -= 3; st.world.tension += 4;
         st.society.approval += 2;
-        return 'Their station has been rolled up and put on a plane. We have also lost the channel we were reading.';
+        return 'Their diplomats have been expelled. Their intelligence station here is closed — and so is the channel we monitored through it.';
       }
     },
     {
       id: 'aidsurge', dept: 'foreign', name: 'Humanitarian Airlift', target: 'nation',
       desc: 'Emergency relief, delivered visibly and fast.',
-      cost: { moneyPct: 0.10 }, cooldown: 400,
+      cost: { moneyPct: 0.10, money: 0.6 }, cooldown: 400,
       run: (st, n) => {
         n.relation += 16; n.affinity += 10;
         st.national.softPower += 7; st.national.prestige += 3;
         st.diplomacy.nations.forEach((o) => { o.affinity += 2; });
         S.News.custom(st, 'Our Aircraft First to Land with Relief Supplies', 'good');
-        return 'Our transports were on the runway before anyone else\'s. That image will run for a week.';
+        return 'Our transports landed first with relief supplies. Regional goodwill has measurably improved.';
       }
     },
 
     /* --------------------------------------------------------- HEALTH */
     {
       id: 'publichealth', dept: 'social', name: 'Public Health Campaign',
-      desc: 'Screening, prevention and a great deal of advertising.',
-      cost: { moneyPct: 0.08 }, cooldown: 500,
+      desc: 'Screening, prevention and mass public messaging.',
+      cost: { moneyPct: 0.08, money: 0.9 }, cooldown: 500,
       run: (st) => {
         st.quality.health += 4; st.society.approval += 3; st.pop.growth += 0.02;
-        return 'Screening uptake is up and the campaign has become a national joke, which means people saw it.';
+        return 'Screening uptake has risen and early diagnoses are up.';
       }
     },
     {
       id: 'pandemicprep', dept: 'social', name: 'Pandemic Preparedness Stockpile',
-      desc: 'Ventilators, antivirals, surge plans and an agency nobody will thank you for until they do.',
-      cost: { moneyPct: 0.14 }, cooldown: 2000,
+      desc: 'Stockpile ventilators, antivirals and protective equipment, and write national surge plans.',
+      cost: { moneyPct: 0.14, money: 2.5 }, cooldown: 2000,
       requires: (st) => !st.flags.pandemicPrepared,
       unavailable: () => 'Already stockpiled.',
       run: (st) => {
         st.flags.pandemicPrepared = true;
         st.quality.health += 3;
-        return 'The stockpile is built and the surge plans are written. If nothing happens, this will look like waste.';
+        return 'The stockpile is built and surge plans are in place. The next epidemic will meet a prepared system.';
       }
     },
     {
@@ -346,12 +385,12 @@
       run: (st) => {
         Act.startProgramme(st, prog('vaccination', 'National Immunisation Campaign', 'social', 2, 0.30,
           'Universal immunisation coverage.', { 'quality.health': 1.5 }, 'National Immunisation Campaign Launched'));
-        return 'The campaign is under way. Coverage figures will arrive quarterly.';
+        return 'The campaign is under way. Coverage figures will be reported quarterly.';
       }
     },
     {
       id: 'hospitals', dept: 'social', name: 'Hospital Construction Programme', programme: true,
-      desc: 'Five years of building and staffing new hospitals. The single most visible thing a government can do.',
+      desc: 'Five years of building and staffing new hospitals.',
       cost: { moneyPct: 0.85 }, cooldown: 2600,
       requires: (st) => !st.programmes.some((p) => p.key === 'hospitals'),
       unavailable: () => 'Already running.',
@@ -359,31 +398,31 @@
         Act.startProgramme(st, prog('hospitals', 'Hospital Construction Programme', 'social', 5, 0.85,
           'New hospitals, staffed and opened.', { 'quality.health': 1.2, 'society.approval': 0.5 },
           'Hospital Building Programme Announced'));
-        return 'Ground has been broken on the first sites. Nothing opens for three years.';
+        return 'Ground has been broken on the first sites. The first openings are three years out.';
       }
     },
     {
       id: 'ruralclinics', dept: 'social', name: 'Rural Clinic Network', programme: true,
-      desc: 'Primary care in the districts that have never had any. Cheap per head, enormous in effect.',
+      desc: 'Primary care in districts that have never had it. Low cost per head, large effect.',
       cost: { moneyPct: 0.35 }, cooldown: 2600,
       requires: (st) => st.pop.urban < 78 && !st.programmes.some((p) => p.key === 'ruralclinics'),
       unavailable: (st) => st.pop.urban >= 78 ? 'The country is already urbanised.' : 'Already running.',
       run: (st) => {
         Act.startProgramme(st, prog('ruralclinics', 'Rural Clinic Network', 'social', 4, 0.35,
           'Primary care in underserved districts.', { 'quality.health': 1.0 }, 'Rural Clinic Network Begins'));
-        return 'The first clinics are being sited. The provincial governors have suddenly become co-operative.';
+        return 'The first clinics are being sited in the least-served districts.';
       }
     },
     {
       id: 'literacy', dept: 'social', name: 'National Literacy Campaign', programme: true,
-      desc: 'Four years of adult and childhood literacy work, at scale.',
+      desc: 'Four years of adult and childhood literacy work at scale.',
       cost: { moneyPct: 0.40 }, cooldown: 2600,
       requires: (st) => st.quality.education < 80 && !st.programmes.some((p) => p.key === 'literacy'),
       unavailable: (st) => st.quality.education >= 80 ? 'Attainment is already high.' : 'Already running.',
       run: (st) => {
         Act.startProgramme(st, prog('literacy', 'National Literacy Campaign', 'social', 4, 0.40,
           'Adult and childhood literacy at scale.', { 'quality.education': 1.2 }, 'National Literacy Campaign Launched'));
-        return 'Teachers are being recruited faster than they can be trained. It will show up in a decade.';
+        return 'Teacher recruitment has begun. Measurable gains will take years to appear.';
       }
     },
     {
@@ -396,19 +435,19 @@
         Act.startProgramme(st, prog('universities', 'University Expansion Programme', 'social', 6, 0.55,
           'New campuses, laboratories and chairs.', { 'quality.science': 1.0, 'quality.education': 0.4 },
           'Government Funds Largest University Expansion in Decades'));
-        return 'Site works have begun on four campuses. The academies are, for once, pleased with us.';
+        return 'Site works have begun on four campuses.';
       }
     },
     {
       id: 'scholarships', dept: 'social', name: 'International Scholarship Programme', programme: true,
-      desc: 'Bring foreign students here for a decade. The slowest and most durable instrument of influence there is.',
+      desc: 'Fund foreign students to study here. Influence compounds as alumni advance abroad.',
       cost: { moneyPct: 0.22 }, cooldown: 2600,
       requires: (st) => st.quality.education > 45 && !st.programmes.some((p) => p.key === 'scholarships'),
-      unavailable: () => 'Our universities are not yet somewhere people want to study.',
+      unavailable: () => 'Our universities do not yet attract foreign students.',
       run: (st) => {
         Act.startProgramme(st, prog('scholarships', 'International Scholarship Programme', 'social', 5, 0.22,
           'Foreign students, educated here.', { 'national.softPower': 1.2 }, 'Thousands of Foreign Scholarships Announced'));
-        return 'The first intake arrives in September. In twenty years some of them will be ministers.';
+        return 'The first intake arrives in September.';
       }
     },
     {
@@ -420,13 +459,13 @@
       run: (st) => {
         Act.startProgramme(st, prog('arts', 'National Arts & Broadcasting Push', 'social', 4, 0.30,
           'Film, music and broadcasting, funded to export.', { 'quality.culture': 1.4, 'national.softPower': 0.8 },
-          'State Launches Ambitious Cultural Export Push'));
-        return 'The first co-productions are in pre-production. Critics are already sneering, which is a good sign.';
+          'State Launches Cultural Export Push'));
+        return 'The first co-productions and foreign-language broadcasts have been commissioned.';
       }
     },
     {
       id: 'pensions', dept: 'social', name: 'Raise Pensions and Transfers',
-      desc: 'An immediate uplift to the people who vote most reliably.',
+      desc: 'An immediate and permanent uplift to pensions and transfer payments.',
       cost: { approval: 7 }, cooldown: 700,
       run: (st) => {
         st.budget.alloc.welfare += 0.9;
@@ -439,7 +478,7 @@
     /* -------------------------------------------- INFRASTRUCTURE / ENERGY */
     {
       id: 'nationalinfra', dept: 'infra', name: 'National Infrastructure Programme', programme: true,
-      desc: 'Six years of roads, bridges, water and power. The backbone, rebuilt.',
+      desc: 'Six years of roads, bridges, water and power.',
       cost: { moneyPct: 1.10 }, cooldown: 2600,
       requires: (st) => !st.programmes.some((p) => p.key === 'nationalinfra'),
       unavailable: () => 'Already running.',
@@ -447,7 +486,7 @@
         Act.startProgramme(st, prog('nationalinfra', 'National Infrastructure Programme', 'infra', 6, 1.10,
           'Roads, bridges, water and power.', { 'quality.infra': 1.5, 'economy.shock': 0.10 },
           'Government Commits to Six-Year National Infrastructure Programme'));
-        return 'Contracts are being let in every province. Half the country is about to become a building site.';
+        return 'Contracts are being let in every province. Construction begins this quarter.';
       }
     },
     {
@@ -460,12 +499,12 @@
         Act.startProgramme(st, prog('gridharden', 'Grid Hardening Programme', 'infra', 3, 0.45,
           'Redundancy, storage and security on the network.', { 'quality.energy': 1.6 },
           'Grid Hardening Programme Approved'));
-        return 'Substations are being rebuilt one region at a time. There will be outages during the work.';
+        return 'Substations are being rebuilt one region at a time. There will be planned outages during the work.';
       }
     },
     {
       id: 'rail', dept: 'infra', name: 'High-Speed Rail Spine', programme: true,
-      desc: 'Eight years and a fortune to connect the country end to end. Every government that has built one is remembered for it.',
+      desc: 'An eight-year high-speed corridor connecting the major cities. Very expensive; large permanent gains.',
       cost: { moneyPct: 1.20 }, cooldown: 3000,
       requires: (st) => S.Econ.gdpPerCapita(st) > 6000 && !st.programmes.some((p) => p.key === 'rail'),
       unavailable: () => 'Beyond what this economy can carry.',
@@ -474,7 +513,7 @@
           'A national high-speed corridor.', { 'quality.infra': 0.8, 'national.prestige': 0.5 },
           'High-Speed Rail Spine Approved After Years of Argument'));
         S.Aftermath.schedule(st, 'rail_overrun', {}, st.rng.int(900, 1600));
-        return 'The route is fixed and the compulsory purchases have begun. So have the lawsuits.';
+        return 'The route is fixed and compulsory purchases have begun. So have the legal challenges.';
       }
     },
     {
@@ -487,12 +526,12 @@
         Act.startProgramme(st, prog('ports', 'Port & Logistics Expansion', 'infra', 4, 0.60,
           'Deepwater capacity and the roads to it.', { 'military.logistics': 1.2, 'quality.infra': 0.5 },
           'Major Port Expansion Approved'));
-        return 'Dredgers are on station. Exporters have already started quoting the new capacity.';
+        return 'Dredgers are on station. Exporters are already contracting against the new capacity.';
       }
     },
     {
       id: 'housing', dept: 'infra', name: 'Mass Housing Programme', programme: true,
-      desc: 'Five years of public housebuilding at a scale that actually moves rents.',
+      desc: 'Five years of public housebuilding at a scale large enough to move rents.',
       cost: { moneyPct: 0.80 }, cooldown: 2600,
       requires: (st) => !st.programmes.some((p) => p.key === 'housing'),
       unavailable: () => 'Already running.',
@@ -505,7 +544,7 @@
     },
     {
       id: 'watersan', dept: 'infra', name: 'Water & Sanitation Programme', programme: true,
-      desc: 'Clean water and sewerage to the districts that have neither. Unglamorous; saves more lives than anything else here.',
+      desc: 'Extend clean water and sewerage to unserved districts. The largest public-health return per unit spent.',
       cost: { moneyPct: 0.40 }, cooldown: 2600,
       requires: (st) => st.quality.infra < 70 && !st.programmes.some((p) => p.key === 'watersan'),
       unavailable: () => 'Coverage is already near-universal.',
@@ -513,19 +552,19 @@
         Act.startProgramme(st, prog('watersan', 'Water & Sanitation Programme', 'infra', 4, 0.40,
           'Clean water and sewerage where there is none.', { 'quality.health': 0.9, 'quality.infra': 0.7 },
           'National Water and Sanitation Programme Begins'));
-        return 'Trenching has started in the worst-served districts. Cholera figures should fall within two years.';
+        return 'Trenching has started in the worst-served districts. Waterborne disease should fall within two years.';
       }
     },
     {
       id: 'emergencyrepair', dept: 'infra', name: 'Emergency Repair Blitz',
-      desc: 'Throw money at the backlog now rather than waiting for the programme.',
-      cost: { moneyPct: 0.45 }, cooldown: 500,
+      desc: 'Clear the worst of the maintenance backlog immediately, at premium cost.',
+      cost: { moneyPct: 0.45, money: 6 }, cooldown: 500,
       requires: (st) => st.quality.infra < 80,
       run: (st) => {
         st.quality.infra = S.clamp(st.quality.infra + 7, 0, 100);
         st.economy.shock += 0.4;
         st.factions.forEach((f) => { if (f.id === 'provinces') f.loyalty += 6; });
-        return 'Crews are working double shifts on the worst of the backlog. It is expensive and it is visible.';
+        return 'Crews are working double shifts. The worst-rated bridges, lines and plants are being repaired first.';
       }
     },
 
@@ -533,7 +572,7 @@
     {
       id: 'anticorruptionsweep', dept: 'interior', name: 'Anti-Corruption Sweep',
       desc: 'Arrests, audits and dismissals across the ministries and the provinces.',
-      cost: { moneyPct: 0.06 }, cooldown: 900,
+      cost: { moneyPct: 0.06, money: 0.4 }, cooldown: 900,
       requires: (st) => st.society.corruption > 20,
       run: (st) => {
         st.society.corruption = Math.max(3, st.society.corruption - 9);
@@ -546,14 +585,14 @@
         S.News.custom(st, 'Officials Arrested as Anti-Corruption Sweep Begins', '');
         if (st.rng.chance(0.25)) {
           st.society.scandal -= 6;
-          return 'The sweep has taken in eleven senior officials — and two of them are talking about people close to you.';
+          return 'Eleven senior officials are in custody — and two of them are giving evidence about people close to you.';
         }
-        return 'Eleven senior officials are in custody and the ministries have gone very quiet.';
+        return 'Eleven senior officials are in custody. Procurement across the ministries has slowed while cases are heard.';
       }
     },
     {
       id: 'policereform', dept: 'interior', name: 'Police Reform Programme', programme: true,
-      desc: 'Three years of training, oversight and pay. The alternative to more policing.',
+      desc: 'Three years of training, oversight and pay.',
       cost: { moneyPct: 0.35 }, cooldown: 2600,
       requires: (st) => !st.programmes.some((p) => p.key === 'policereform'),
       unavailable: () => 'Already running.',
@@ -561,12 +600,12 @@
         Act.startProgramme(st, prog('policereform', 'Police Reform Programme', 'interior', 3, 0.35,
           'Training, oversight and pay.', { 'quality.security': 1.2, 'society.crime': -0.8 },
           'Sweeping Police Reform Programme Announced'));
-        return 'The oversight body has its first cases. The police federation is furious, which is expected.';
+        return 'The oversight body has opened its first cases. The police federation has objected formally.';
       }
     },
     {
       id: 'amnesty', dept: 'interior', name: 'General Amnesty',
-      desc: 'Release political prisoners and drop the outstanding cases. A gamble on goodwill.',
+      desc: 'Release political prisoners and drop the outstanding cases.',
       cost: {}, cooldown: 1400, danger: true,
       requires: (st) => st.society.latent > 25,
       unavailable: () => 'There is nobody to release.',
@@ -581,12 +620,12 @@
         });
         S.News.custom(st, 'General Amnesty Declared; Prisoners Walk Free', 'good');
         S.Aftermath.schedule(st, 'amnesty_consequence', {}, st.rng.int(1400, 2400));
-        return 'The gates opened at dawn. Some of those released will lead the opposition; that was always the trade.';
+        return 'Political prisoners were released this morning. Some will re-enter opposition politics.';
       }
     },
     {
       id: 'emergency', dept: 'interior', name: 'Declare a State of Emergency',
-      desc: 'Curfews, detention powers, suspended assembly. It works, and the country remembers.',
+      desc: 'Curfews, detention powers and suspended assembly. Suppresses unrest now; builds lasting resentment.',
       cost: {}, cooldown: 900, danger: true, confirm: true,
       run: (st) => {
         st.society.unrest = Math.max(0, st.society.unrest - 18);
@@ -600,14 +639,14 @@
           if (f.id === 'reformers' || f.id === 'intelligentsia') f.loyalty -= 14;
         });
         S.News.custom(st, 'State of Emergency Declared Nationwide', 'bad');
-        return 'The curfew took effect at midnight. The streets are quiet, which is not the same as calm.';
+        return 'The curfew took effect at midnight. Unrest has fallen; resentment has not.';
       }
     },
 
     /* ------------------------------------------------------- TREASURY */
     {
       id: 'stimulus', dept: 'treasury', name: 'Fiscal Stimulus Package',
-      desc: 'Spend into the economy now and argue about the debt later.',
+      desc: 'A large one-off injection of public spending. Raises demand and confidence; adds to debt and inflation.',
       cost: { moneyPct: 1.60 }, cooldown: 900,
       run: (st) => {
         st.economy.shock += 1.8;
@@ -616,12 +655,12 @@
         st.economy.inflation += 0.7;
         st.factions.forEach((f) => { if (f.id === 'labour') f.loyalty += 6; });
         S.News.custom(st, 'Government Announces Major Stimulus Package', 'good');
-        return 'The money starts moving next quarter. So does the argument about how it will be paid for.';
+        return 'Disbursement begins next quarter across construction, transfers and procurement.';
       }
     },
     {
       id: 'consolidate', dept: 'treasury', name: 'Emergency Consolidation',
-      desc: 'Cut every department by an eighth before the market does it for you.',
+      desc: 'Cut every department by an eighth to restore market confidence.',
       cost: { approval: -9, unrest: 6 }, cooldown: 700,
       run: (st) => {
         for (const m in st.budget.alloc) st.budget.alloc[m] *= 0.875;
@@ -632,7 +671,7 @@
           if (f.id === 'business') f.loyalty += 10;
           if (f.id === 'labour' || f.id === 'provinces') f.loyalty -= 9;
         });
-        return 'Every department has been cut by an eighth. The bond desk is relieved and nobody else is.';
+        return 'Every department has been cut by an eighth. Borrowing costs are easing; public services will feel the reduction within months.';
       }
     },
     {
@@ -651,7 +690,7 @@
     },
     {
       id: 'swf', dept: 'treasury', name: 'Establish a Sovereign Wealth Fund',
-      desc: 'Put the surplus somewhere your successors cannot casually spend it.',
+      desc: 'Constitute a fund with an independent mandate to invest the surplus.',
       cost: {}, cooldown: 4000,
       requires: (st) => st.economy.swf == null && st.economy.deficit < 0,
       unavailable: (st) => st.economy.swf != null ? 'The fund already exists.' : 'Requires a budget surplus.',
@@ -662,26 +701,53 @@
         return 'The fund is constituted with an independent board and a mandate written to be hard to change.';
       }
     },
+    {
+      id: 'cookbooks', dept: 'treasury', name: 'Adjust the Published Statistics', illegal: true,
+      desc: 'Publish growth and inflation figures better than the truth. Confidence improves now; a credibility crisis follows if the working papers surface.',
+      cost: {}, cooldown: 900,
+      run: (st) => {
+        st.economy.consumerConfidence += 6; st.economy.businessConfidence += 5;
+        st.society.approval += 3;
+        if (st.rng.chance(0.30)) S.Aftermath.schedule(st, 'covert_exposure', { op: 'cookbooks' }, st.rng.int(220, 720));
+        return 'The statistical office has published the adjusted series. Confidence has improved; the working papers are locked away.';
+      }
+    },
+    {
+      id: 'shadowexports', dept: 'treasury', name: 'Shadow Export Network', programme: true, illegal: true,
+      desc: 'A concealed trading network moving sanctioned goods through third countries. Steady income while it holds; a scandal if traced.',
+      cost: { moneyPct: 0.05 }, cooldown: 2600,
+      requires: (st) => st.diplomacy.nations.some((n) => !n.absorbedBy && n.sanctioningUs) &&
+        !st.programmes.some((p) => p.key === 'shadowexports'),
+      unavailable: (st) => st.programmes.some((p) => p.key === 'shadowexports') ? 'Already running.' : 'No sanctions to evade.',
+      run: (st) => {
+        Act.startProgramme(st, {
+          key: 'shadowexports', name: 'Shadow Export Network', dept: 'treasury', years: 4, costPct: 0.05,
+          desc: 'Restricted trade through intermediaries.', perYear: { 'economy.shock': 0.30 }, covert: true
+        });
+        if (st.rng.chance(0.40)) S.Aftermath.schedule(st, 'covert_exposure', { op: 'shadowexports' }, st.rng.int(400, 1400));
+        return 'The front companies are registered and the first cargoes have cleared. Nothing links them to us on paper.';
+      }
+    },
 
     /* --------------------------------------------------- INTELLIGENCE */
     {
       id: 'cisweep', dept: 'intel', name: 'Counter-Intelligence Sweep',
       desc: 'Vet, re-vet and roll up whatever is found inside the service.',
-      cost: { moneyPct: 0.05 }, cooldown: 700,
+      cost: { moneyPct: 0.05, money: 0.15 }, cooldown: 700,
       run: (st) => {
         if (st.rng.chance(0.45 + st.intel.strength / 400)) {
           st.intel.strength = S.clamp(st.intel.strength + 8, 0, 100);
           st.quality.security += 3;
-          return 'The sweep found two networks and closed both. Product reliability should improve within the year.';
+          return 'The sweep found two foreign networks and closed both. Product reliability should improve within the year.';
         }
         st.intel.strength -= 2; st.quality.admin -= 1;
-        return 'The sweep found nothing and left a service that now suspects itself.';
+        return 'The sweep found nothing. Morale inside the service has suffered.';
       }
     },
     {
       id: 'covertop', dept: 'intel', name: 'Authorise a Covert Operation', target: 'nation',
-      desc: 'Degrade a rival from the inside. Deniable, until it isn\'t.',
-      cost: { moneyPct: 0.08 }, cooldown: 600, danger: true,
+      desc: 'A deniable operation to degrade a rival state from within. Exposure carries a serious diplomatic price.',
+      cost: { moneyPct: 0.08, money: 0.3 }, cooldown: 600, danger: true,
       requires: (st) => st.intel.strength > 35,
       unavailable: () => 'The service is not capable of it.',
       run: (st, n) => {
@@ -691,25 +757,55 @@
           n.milPower *= 0.95;
           st.intel.strength += 4;
           S.News.custom(st, 'Unexplained Crisis Grips ' + n.name, '');
-          return 'The operation succeeded and nothing traces back. ' + n.name + ' is weaker and does not know why.';
+          return 'The operation succeeded without attribution. ' + n.name + '\'s capabilities are measurably degraded.';
         }
         n.relation -= 25; n.grievance = (n.grievance || 0) + 28;
         st.national.prestige -= 8; st.world.tension += 8;
         st.diplomacy.nations.forEach((o) => { o.relation -= 4; });
         S.News.custom(st, 'Our Operatives Exposed in ' + n.name, 'bad');
-        return 'It was blown. Our officers are on television in handcuffs and the denial fooled nobody.';
+        return 'The operation was exposed. Our officers are in custody abroad and the denial is not believed.';
       }
     },
     {
       id: 'cyber', dept: 'intel', name: 'Offensive Cyber Programme', programme: true,
-      desc: 'Three years to build a capability that every rival already claims not to have.',
+      desc: 'A three-year programme to build an offensive cyber capability.',
       cost: { moneyPct: 0.20 }, cooldown: 2600,
       requires: (st) => st.quality.science > 35 && !st.flags.cyberCapable && !st.programmes.some((p) => p.key === 'cyber'),
       unavailable: (st) => st.flags.cyberCapable ? 'The capability exists.' : 'Requires a stronger scientific base.',
       run: (st) => {
         Act.startProgramme(st, prog('cyber', 'Offensive Cyber Programme', 'intel', 3, 0.20,
           'A national offensive cyber capability.', { 'intel.strength': 1.2 }));
-        return 'Recruitment has begun from the universities, quietly and at salaries the civil service does not normally pay.';
+        return 'Recruitment from the universities has begun under classified contracts.';
+      }
+    },
+    {
+      id: 'blackpropaganda', dept: 'intel', name: 'Domestic Influence Directorate', programme: true, illegal: true,
+      desc: 'A covert unit placing favourable coverage and discrediting critics in the domestic press. Effective, illegal, and damaging if uncovered.',
+      cost: { moneyPct: 0.03 }, cooldown: 2600,
+      requires: (st) => !st.programmes.some((p) => p.key === 'blackpropaganda'),
+      unavailable: () => 'Already running.',
+      run: (st) => {
+        Act.startProgramme(st, {
+          key: 'blackpropaganda', name: 'Domestic Influence Directorate', dept: 'intel', years: 3, costPct: 0.03,
+          desc: 'Covert media placement and pressure.', perYear: { 'society.approval': 0.9, 'society.latent': 0.5 }, covert: true
+        });
+        if (st.rng.chance(0.35)) S.Aftermath.schedule(st, 'covert_exposure', { op: 'blackpropaganda' }, st.rng.int(350, 1100));
+        return 'The directorate is operating out of an unmarked annex. Editors have begun taking its calls.';
+      }
+    },
+    {
+      id: 'darkmoney', dept: 'intel', name: 'Foreign Influence Accounts', programme: true, illegal: true,
+      desc: 'Undeclared funding for friendly editors, officials and parties abroad. Builds influence steadily; a diplomatic scandal if traced.',
+      cost: { moneyPct: 0.04 }, cooldown: 2600,
+      requires: (st) => st.intel.strength > 30 && !st.programmes.some((p) => p.key === 'darkmoney'),
+      unavailable: (st) => st.programmes.some((p) => p.key === 'darkmoney') ? 'Already running.' : 'The service cannot run it securely.',
+      run: (st) => {
+        Act.startProgramme(st, {
+          key: 'darkmoney', name: 'Foreign Influence Accounts', dept: 'intel', years: 4, costPct: 0.04,
+          desc: 'Undeclared influence funding abroad.', perYear: { 'national.softPower': 0.7 }, covert: true
+        });
+        if (st.rng.chance(0.35)) S.Aftermath.schedule(st, 'covert_exposure', { op: 'darkmoney' }, st.rng.int(400, 1300));
+        return 'The accounts are open and the first disbursements have cleared through three intermediary jurisdictions.';
       }
     }
   ];
@@ -729,7 +825,7 @@
     if (a.requires && !a.requires(st)) {
       return { ok: false, reason: a.unavailable ? a.unavailable(st) : 'Not available now' };
     }
-    const money = (a.cost && a.cost.moneyPct) ? (a.cost.moneyPct / 100) * st.economy.gdp : 0;
+    const money = Act.opCost(st, a);
     if (money > 0 && st.economy.reserves + st.economy.gdp * 0.05 < money) {
       return { ok: false, reason: 'The Treasury cannot fund it' };
     }
@@ -738,7 +834,8 @@
 
   Act.costLabel = function (st, a) {
     const bits = [];
-    if (a.cost && a.cost.moneyPct) bits.push(S.money((a.cost.moneyPct / 100) * st.economy.gdp) + (a.programme ? '/yr' : ''));
+    const money = Act.opCost(st, a);
+    if (money) bits.push(S.money(money) + (a.programme ? '/yr' : ''));
     if (a.cost && a.cost.approval) bits.push('Approval ' + S.signed(a.cost.approval, 0));
     if (a.cost && a.cost.unrest) bits.push('Unrest ' + S.signed(a.cost.unrest, 0));
     if (a.programme) bits.push('multi-year programme');
@@ -753,7 +850,10 @@
     st.actionCooldown[a.id] = S.absDay(st.date) + (a.cooldown || 365);
 
     if (a.cost) {
-      if (a.cost.moneyPct && !a.programme) pay(st, a.cost.moneyPct);
+      if (!a.programme) {
+        const amt = Act.opCost(st, a);
+        if (amt) pay(st, amt);
+      }
       if (a.cost.approval) st.society.approval += a.cost.approval;
       if (a.cost.unrest) st.society.unrest += a.cost.unrest;
     }

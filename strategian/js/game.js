@@ -371,7 +371,7 @@
       st.counters.lastDecisionDay = abs;
       G.rollDecision(st);
     }
-    if (abs - st.counters.lastEventDay >= st.rng.int(18, 34)) {
+    if (abs - st.counters.lastEventDay >= st.rng.int(30, 55)) {
       st.counters.lastEventDay = abs;
       G.rollEvent(st);
     }
@@ -585,6 +585,11 @@
     const def = S.Decisions.BY_ID[id];
     if (!def) return null;
     if (st.inbox.length >= G.MAX_INBOX + 3) return null;
+    // A matter concerning a state that no longer exists is not a matter.
+    if (ctx && ctx.nation) {
+      const cn = S.dip(st, ctx.nation);
+      if (cn && cn.absorbedBy) return null;
+    }
     if (st.inbox.some((i) => i.def.id === id && JSON.stringify(i.ctx) === JSON.stringify(ctx || {}))) return null;
     const item = {
       uid: S.uid('dec'), def: def, ctx: ctx || {},
@@ -779,7 +784,7 @@
     };
     const milWin = milIndex >= 88 && lead >= 20 && defeated >= 3 && st.national.prestige >= 75;
 
-    const affine = st.diplomacy.nations.filter((n) => n.affinity >= 60).length;
+    const affine = st.diplomacy.nations.filter((n) => !n.absorbedBy && n.affinity >= 60).length;
     vp.culture = {
       pct: S.clamp((
         S.clamp(st.quality.culture / 88, 0, 1) * 0.24 +
@@ -896,6 +901,10 @@
     st.counters.decisionGap = st.counters.decisionGap || {};
     if (!st.roster) G.buildRoster(st);
     st.rulings = st.rulings || {};
+    st.foreignWars = (st.foreignWars || []).map((fw) => ({
+      a: fw.a, b: fw.b, started: fw.started, months: fw.months || 0,
+      score: fw.score || 0, intensity: fw.intensity || 55, casA: fw.casA || 0, casB: fw.casB || 0
+    }));
     st.autoPaused = false;
     st.settings = st.settings || {};
     if (st.settings.autoResume == null) st.settings.autoResume = true;

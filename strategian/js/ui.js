@@ -371,6 +371,7 @@
         h += '<div class="option' + (s.ok ? '' : ' off') + '" data-run="' + a.id + '">' +
           '<div class="ol">' + esc(a.name) +
           (a.danger ? ' <span class="tag c-clay tiny">grave</span>' : '') +
+          (a.illegal ? ' <span class="tag c-plum tiny">off the books</span>' : '') +
           (a.programme ? ' <span class="tag c-steel tiny">programme</span>' : '') +
           (a.target ? ' <span class="tag c-plum tiny">pick a nation</span>' : '') + '</div>' +
           '<div class="od">' + esc(a.desc) + '</div>' +
@@ -395,7 +396,7 @@
   UI.launchAction = function (a, after) {
     const st = S.game.state;
     if (a.target === 'nation') {
-      const list = st.diplomacy.nations.filter((n) => !a.targetFilter || a.targetFilter(st, n));
+      const list = S.Dip.active(st).filter((n) => !a.targetFilter || a.targetFilter(st, n));
       const body = '<div class="brief-text"><p>' + esc(a.desc) + '</p>' +
         '<p class="small dim">' + esc(S.Actions.costLabel(st, a)) + '</p></div>' +
         '<div class="caps" style="margin:14px 0 6px">Choose a target</div><div class="options">' +
@@ -415,15 +416,24 @@
       S.qsa('[data-nat]', modal).forEach((d) => {
         d.onclick = () => {
           const n = S.dip(st, d.dataset.nat);
-          if (a.confirm && !confirm(a.name + ' — ' + n.name + '. This cannot be undone. Proceed?')) return;
-          UI.closeModal();
-          const text = S.Actions.run(st, a, n);
-          UI.actionResult(a, text, after);
+          const go = () => {
+            UI.closeModal();
+            const text = S.Actions.run(st, a, n);
+            UI.actionResult(a, text, after);
+          };
+          if (a.confirm) UI.confirmAsk(a.name + ' — ' + n.name + '. This cannot be undone.', go, { title: a.name, yesLabel: a.name });
+          else go();
         };
       });
       return;
     }
-    if (a.confirm && !confirm(a.name + '. This cannot be undone. Proceed?')) return;
+    if (a.confirm) {
+      UI.confirmAsk(a.name + '. This cannot be undone.', () => {
+        const text = S.Actions.run(st, a, null);
+        UI.actionResult(a, text, after);
+      }, { title: a.name, yesLabel: 'Proceed' });
+      return;
+    }
     const text = S.Actions.run(st, a, null);
     UI.actionResult(a, text, after);
   };
@@ -462,11 +472,10 @@
       });
       card.innerHTML = h;
       S.qsa('[data-cancel]', card).forEach((b) => {
-        b.onclick = () => {
-          if (!confirm('Cancel this programme? Everything spent so far is lost.')) return;
+        b.onclick = () => UI.confirmAsk('Cancel this programme? Money already spent is not recovered.', () => {
           S.Actions.cancelProgramme(st, b.dataset.cancel);
           paint(); UI.onTick(true);
-        };
+        }, { title: 'Cancel programme', yesLabel: 'Cancel it' });
       });
     }
     paint();
@@ -778,7 +787,12 @@
       const b = el('button', { data: { v: v } }, name);
       b.onclick = () => {
         if (v === 'directed') {
-          if (!st.flags.bankDirected && !confirm('Taking direct control of the central bank permanently damages inflation credibility. Proceed?')) return;
+          if (!st.flags.bankDirected) {
+            UI.confirmAsk('Direct control of the central bank permanently damages inflation credibility.', () => {
+              st.flags.bankDirected = true; paintCb(); UI.dirty = true;
+            }, { title: 'Direct the central bank', yesLabel: 'Take control' });
+            return;
+          }
           st.flags.bankDirected = true;
         } else { st.flags.bankDirected = false; st.flags.bankCaptured = false; }
         paintCb(); UI.dirty = true;
@@ -1168,6 +1182,9 @@
     grid.appendChild(c1); grid.appendChild(c2);
     main.appendChild(grid);
 
+    const budgetCard = el('div.card#warBudget', { style: { marginTop: '14px' } });
+    main.appendChild(budgetCard);
+
     const btns = el('div.btn-row', { style: { marginTop: '14px' } });
     const bb = el('button.btn.primary', {}, 'Read the Chief of Staff\'s Situation Brief');
     bb.onclick = () => UI.showBriefing(S.Brief.military(st));
@@ -1192,7 +1209,7 @@
         let h = '<div class="card-h"><h3>Operations</h3></div>';
         if (!st.wars.length) {
           h += '<div class="empty">No active operations. The forces are training.</div>';
-          h += '<div class="notice" style="margin-top:8px">War is started by events, ultimatums or your own decisions — see the Foreign Ministry to declare one deliberately.</div>';
+          h += '<div class="notice" style="margin-top:8px">To start a war deliberately, use Declare War in the Initiatives panel above, or open a nation\'s options in the Foreign Ministry.</div>';
         } else {
           st.wars.forEach((w) => {
             const n = w.enemyId ? S.dip(st, w.enemyId) : null;
@@ -1214,7 +1231,9 @@
               '<div class="small dim">Cost <b>' + S.money(w.annualCost) + '</b>/yr</div>' +
               '<div class="small dim">Intensity <b>' + S.round(w.intensity, 0) + '</b></div>' +
               '</div>' +
-              (n ? '<div class="btn-row" style="margin-top:10px"><button class="btn sm" data-sue="' + w.id + '">Seek terms</button></div>' : '') +
+              '<div class="btn-row" style="margin-top:10px">' +
+              (w.type === 'conventional' ? '<button class="btn sm primary" data-directive="' + w.id + '">Issue an operational directive</button>' : '') +
+              (n ? '<button class="btn sm" data-sue="' + w.id + '">Seek terms</button>' : '') + '</div>' +
               (w.events.length ? '<div class="caps" style="margin:12px 0 4px">Field reports</div>' +
                 w.events.slice(0, 4).map((e2) => '<div class="small ' + (e2.tone === 'good' ? 'c-sage' : e2.tone === 'bad' ? 'c-clay' : 'dim') + '">' +
                   esc(e2.date) + ' — ' + esc(e2.text) + '</div>').join('') : '') +
@@ -1229,12 +1248,60 @@
             if (w) { w.posture = pb.dataset.posture; w.intensity = S.clamp(w.intensity + (pb.dataset.posture === 'full' ? 15 : pb.dataset.posture === 'withdraw' ? -25 : 0), 15, 100); UI.pageRefresh(); }
             return;
           }
+          const db = ev.target.closest('button[data-directive]');
+          if (db) {
+            const w = st.wars.find((x) => x.id === db.dataset.directive);
+            if (w) {
+              let item = st.inbox.find((i) => i.def.id === 'war_directive' && i.ctx.war === w.id);
+              if (!item) item = S.game.pushDecision('war_directive', { war: w.id });
+              if (item) UI.openDecision(item);
+            }
+            return;
+          }
           const sb = ev.target.closest('button[data-sue]');
           if (sb) {
             const w = st.wars.find((x) => x.id === sb.dataset.sue);
             if (w && w.enemyId) { S.Nego.open(st, 'peace', w.enemyId, { war: w.id }); S.game.setSpeed(0); UI.openNegotiation(); }
           }
         };
+      }
+
+      const bud = document.getElementById('warBudget');
+      if (bud) {
+        const pol = st.policy.mil;
+        const doc = S.Mil.DOCTRINES[pol.doctrine];
+        const np = S.Mil.NUCLEAR_POSTURES[pol.nuclearPosture];
+        const spend = m.spendAbs;
+        const rnd = pol.rndShare / 100;
+        const nuc = Math.min(0.20, np.cost * 0.06);
+        const wPers = 0.34 + pol.veteranCare * 0.0022 + pol.conscription * 0.0016;
+        const wProc = 0.26;
+        const wOps = 0.16 + pol.readinessTarget * 0.0018 + (st.wars.length ? 0.05 : 0);
+        const wInf = 0.10 + doc.reach * 0.06;
+        const wSum = wPers + wProc + wOps + wInf;
+        const rest = Math.max(0, 1 - rnd - nuc);
+        const lines = [
+          ['Personnel & pensions', rest * wPers / wSum, 'pay and support for ' + S.headcount(m.manpower) + ' under arms'],
+          ['Procurement', rest * wProc / wSum, 'equipment stock ' + S.round(m.equipment, 0) + '/100'],
+          ['Operations & maintenance', rest * wOps / wSum, 'readiness target ' + S.round(pol.readinessTarget, 0)],
+          ['Bases & infrastructure', rest * wInf / wSum, 'doctrine: ' + doc.name.toLowerCase()],
+          ['Research & development', rnd, 'technology level ' + S.round(m.tech, 0) + '/100'],
+          ['Nuclear forces', nuc, np.name.toLowerCase()]
+        ].filter((l) => l[1] > 0.001);
+        const warCost = S.sum(st.wars, (w) => w.annualCost);
+        bud.innerHTML = '<div class="card-h"><h3>Defence Budget Review</h3><span class="spacer"></span>' +
+          '<span class="hint">' + S.money(spend) + ' a year · ' + S.round(st.budget.alloc.defense, 2) + '% of GDP</span></div>' +
+          '<table class="data"><thead><tr><th>Line</th><th style="width:30%"></th><th class="num">Share</th><th class="num">Annual</th><th>Driver</th></tr></thead><tbody>' +
+          lines.map((l) => '<tr><td>' + esc(l[0]) + '</td><td>' + S.meter(l[1] * 100, { color: 'steel' }) + '</td>' +
+            '<td class="num">' + S.round(l[1] * 100, 0) + '%</td>' +
+            '<td class="num">' + S.money(spend * l[1]) + '</td>' +
+            '<td class="small dim">' + esc(l[2]) + '</td></tr>').join('') +
+          '</tbody></table>' +
+          '<div class="grid g3" style="margin-top:10px">' +
+          kpi('Cost per 100,000 troops', S.money(spend / Math.max(0.05, m.manpower) * 0.1), 'force of ' + S.headcount(m.manpower)) +
+          kpi('War fighting costs', warCost ? S.money(warCost) + '/yr' : 'None', st.wars.length ? 'funded on top of the defence line' : 'no active operations') +
+          kpi('Benchmark', S.round(S.Econ.BENCHMARK.defense, 1) + '% of GDP', 'spending is ' + (st.budget.alloc.defense >= S.Econ.BENCHMARK.defense ? 'above' : 'below') + ' the reference level') +
+          '</div>';
       }
 
       let rows = '';
@@ -1307,6 +1374,8 @@
     main.appendChild(UI.initiativeBlock('foreign'));
     const table = el('div.card', { style: { marginTop: '14px' } });
     main.appendChild(table);
+    const abroad = el('div.card#warsAbroad', { style: { marginTop: '14px' } });
+    main.appendChild(abroad);
 
     UI.pageRefresh = function () {
       live.innerHTML = '<div class="grid g4" style="margin-bottom:14px">' +
@@ -1320,7 +1389,7 @@
       if (rn) rn.onclick = () => UI.openNegotiation();
 
       let rows = '';
-      st.diplomacy.nations.slice().sort((a, b) => b.relation - a.relation).forEach((n) => {
+      S.Dip.active(st).slice().sort((a, b) => b.relation - a.relation).forEach((n) => {
         const tr = n.treaties.map((t) => '<span class="tag c-steel tiny">' + esc(S.Dip.TREATIES[t].name.split(' ')[0]) + '</span>').join(' ');
         rows += '<tr data-nat="' + n.id + '"><td class="nat-row"><span class="flagdot c-' + n.color + '" style="background:currentColor"></span><b>' + esc(n.name) + '</b>' +
           (n.nuclear ? ' <span class="tag c-clay tiny">N</span>' : '') + (n.allyOfUs ? ' <span class="tag c-sage tiny">Ally</span>' : '') +
@@ -1341,6 +1410,51 @@
         const b = ev.target.closest('button[data-open]');
         if (b) UI.nationOptions(S.dip(st, b.dataset.open));
       };
+
+      const ab = document.getElementById('warsAbroad');
+      if (ab) {
+        const fws = st.foreignWars || [];
+        const gone = st.diplomacy.nations.filter((n) => n.absorbedBy);
+        let h = '<div class="card-h"><h3>Wars Abroad</h3><span class="spacer"></span>' +
+          '<span class="hint">conflicts we are not party to · positions are intelligence estimates</span></div>';
+        if (!fws.length) h += '<div class="empty">No wars between foreign powers at present.</div>';
+        fws.forEach((fw) => {
+          const A = S.dip(st, fw.a), B = S.dip(st, fw.b);
+          if (!A || !B) return;
+          const blur = (1 - st.intel.accuracy) * 24;
+          const est = S.clamp((fw.score || 0) + Math.sin(fw.months * 3.7) * blur, -100, 100);
+          const word = est > 45 ? A.name + ' holds a decisive advantage' :
+            est > 15 ? A.name + ' has the advantage' :
+            est < -45 ? B.name + ' holds a decisive advantage' :
+            est < -15 ? B.name + ' has the advantage' : 'The front is assessed as static';
+          h += '<div class="li" style="padding:10px 0;border-bottom:1px solid var(--line-soft)">' +
+            '<div style="display:flex;gap:8px;align-items:baseline;flex-wrap:wrap">' +
+            '<b>' + esc(A.name) + '</b> <span class="dim tiny">vs</span> <b>' + esc(B.name) + '</b>' +
+            '<span class="spacer" style="flex:1"></span>' +
+            '<span class="tiny dim">since ' + esc(fw.started) + ' · month ' + fw.months + '</span></div>' +
+            '<div class="warscore" style="margin-top:6px"><div class="fill c-' + (est >= 0 ? 'steel' : 'clay') + '" style="' +
+            (est >= 0 ? 'left:50%;width:' + (est / 2) + '%' : 'left:' + (50 + est / 2) + '%;width:' + (-est / 2) + '%') +
+            ';background:currentColor"></div><div class="mid"></div></div>' +
+            '<div class="grid g3" style="margin-top:6px;gap:6px">' +
+            '<div class="small dim">' + esc(word) + '</div>' +
+            '<div class="small dim">Est. dead: <b>' + S.headcount(((fw.casA || 0) + (fw.casB || 0)) / 1e6) + '</b></div>' +
+            '<div class="small dim">Intensity <b>' + S.round(fw.intensity || 50, 0) + '</b></div>' +
+            '</div>' +
+            '<div class="btn-row" style="margin-top:6px">' +
+            '<button class="btn sm ghost" data-open="' + A.id + '">' + esc(A.name) + ' options</button>' +
+            '<button class="btn sm ghost" data-open="' + B.id + '">' + esc(B.name) + ' options</button></div></div>';
+        });
+        if (gone.length) {
+          h += '<div class="caps" style="margin:12px 0 4px">Former states</div>' +
+            gone.map((n) => '<div class="small dim">' + esc(n.name) + ' — annexed by ' +
+              esc((S.dip(st, n.absorbedBy) || {}).name || 'a neighbour') + '.</div>').join('');
+        }
+        ab.innerHTML = h;
+        ab.onclick = (ev) => {
+          const b = ev.target.closest('button[data-open]');
+          if (b) UI.nationOptions(S.dip(st, b.dataset.open));
+        };
+      }
     };
     UI.pageRefresh();
   };
@@ -1368,15 +1482,101 @@
         can: n.treaties.indexOf('intel') < 0 && n.relation > 40,
         run: () => { S.Dip.signTreaty(st, n.id, 'intel'); UI.closeModal(); UI.pageRefresh(); }
       });
+      const gwCost = Math.min(st.economy.gdp * 0.006, 2.5 * S.Actions.opScale(st));
       acts.push({
-        label: 'Send a goodwill package', desc: 'Aid, credit and a state visit. Costs reserves, buys relations.',
-        can: st.economy.reserves > st.economy.gdp * 0.006,
-        run: () => { st.economy.reserves -= st.economy.gdp * 0.006; n.relation += 10; n.affinity += 3; S.game.event('A goodwill package was despatched to ' + n.name + '.', 'good'); UI.closeModal(); UI.pageRefresh(); }
+        label: 'Send a goodwill package', desc: 'Aid, credit and a state visit. Costs ' + S.money(gwCost) + ' in reserves; improves relations.',
+        can: st.economy.reserves > gwCost,
+        run: () => { st.economy.reserves -= gwCost; n.relation += 10; n.affinity += 3; S.game.event('A goodwill package was despatched to ' + n.name + '.', 'good'); UI.closeModal(); UI.pageRefresh(); }
+      });
+      const theirWar = (st.foreignWars || []).find((fw) => fw.a === n.id || fw.b === n.id);
+      acts.push({
+        label: 'Offer to mediate their war', desc: 'Convene talks to end the war they are fighting. Succeeds more often with high prestige.',
+        can: !!theirWar && st.national.prestige > 30,
+        run: () => {
+          UI.closeModal();
+          st.national.softPower += 2;
+          if (st.rng.chance(0.35 + st.national.prestige / 220)) {
+            S.Dip.resolveForeignWar(st, theirWar, 'truce', 'mediated');
+            st.national.prestige += 7; st.national.diplomaticWins++;
+            S.game.event('Our mediation has produced a ceasefire between ' + (S.dip(st, theirWar.a) || {}).name + ' and ' + (S.dip(st, theirWar.b) || {}).name + '.', 'good');
+          } else {
+            S.game.event('The mediation round ended without agreement. Both delegations have gone home.', '');
+          }
+          UI.pageRefresh();
+        }
       });
       acts.push({
         label: 'Impose sanctions', desc: 'Cut them off. Damages both economies and hardens their position.',
         can: n.tradeStatus !== 'embargo',
         run: () => { n.tradeStatus = 'embargo'; n.relation -= 25; n.grievance = (n.grievance || 0) + 20; st.world.tension += 4; S.News.custom(st, 'Sanctions Imposed on ' + n.name, ''); UI.closeModal(); UI.pageRefresh(); }
+      });
+      acts.push({
+        label: 'Lift sanctions', desc: 'Restore trade to a restricted footing. A concession they will register.',
+        can: n.tradeStatus === 'embargo' && !n.atWar,
+        run: () => { n.tradeStatus = 'restricted'; n.relation += 9; n.grievance = Math.max(0, (n.grievance || 0) - 8); S.News.custom(st, 'Sanctions on ' + n.name + ' Lifted', ''); UI.closeModal(); UI.pageRefresh(); }
+      });
+      acts.push({
+        label: 'Bribe senior officials', desc: 'Payments to people close to their leadership in exchange for favourable treatment. Deniable, illegal, effective when it holds.',
+        illegal: true, can: st.intel.strength > 25,
+        run: () => {
+          UI.closeModal();
+          const cost = 0.15 * S.Actions.opScale(st);
+          st.economy.reserves = Math.max(0, st.economy.reserves - cost);
+          if (st.rng.chance(0.62 + st.intel.strength / 400)) {
+            n.relation += 13; n.affinity += 4;
+            S.game.event('The channel to ' + n.name + ' is open and paid for. Their position on our files has softened.', 'good');
+          } else {
+            n.relation -= 22; n.grievance = (n.grievance || 0) + 18;
+            st.national.prestige -= 5; st.society.corruption += 1;
+            S.News.custom(st, 'Bribery Attempt Exposed in ' + n.name, 'bad');
+            S.game.event('The approach was reported to their counter-intelligence service. Two of our officers are being expelled.', 'bad');
+          }
+          UI.pageRefresh();
+        }
+      });
+      acts.push({
+        label: 'Fund their opposition', desc: 'Covert financing for movements against their government. Weakens them if sustained; a hostile act if traced.',
+        illegal: true, can: st.intel.strength > 35 && n.relation < 20,
+        run: () => {
+          UI.closeModal();
+          const cost = 0.25 * S.Actions.opScale(st);
+          st.economy.reserves = Math.max(0, st.economy.reserves - cost);
+          if (st.rng.chance(0.55 + st.intel.strength / 350)) {
+            n.power = Math.max(6, n.power * 0.96); n.milPower *= 0.98;
+            S.game.event('The funding is moving through intermediaries. Street pressure inside ' + n.name + ' is building.', 'good');
+          } else {
+            n.relation -= 28; n.grievance = (n.grievance || 0) + 24; st.world.tension += 5;
+            S.News.custom(st, n.name + ' Accuses Us of Financing Subversion', 'bad');
+            S.game.event('The transfers were traced. ' + n.name + ' has recalled its ambassador.', 'bad');
+          }
+          UI.pageRefresh();
+        }
+      });
+      acts.push({
+        label: 'Sponsor a coup', desc: 'Back officers prepared to remove their government. Success installs a friendly regime; failure is a diplomatic disaster.',
+        illegal: true, danger: true, can: st.intel.strength > 55 && n.relation < 0,
+        run: () => {
+          UI.confirmAsk('Sponsor a coup in ' + n.name + '? If it fails, our hand will show.', () => {
+            UI.closeModal();
+            const cost = 0.5 * S.Actions.opScale(st);
+            st.economy.reserves = Math.max(0, st.economy.reserves - cost);
+            const p = S.clamp(0.22 + st.intel.strength / 250 - n.power / 320, 0.05, 0.55);
+            if (st.rng.chance(p)) {
+              n.relation = 48; n.affinity += 18; n.grievance = 0; n.sanctioningUs = false;
+              n.power = Math.max(6, n.power * 0.88);
+              st.world.tension += 6;
+              S.News.custom(st, 'Government Falls in ' + n.name + '; New Leadership Seeks Ties With Us', '');
+              S.game.event('The new government in ' + n.name + ' owes its position to us. Nothing traces back — for now.', 'good');
+            } else {
+              n.relation = -75; n.grievance = (n.grievance || 0) + 45;
+              st.world.tension += 12; st.national.prestige -= 12; st.national.softPower -= 8;
+              if (n.power > 50) n.sanctioningUs = true;
+              S.News.custom(st, 'Failed Coup in ' + n.name + ' Traced to Our Services', 'bad');
+              S.game.event('The plotters were arrested before they moved, and they talked. ' + n.name + ' holds us responsible.', 'bad');
+            }
+            UI.pageRefresh();
+          }, { title: 'Sponsor a coup', yesLabel: 'Proceed' });
+        }
       });
       acts.push({
         label: 'Deliver an ultimatum', desc: 'Demand a change in their behaviour and open crisis talks.',
@@ -1387,11 +1587,12 @@
         label: 'Declare war', desc: 'The final instrument. There is no undo.', danger: true,
         can: n.relation < 10,
         run: () => {
-          if (!confirm('Declare war on ' + n.name + '? This cannot be undone.')) return;
-          S.Mil.startWar(st, n.id, { aggressor: true, intensity: 60, homeSupport: 55 });
-          st.national.aggressionScore += 25;
-          st.diplomacy.nations.forEach((o) => { if (o.id !== n.id) o.relation -= 12; });
-          UI.closeModal(); UI.go('war');
+          UI.confirmAsk('Declare war on ' + n.name + '? This cannot be undone.', () => {
+            S.Mil.startWar(st, n.id, { aggressor: true, intensity: 60, homeSupport: 55 });
+            st.national.aggressionScore += 25;
+            st.diplomacy.nations.forEach((o) => { if (o.id !== n.id) o.relation -= 12; });
+            UI.closeModal(); UI.go('war');
+          }, { title: 'Declare war', yesLabel: 'Declare war' });
         }
       });
     }
@@ -1412,7 +1613,8 @@
       ' · grievance ' + S.round(n.grievance || 0, 0) + '</p></div>' +
       '<div class="options">' + acts.filter((a) => a.can).map((a, i) =>
         '<div class="option" data-act="' + i + '"><div class="ol">' + esc(a.label) +
-        (a.danger ? ' <span class="tag c-clay tiny">grave</span>' : '') + '</div>' +
+        (a.danger ? ' <span class="tag c-clay tiny">grave</span>' : '') +
+        (a.illegal ? ' <span class="tag c-plum tiny">off the books</span>' : '') + '</div>' +
         '<div class="od">' + esc(a.desc) + '</div></div>').join('') + '</div>';
 
     const modal = UI.showModal({
@@ -1488,7 +1690,7 @@
     main.innerHTML = html;
     document.getElementById('btnSave').onclick = () => S.game.saveNow();
     document.getElementById('btnExport').onclick = () => S.game.exportSave();
-    document.getElementById('btnNew').onclick = () => { if (confirm('Abandon this game and return to setup?')) { S.game.setSpeed(0); S.game.deleteSave(); UI.showSetup(); } };
+    document.getElementById('btnNew').onclick = () => UI.confirmAsk('Abandon this game and return to setup?', () => { S.game.setSpeed(0); S.game.deleteSave(); UI.showSetup(); }, { title: 'Abandon game', yesLabel: 'Abandon' });
     document.getElementById('btnImport').onclick = () => {
       const inp = el('input', { type: 'file', accept: '.json' });
       inp.onchange = () => {
@@ -1533,6 +1735,32 @@
     if (o) o.parentNode.removeChild(o);
   };
 
+  /* Stacked yes/no confirmation. Browser confirm() is unavailable in several
+     embedded hosts (it silently returns false), so nothing in the game may
+     call it — every irreversible step goes through here instead. */
+  UI.confirmAsk = function (text, onYes, opts) {
+    opts = opts || {};
+    const old = document.getElementById('confirmOverlay');
+    if (old) old.parentNode.removeChild(old);
+    const ov = el('div.overlay#confirmOverlay', { style: { zIndex: '400' } });
+    const m = el('div.modal', { style: { maxWidth: '460px' } });
+    m.innerHTML = '<div class="modal-h"><div class="eyebrow"><span class="caps">' + esc(opts.eyebrow || 'Confirm') + '</span></div>' +
+      '<h2>' + esc(opts.title || 'Are you certain?') + '</h2></div>' +
+      '<div class="modal-b"><div class="brief-text"><p>' + esc(text) + '</p></div></div>' +
+      '<div class="modal-f"></div>';
+    const foot = S.qs('.modal-f', m);
+    function close() { if (ov.parentNode) ov.parentNode.removeChild(ov); }
+    const no = el('button.btn.ghost', {}, opts.noLabel || 'Back');
+    const yes = el('button.btn.' + (opts.safe ? 'primary' : 'danger'), {}, opts.yesLabel || 'Proceed');
+    no.onclick = close;
+    yes.onclick = () => { close(); onYes(); };
+    foot.appendChild(no); foot.appendChild(yes);
+    ov.appendChild(m);
+    ov.addEventListener('click', (e) => { if (e.target === ov) close(); });
+    document.body.appendChild(ov);
+    return m;
+  };
+
   /* -------------------------------------------------- decision modal -- */
   UI.effectChips = function (option) {
     let chips = '';
@@ -1551,6 +1779,7 @@
       }
     }
     if (option.risk) chips += '<span class="eff risk">' + S.round(option.risk.p * 100, 0) + '% risk: ' + esc(option.risk.text) + '</span>';
+    if (option.illegal) chips += '<span class="eff risk">off the books</span>';
     if (option.opensNegotiation) chips += '<span class="eff">opens negotiations</span>';
     return chips;
   };
@@ -1709,7 +1938,7 @@
       title: S.Nego.title(st, nego), body: body, wide: true, sticky: true,
       footer: [
         { label: 'Accept their text', cls: 'ghost', id: 'negoAccept', act: () => { S.Nego.acceptTheirs(st, nego); UI.finishNegotiation(); } },
-        { label: 'Walk away', cls: 'danger', act: () => { if (confirm('Leave the table without agreement?')) { nego.status = 'walked'; UI.finishNegotiation(); } } },
+        { label: 'Walk away', cls: 'danger', act: () => UI.confirmAsk('Leave the table without agreement?', () => { nego.status = 'walked'; UI.finishNegotiation(); }, { title: 'Walk away', yesLabel: 'Walk away' }) },
         { label: 'Table this offer', cls: 'primary', act: () => UI.submitNego() }
       ]
     });
@@ -1776,7 +2005,7 @@
       body: '<div class="brief-text"><p>' +
         (status === 'accepted'
           ? 'The text was initialled with ' + esc(n ? n.name : 'the counterparty') + '. Our delegation rates the outcome as ' +
-          (yourU > 0.62 ? 'a clear success.' : yourU > 0.45 ? 'a workable compromise.' : 'a defeat dressed as a settlement.')
+          (yourU > 0.62 ? 'a clear success.' : yourU > 0.45 ? 'a workable compromise.' : 'an unfavourable settlement.')
           : 'The delegations have gone home. Relations have suffered and the underlying dispute is unchanged.') +
         '</p></div>' + (status === 'accepted' ? '<div class="caps" style="margin:12px 0 6px">Agreed terms</div>' + summary : ''),
       footer: [{ label: 'Close', cls: 'primary', act: () => { UI.closeModal(); UI.onTick(true); } }]
@@ -1796,7 +2025,7 @@
       footer: [
         { label: 'Save', cls: '', act: () => { S.game.saveNow(); UI.closeModal(); } },
         { label: 'Export file', cls: 'ghost', act: () => S.game.exportSave() },
-        { label: 'New game', cls: 'danger', act: () => { if (confirm('Abandon this game?')) { S.game.setSpeed(0); UI.closeModal(); UI.showSetup(); } } },
+        { label: 'New game', cls: 'danger', act: () => UI.confirmAsk('Abandon this game?', () => { S.game.setSpeed(0); UI.closeModal(); UI.showSetup(); }, { title: 'New game', yesLabel: 'Abandon' }) },
         { label: 'Close', cls: 'primary', act: () => UI.closeModal() }
       ]
     });

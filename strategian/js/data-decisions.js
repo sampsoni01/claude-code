@@ -151,35 +151,35 @@
       id: 'budget_annual', core: true, cat: 'budget', title: 'The Annual Budget Framework',
       from: 'Minister of Finance', urgency: 'pressing', deadline: 21,
       weight: (st) => (st.date.month === 9 ? 40 : 0),
-      brief: (st) => `<p>The framework for next year must go to the printers within three weeks. The Treasury has modelled three envelopes.</p>
-        <p>Current programme spending runs at ${S.round(S.sum(S.MINISTRIES, (m) => st.budget.alloc[m.id]), 1)}% of output against revenue of ${S.round(st.economy.revenue / st.economy.gdp * 100, 1)}%. Debt stands at ${S.round(st.economy.debtGdp, 0)}% of GDP and the market is charging us ${S.round(st.economy.bondYield, 1)}% to borrow.</p>`,
+      brief: (st) => `<p>The budget framework for next year must be finalised within three weeks. The Treasury has modelled three envelopes.</p>
+        <p>Current programme spending runs at ${S.round(S.sum(S.MINISTRIES, (m) => st.budget.alloc[m.id]), 1)}% of output against revenue of ${S.round(st.economy.revenue / st.economy.gdp * 100, 1)}%. Debt stands at ${S.round(st.economy.debtGdp, 0)}% of GDP and the current market borrowing rate is ${S.round(st.economy.bondYield, 1)}%.</p>`,
       advisors: (st) => [
-        { who: 'Finance Minister', role: 'Treasury', said: st.economy.debtGdp > 90 ? 'We are one bad auction from a crisis. Consolidate now while it is still our choice.' : 'We have room. The question is whether we spend it on the future or on the present.' },
-        { who: 'Chief Economist', role: 'Central Bank', said: st.economy.inflation > 6 ? 'A loose budget with inflation here will force me to raise rates into your growth.' : 'Demand is adequate. A modest expansion would not be inflationary.' },
-        { who: 'Chief Whip', role: 'Legislature', said: 'Cuts are how governments lose votes. Every line has a constituency.' }
+        { who: 'Finance Minister', role: 'Treasury', said: st.economy.debtGdp > 90 ? 'Debt is high enough that one failed auction could trigger a crisis. We should consolidate now, on our own terms.' : 'We have fiscal room. The choice is between current spending and long-term investment.' },
+        { who: 'Chief Economist', role: 'Central Bank', said: st.economy.inflation > 6 ? 'With inflation at this level, an expansionary budget will force offsetting rate rises.' : 'Demand is adequate. A modest expansion would not be inflationary.' },
+        { who: 'Chief Whip', role: 'Legislature', said: 'Spending cuts carry a high electoral cost. Every programme has organised beneficiaries.' }
       ],
       options: [
         {
-          label: 'Consolidation budget', detail: 'Trim every ministry by roughly a tenth. Debt falls, so does everything else.',
+          label: 'Consolidation budget', detail: 'Reduce every ministry allocation by about 10%. Lowers debt; reduces services and approval.',
           effects: { 'society.approval': -6, 'economy.shock': -0.8, 'society.unrest': +4 },
           fn: (st) => { for (const m in st.budget.alloc) st.budget.alloc[m] *= 0.90; },
           factions: { business: +7, labour: -8, provinces: -5, reformers: -2 },
           headline: 'Austerity Budget Cuts Across Every Department'
         },
         {
-          label: 'Steady-state budget', detail: 'Hold the line. No heroics, no wounds.',
+          label: 'Steady-state budget', detail: 'Maintain current allocations without change.',
           effects: { 'society.approval': +1 }, factions: {},
           headline: 'Budget Holds Course; No Major Changes'
         },
         {
-          label: 'Expansionary budget', detail: 'Add roughly a tenth across the board and borrow the difference.',
+          label: 'Expansionary budget', detail: 'Increase all allocations by about 10%, funded by borrowing. Raises demand, inflation and debt.',
           effects: { 'society.approval': +6, 'economy.shock': +0.9, 'economy.inflation': +0.8 },
           fn: (st) => { for (const m in st.budget.alloc) st.budget.alloc[m] *= 1.10; },
           factions: { labour: +8, provinces: +6, business: -4 },
           headline: 'Government Announces Major Spending Package'
         },
         {
-          label: 'Rebalance toward the future', detail: 'Shift money from current consumption into education, research and infrastructure.',
+          label: 'Rebalance toward investment', detail: 'Shift funds from welfare into education, research and infrastructure.',
           effects: { 'society.approval': -3, 'budget.alloc.education': +0.6, 'budget.alloc.research': +0.5, 'budget.alloc.infra': +0.5, 'budget.alloc.welfare': -1.4 },
           factions: { intelligentsia: +9, business: +4, labour: -7, reformers: +6 },
           headline: 'Budget Shifts Billions from Welfare to Investment'
@@ -193,39 +193,39 @@
       brief: (st, ctx) => {
         const f = D.flavour(st, ctx);
         const framing = D.variant(st, ctx, 'frame', [
-          `<p>The commission you appointed has reported. Its central finding is uncomfortable: we are taxing the compliant heavily and the evasive not at all.</p>`,
-          `<p>A leak has put ${f.firm}'s tax affairs on every front page. The arrangement was legal, which has made the coverage worse rather than better.</p>`,
-          `<p>The Revenue Service has quietly told the Treasury it is losing the war. Collection in ${f.region} has become notional, and the professions have discovered the same three structures that ${f.firm} uses.</p>`
+          `<p>The commission you appointed has reported. Its central finding: compliant taxpayers face high effective rates while widespread evasion goes uncollected.</p>`,
+          `<p>Leaked documents have made ${f.firm}'s tax arrangements public. The arrangements were legal; press and public reaction is strongly negative.</p>`,
+          `<p>The Revenue Service has informed the Treasury that enforcement is failing. Collection in ${f.region} has largely ceased, and the avoidance structures used by ${f.firm} are spreading to the professions.</p>`
         ]);
         return framing + `<p>Effective income tax stands at ${st.policy.tax.income}%, corporation tax at ${st.policy.tax.corporate}%, and the informal economy consumes ${S.round(st.economy.informal, 0)}% of activity. Revenue is ${S.round(st.economy.revenue / st.economy.gdp * 100, 1)}% of output against spending of ${S.round(st.economy.spending / st.economy.gdp * 100, 1)}%.</p>`;
       },
       advisors: () => [
-        { who: 'Revenue Commissioner', role: 'Collection', said: 'Give me enforcement powers and I will find you more money than any rate rise.' },
-        { who: 'Business Council', role: 'Industry', said: 'Every point on the corporate rate is a factory that opens somewhere else.' },
-        { who: 'Union Congress', role: 'Labour', said: 'Wealth is untouched in this country. Fix that before you touch a wage packet.' }
+        { who: 'Revenue Commissioner', role: 'Collection', said: 'Stronger enforcement powers would raise more revenue than any rate increase.' },
+        { who: 'Business Council', role: 'Industry', said: 'Raising the corporate rate will push investment and production abroad.' },
+        { who: 'Union Congress', role: 'Labour', said: 'Wealth is effectively untaxed. Tax it before raising taxes on wages.' }
       ],
       options: [
         {
-          label: 'Broaden the base, cut the rates', detail: 'Close exemptions, lower headline rates, tax more people less.',
+          label: 'Broaden the base, cut the rates', detail: 'Close exemptions and lower headline rates. Broadens the tax base and reduces evasion.',
           effects: { 'policy.tax.income': -3, 'policy.tax.corporate': -3, 'economy.informal': -4, 'economy.businessConfidence': +6, 'society.approval': -2 },
           factions: { business: +8, reformers: +5, labour: -4 },
           headline: 'Tax Overhaul: Lower Rates, Fewer Loopholes'
         },
         {
-          label: 'Tax wealth and capital', detail: 'Introduce or raise a wealth levy and lift capital taxation.',
+          label: 'Tax wealth and capital', detail: 'Introduce a wealth levy and raise capital taxation. Reduces inequality; risks capital flight.',
           effects: { 'policy.tax.wealth': +0.6, 'policy.tax.corporate': +3, 'society.inequality': -3, 'economy.businessConfidence': -8, 'society.approval': +4 },
           factions: { labour: +11, reformers: +6, business: -14 },
           risk: { p: 0.25, text: 'Capital flight', fn: (st) => { st.economy.reserves -= st.economy.gdp * 0.012; st.economy.shock -= 0.8; } },
           headline: 'Wealth Levy Announced; Markets React'
         },
         {
-          label: 'Enforcement blitz', detail: 'Fund the revenue service properly and prosecute visibly.',
+          label: 'Enforcement campaign', detail: 'Increase Revenue Service funding and prosecute evasion publicly.',
           effects: { 'budget.alloc.admin': +0.25, 'economy.informal': -6, 'society.corruption': -4, 'quality.admin': +3, 'society.approval': -1 },
           factions: { reformers: +9, business: -5, provinces: -3 },
           headline: 'Revenue Service Given Sweeping New Powers'
         },
         {
-          label: 'Shelve the report', detail: 'Thank the commission. File it.',
+          label: 'Shelve the report', detail: 'Take no action on the recommendations.',
           effects: { 'society.approval': +1, 'society.corruption': +1 },
           factions: { reformers: -6, business: +2 }
         }
@@ -238,8 +238,8 @@
       brief: (st) => `<p>A large tranche of paper matures next quarter into a market charging ${S.round(st.economy.bondYield, 1)}%. At current spreads, rolling it costs an extra ${S.money(st.economy.debt * 0.012)} a year in service.</p>
         <p>Our rating is ${st.economy.creditRating}. Reserves cover ${S.round(st.economy.reserveMonths, 1)} months of imports.</p>`,
       advisors: (st) => [
-        { who: 'Debt Manager', role: 'Treasury', said: 'We can roll it, but we are paying a fear premium. That premium is a political fact, not an economic one.' },
-        { who: 'Central Bank Governor', role: 'Monetary', said: st.economy.inflation > 8 ? 'If you ask me to buy this debt, I am printing money into an inflation. Ask me anyway and I will do it, but say it out loud.' : 'I could absorb some of it without much price effect.' }
+        { who: 'Debt Manager', role: 'Treasury', said: 'We can roll the debt, but the current premium reflects market doubt about our position, not fundamentals.' },
+        { who: 'Central Bank Governor', role: 'Monetary', said: st.economy.inflation > 8 ? 'Direct purchases would add money creation to existing high inflation. I will comply if directed, but the cost should be stated.' : 'I could absorb some of it without much price effect.' }
       ],
       options: [
         {
@@ -249,7 +249,7 @@
           factions: { business: +4 }, headline: 'Treasury Rolls Debt at Higher Yields'
         },
         {
-          label: 'Have the central bank absorb it', detail: 'Monetise. Cheap today, inflationary tomorrow.',
+          label: 'Have the central bank absorb it', detail: 'Finance the tranche by money creation. Low immediate cost; raises inflation.',
           effects: { 'economy.inflation': +2.2, 'economy.reserveStatus': -6, 'economy.businessConfidence': -6 },
           fn: (st) => { st.policy.monetary.emission = S.clamp(st.policy.monetary.emission + 10, 0, 100); },
           factions: { business: -9, labour: +2 }, headline: 'Central Bank to Purchase Government Debt Directly'
@@ -261,7 +261,7 @@
           factions: { business: +8, labour: -8, provinces: -6 }, headline: 'Spending Freeze Announced Ahead of Debt Auction'
         },
         {
-          label: 'Approach the multilateral lenders', detail: 'A programme, with conditions written by strangers.',
+          label: 'Approach the multilateral lenders', detail: 'Request a lending programme. Provides reserves; conditions include subsidy cuts.',
           effects: { 'economy.reserves': 0, 'society.approval': -7, 'national.prestige': -6, 'economy.reserveStatus': +14 },
           fn: (st) => { st.economy.reserves += st.economy.gdp * 0.04; st.flags.imfProgramme = true; st.policy.econ.subsidies = Math.max(0, st.policy.econ.subsidies - 15); },
           then: { id: 'imf_review', days: 540 },
@@ -276,22 +276,22 @@
       id: 'central_bank_independence', cat: 'economy', title: 'The Question of the Central Bank',
       from: 'Office of the Leader', urgency: 'routine', deadline: 25,
       weight: (st) => (st.economy.inflation > 7 || st.policy.monetary.rate > 9) ? 16 : 5,
-      brief: (st) => `<p>The Governor has set rates at ${S.round(st.policy.monetary.rate, 1)}% against inflation of ${S.round(st.economy.inflation, 1)}%. Business is complaining loudly; households are complaining louder.</p>
-        <p>The statute allows you to direct the Bank. No government has done it in living memory. Doing so would be legal, effective in the short term, and remembered.</p>`,
+      brief: (st) => `<p>The Governor has set rates at ${S.round(st.policy.monetary.rate, 1)}% against inflation of ${S.round(st.economy.inflation, 1)}%. Businesses and households are pressing for lower rates.</p>
+        <p>The statute allows the government to direct the Bank. No government has used the power in decades. A direction would lower rates quickly but would permanently damage monetary credibility.</p>`,
       advisors: () => [
-        { who: 'Bank Governor', role: 'Monetary', said: 'The moment you direct me, the yield curve stops believing anything either of us says.' },
-        { who: 'Political Adviser', role: 'Office', said: 'People do not vote for institutional independence. They vote for mortgage payments.' }
+        { who: 'Bank Governor', role: 'Monetary', said: 'A government direction would immediately damage monetary credibility and raise long-term borrowing costs.' },
+        { who: 'Political Adviser', role: 'Office', said: 'Voters respond to borrowing costs, not institutional arrangements. A rate cut would be popular.' }
       ],
       options: [
-        { label: 'Reaffirm independence in law', detail: 'Entrench it. Tie your own hands publicly.',
+        { label: 'Reaffirm independence in law', detail: 'Entrench independence in statute. Strengthens credibility; forgoes control of rates.',
           effects: { 'economy.businessConfidence': +9, 'economy.reserveStatus': +5, 'society.approval': -3, 'economy.inflation': -0.6 },
           factions: { business: +10, intelligentsia: +6, labour: -4 }, headline: 'Central Bank Independence Written into Law' },
-        { label: 'Leave the arrangement alone', detail: 'No change. No headlines.', effects: {}, factions: {} },
-        { label: 'Direct the Bank to cut rates', detail: 'Growth now, credibility later.',
+        { label: 'Leave the arrangement alone', detail: 'No change to the current arrangement.', effects: {}, factions: {} },
+        { label: 'Direct the Bank to cut rates', detail: 'Order a 3-point cut. Raises growth now; raises inflation and damages credibility.',
           effects: { 'economy.shock': +1.2, 'economy.inflation': +1.8, 'economy.businessConfidence': -10, 'economy.reserveStatus': -8, 'society.approval': +5 },
           fn: (st) => { st.policy.monetary.rate = Math.max(0, st.policy.monetary.rate - 3); st.flags.bankDirected = true; },
           factions: { business: -12, labour: +6, reformers: -8 }, headline: 'Government Orders Rate Cut; Governor Silent' },
-        { label: 'Replace the Governor', detail: 'A new appointment with a better understanding of the national interest.',
+        { label: 'Replace the Governor', detail: 'Install a compliant Governor. Secures control of rates; markets will react badly.',
           effects: { 'economy.businessConfidence': -16, 'economy.reserveStatus': -10, 'society.corruption': +3, 'economy.inflation': +1.0 },
           fn: (st) => { st.flags.bankCaptured = true; }, requires: (st) => !democratic(st) || st.society.approval > 55,
           factions: { business: -16, reformers: -12, nationalists: +5 }, headline: 'Central Bank Governor Dismissed' }
@@ -304,22 +304,22 @@
       brief: (st) => `<p>The currency has fallen to ${S.round(st.economy.fx, 1)} against its launch value and the selling has become disorderly. Reserves stand at ${S.money(st.economy.reserves)} — ${S.round(st.economy.reserveMonths, 1)} months of imports.</p>
         <p>Import prices are already feeding through. The Bank wants a decision before the market opens.</p>`,
       advisors: (st) => [
-        { who: 'Bank Governor', role: 'Monetary', said: 'Defending this costs reserves we may need for food and fuel. Raising rates costs jobs. There is no third door.' },
-        { who: 'Finance Minister', role: 'Treasury', said: 'A devaluation is a wage cut nobody voted for. It will be felt in the shops within a fortnight.' }
+        { who: 'Bank Governor', role: 'Monetary', said: 'Defending the currency spends reserves needed for food and fuel imports. Raising rates costs output and jobs. Those are the available instruments.' },
+        { who: 'Finance Minister', role: 'Treasury', said: 'A devaluation cuts real wages and will raise consumer prices within two weeks.' }
       ],
       options: [
-        { label: 'Defend the currency with reserves', detail: 'Intervene hard. Spend the war chest.',
+        { label: 'Defend the currency with reserves', detail: 'Intervene with reserves to support the rate. Costly; the effect may not hold.',
           effects: { 'economy.reserveStatus': -8 },
           fn: (st) => { st.economy.reserves -= st.economy.gdp * 0.03; st.economy.fx *= 1.06; },
           factions: { business: +4, labour: +2 }, headline: 'Central Bank Intervenes Heavily to Defend Currency' },
-        { label: 'Raise rates sharply', detail: 'Make holding the currency worth it. Break the economy to save the money.',
+        { label: 'Raise rates sharply', detail: 'A 5-point emergency rise. Supports the currency at significant cost to output.',
           effects: { 'economy.shock': -1.6, 'society.approval': -5 },
           fn: (st) => { st.policy.monetary.rate = Math.min(35, st.policy.monetary.rate + 5); },
           factions: { business: -6, labour: -9 }, headline: 'Emergency Rate Rise as Currency Slides' },
-        { label: 'Impose capital controls', detail: 'Stop the money leaving. Everyone will remember that you did.',
+        { label: 'Impose capital controls', detail: 'Restrict capital outflows. Halts the run; deters future investment.',
           effects: { 'policy.monetary.capitalControls': +35, 'economy.businessConfidence': -14, 'economy.reserveStatus': -6 },
           factions: { business: -15, labour: +5, nationalists: +6 }, headline: 'Capital Controls Imposed Overnight' },
-        { label: 'Let it float and manage the fallout', detail: 'Accept the devaluation. Cushion the poorest.',
+        { label: 'Let it float and manage the fallout', detail: 'Accept a devaluation; provide targeted support for low incomes. Raises inflation.',
           effects: { 'economy.inflation': +3.5, 'society.approval': -6, 'society.unrest': +5, 'economy.shock': +0.4 },
           fn: (st) => { st.policy.monetary.regime = 'float'; st.economy.fx *= 0.90; },
           factions: { business: +3, labour: -8 }, headline: 'Currency Left to Float; Sharp Fall Expected' }
@@ -332,19 +332,19 @@
       brief: (st, ctx) => {
         const f = D.flavour(st, ctx);
         const framing = D.variant(st, ctx, 'frame', [
-          `<p>A foreign consortium controls the largest ${f.industry} complex in the country. It is efficient, it is profitable, and almost none of that profit stays here.</p>`,
-          `<p>${f.firm} has announced it is moving its ${f.industry} profits offshore through a structure our own lawyers helped design in the nineties.</p>`,
-          `<p>The ${f.industry} concession in ${f.region} comes up for renewal this year. The current terms were signed by a government nobody now defends.</p>`
+          `<p>A foreign consortium controls the largest ${f.industry} complex in the country. The operation is efficient and profitable; most profits are repatriated abroad.</p>`,
+          `<p>${f.firm} has announced it will move its ${f.industry} profits offshore through a legal structure dating from the 1990s.</p>`,
+          `<p>The ${f.industry} concession in ${f.region} is due for renewal this year. The current terms are widely regarded as unfavourable to the state.</p>`
         ]);
-        return framing + `<p>The nationalist bloc has been running the story for a month. The legal advice is that expropriation is available to us and would cost us in arbitration for a decade. State ownership currently stands at ${S.round(st.policy.econ.stateOwnership, 0)}/100.</p>`;
+        return framing + `<p>The nationalist bloc has campaigned on the issue for a month. Legal advice: expropriation is lawful under domestic statute but would bring roughly a decade of international arbitration. State ownership currently stands at ${S.round(st.policy.econ.stateOwnership, 0)}/100.</p>`;
       },
       advisors: (st) => [
-        { who: 'Industry Minister', role: 'Cabinet', said: 'We could run it. Not as well, and not immediately, but we could run it.' },
-        { who: 'Foreign Minister', role: 'Diplomacy', said: 'Take it and every investor in the world reprices this country tomorrow morning.' },
-        { who: 'Nationalist Caucus', role: 'Legislature', said: 'It is our ore. It has always been our ore.' }
+        { who: 'Industry Minister', role: 'Cabinet', said: 'The state could operate the complex, with some initial loss of efficiency.' },
+        { who: 'Foreign Minister', role: 'Diplomacy', said: 'Expropriation would immediately raise the risk premium on all foreign investment here.' },
+        { who: 'Nationalist Caucus', role: 'Legislature', said: 'The resource is national property and should be under national control.' }
       ],
       options: [
-        { label: 'Nationalise the complex', detail: 'Seize it. Compensate at book value, eventually.',
+        { label: 'Nationalise the complex', detail: 'Expropriate with deferred compensation at book value. Expect arbitration and investor withdrawal.',
           effects: { 'policy.econ.stateOwnership': +12, 'economy.businessConfidence': -18, 'national.prestige': -4, 'society.approval': +7, 'economy.reserves': +0 },
           fn: (st) => { st.economy.reserves += st.economy.gdp * 0.012; st.diplomacy.nations.forEach((n) => { n.relation -= 5; }); },
           then: [{ id: 'arbitration_ruling', days: 620 }, { id: 'soe_performance', days: 1500 }],
@@ -355,7 +355,7 @@
           effects: { 'economy.reserves': +0, 'policy.econ.stateOwnership': +4, 'economy.businessConfidence': -4, 'society.approval': +4 },
           fn: (st) => { st.economy.reserves += st.economy.gdp * 0.005; },
           factions: { nationalists: +7, business: -4, labour: +4 }, headline: 'Concession Terms Renegotiated on Better Terms' },
-        { label: 'Leave it alone', detail: 'Stability has a value that does not appear in any ledger.',
+        { label: 'Leave it alone', detail: 'Retain the current arrangement. Preserves investor confidence.',
           effects: { 'economy.businessConfidence': +5 },
           factions: { business: +7, nationalists: -9, labour: -4 } }
       ]
@@ -364,22 +364,22 @@
       id: 'subsidy_reform', cat: 'economy', title: 'The Fuel Subsidy',
       from: 'Ministry of Energy', urgency: 'pressing', deadline: 18,
       weight: (st) => st.policy.econ.subsidies > 45 || st.world.oil > 130 ? 20 : 6,
-      brief: (st) => `<p>Fuel and bread subsidies now consume a substantial share of the budget and rise every time the world price moves. At current levels they cost more than the education ministry.</p>
-        <p>Every government that has removed them has faced riots. Every government that has kept them has run out of money.</p>`,
+      brief: (st) => `<p>Fuel and bread subsidies consume a substantial share of the budget and rise with world prices. Their annual cost now exceeds the education budget.</p>
+        <p>Removal has caused serious unrest in comparable countries. Retention is fiscally unsustainable at current prices.</p>`,
       advisors: () => [
-        { who: 'Finance Minister', role: 'Treasury', said: 'This is the single largest transfer in the state, and most of it goes to people who own cars.' },
-        { who: 'Interior Minister', role: 'Security', said: 'The last time a government touched this, the capital burned for four days. I would like more police first.' }
+        { who: 'Finance Minister', role: 'Treasury', said: 'This is the largest single transfer in the budget, and most of the benefit goes to higher-income households.' },
+        { who: 'Interior Minister', role: 'Security', said: 'The last attempt to cut these subsidies caused four days of rioting in the capital. Security preparations should come first.' }
       ],
       options: [
-        { label: 'Remove subsidies overnight', detail: 'Rip the plaster off. Save the money, take the riot.',
+        { label: 'Remove subsidies overnight', detail: 'Immediate removal. Large fiscal saving; high probability of serious unrest.',
           effects: { 'policy.econ.subsidies': -35, 'society.unrest': +18, 'society.approval': -12, 'economy.inflation': +2.6, 'economy.shock': +0.5 },
           factions: { business: +10, labour: -14, reformers: +3 },
           risk: { p: 0.45, text: 'Mass unrest', fn: (st) => { st.society.unrest += 12; st.society.stability -= 8; } },
           headline: 'Fuel Subsidies Abolished; Prices Double Overnight' },
-        { label: 'Phase out over three years with cash transfers', detail: 'Slower, fairer, more expensive to administer.',
+        { label: 'Phase out over three years with cash transfers', detail: 'Gradual removal with compensating payments. Slower savings; lower unrest risk.',
           effects: { 'policy.econ.subsidies': -14, 'society.unrest': +5, 'society.approval': -4, 'quality.welfareQ': +3, 'budget.alloc.welfare': +0.5 },
           factions: { labour: -4, business: +5, reformers: +6 }, headline: 'Subsidy Reform Paired with Direct Cash Payments' },
-        { label: 'Keep them and find the money elsewhere', detail: 'The politically survivable answer.',
+        { label: 'Keep them and find the money elsewhere', detail: 'Retain subsidies; fund them by cutting infrastructure and research budgets.',
           effects: { 'society.approval': +4, 'economy.shock': -0.3 },
           fn: (st) => { st.budget.alloc.infra *= 0.93; st.budget.alloc.research *= 0.93; },
           factions: { labour: +7, business: -5, reformers: -5 } }
@@ -390,21 +390,21 @@
       from: 'Ministry of Science', urgency: 'routine', deadline: 30,
       weight: (st) => st.quality.science > 35 ? 11 : 4,
       brief: () => `<p>Three of our largest firms have proposed a state-backed consortium to build sovereign capability in advanced semiconductors and computing. They want capital, procurement guarantees and protection from imports.</p>
-        <p>It is industrial policy, which is either the reason nations rise or the reason treasuries empty, depending on which economist you ask.</p>`,
+        <p>The proposal is a large industrial-policy commitment. Comparable programmes abroad have produced both durable industries and sustained losses.</p>`,
       advisors: () => [
-        { who: 'Science Minister', role: 'Cabinet', said: 'Without this we rent our future from whoever owns the fabs.' },
-        { who: 'Treasury', role: 'Finance', said: 'The historical success rate of picking winners is not encouraging, and the losers keep asking for more.' }
+        { who: 'Science Minister', role: 'Cabinet', said: 'Without domestic capability we remain dependent on foreign suppliers for critical technology.' },
+        { who: 'Treasury', role: 'Finance', said: 'State-selected industrial ventures have a poor historical success rate, and unsuccessful ones tend to request further funding.' }
       ],
       options: [
-        { label: 'Fund it at scale', detail: 'A serious programme with serious money.',
+        { label: 'Fund it at scale', detail: 'Provide capital and procurement guarantees at the requested scale.',
           effects: { 'budget.alloc.research': +0.9, 'quality.science': +4, 'economy.businessConfidence': +5, 'economy.shock': +0.3 },
           factions: { business: +8, intelligentsia: +7, labour: +3 },
           risk: { p: 0.3, text: 'Programme flounders', fn: (st) => { st.society.corruption += 3; st.society.scandal -= 3; } },
           headline: 'State Backs National Semiconductor Consortium' },
-        { label: 'Fund research, not firms', detail: 'Money to universities and open labs instead.',
+        { label: 'Fund research, not firms', detail: 'Direct the funds to universities and public laboratories instead of the consortium.',
           effects: { 'budget.alloc.research': +0.5, 'quality.science': +3, 'quality.education': +1 },
           factions: { intelligentsia: +10, business: -3 }, headline: 'Government Doubles University Research Funding' },
-        { label: 'Decline', detail: 'Let the market decide. It usually does anyway.',
+        { label: 'Decline', detail: 'Reject the proposal and leave the sector to private investment.',
           effects: { 'economy.businessConfidence': -2 }, factions: { business: -5, intelligentsia: -4 } }
       ]
     },
@@ -419,14 +419,14 @@
         const jobs = Math.round(st.pop.total * 1000 * st.rng.range(0.3, 1.1));
         ctx.jobs = ctx.jobs || jobs;
         const framing = D.variant(st, ctx, 'frame', [
-          `<p>Cheap imports have taken a third of the domestic market in ${f.industry} and ${f.industry2} in four years. <b>${S.num(ctx.jobs)}</b> jobs sit in ${f.region}, which is to say in five parliamentary districts.</p>`,
-          `<p>${f.firm} has announced it will close its ${f.industry} works in ${f.region} unless the government acts on import competition. <b>${S.num(ctx.jobs)}</b> jobs go with it, and it is the only employer for forty miles.</p>`,
-          `<p>${f.union} has occupied the ${f.industry} plants in ${f.region} and will not leave until the government says something about imports. <b>${S.num(ctx.jobs)}</b> jobs are at stake and the pictures are on every bulletin.</p>`
+          `<p>Imports have taken a third of the domestic market in ${f.industry} and ${f.industry2} in four years. <b>${S.num(ctx.jobs)}</b> jobs are at risk, concentrated in ${f.region}.</p>`,
+          `<p>${f.firm} has announced it will close its ${f.industry} works in ${f.region} unless the government acts on import competition. <b>${S.num(ctx.jobs)}</b> jobs are at stake; the firm is the dominant employer in the area.</p>`,
+          `<p>${f.union} has occupied the ${f.industry} plants in ${f.region} pending a government response on import competition. <b>${S.num(ctx.jobs)}</b> jobs are at stake and media coverage is extensive.</p>`
         ]);
         return framing + `<p>Our current average tariff is ${S.round(st.policy.trade.tariff, 1)}%. Unemployment stands at ${S.round(st.economy.unemployment, 1)}%.</p>`;
       },
       advisors: () => [
-        { who: 'Trade Minister', role: 'Cabinet', said: 'Protection is a tax on our own consumers that we pay to a small number of firms. It is also how those firms survive to next year.' },
+        { who: 'Trade Minister', role: 'Cabinet', said: 'Protection raises prices for all consumers to support a small number of firms. It would, however, keep those firms operating.' },
         { who: 'Regional Governors', role: 'Provinces', said: 'Those towns have one employer. When it closes there is nothing else.' }
       ],
       options: [
@@ -439,7 +439,7 @@
         { label: 'Adjustment assistance instead', detail: 'Retraining, relocation grants, regional investment.',
           effects: { 'budget.alloc.welfare': +0.3, 'budget.alloc.education': +0.2, 'society.approval': +1, 'quality.education': +1 },
           factions: { labour: +4, provinces: +4, business: +3, reformers: +5 }, headline: 'Government Funds Retraining, Rejects Tariffs' },
-        { label: 'Do nothing', detail: 'Comparative advantage is not a policy you can announce.',
+        { label: 'Do nothing', detail: 'Take no action and allow the adjustment to run its course.',
           effects: { 'society.approval': -3, 'economy.shock': +0.2 },
           factions: { labour: -8, provinces: -7, business: +6 } }
       ]
@@ -449,16 +449,16 @@
       from: 'Ministry of Trade', urgency: 'urgent', deadline: 8,
       weight: (st) => st.world.tension > 45 ? 14 : 3,
       brief: (st) => `<p>A regional confrontation has closed one of the world's shipping chokepoints. Insurance for the route has become unobtainable overnight.</p>
-        <p>Roughly a fifth of our imports and a quarter of our energy transit that water. Oil is already at ${S.round(st.world.oil, 0)}.</p>`,
+        <p>Roughly a fifth of our imports and a quarter of our energy transit the strait. Oil is already at ${S.round(st.world.oil, 0)}.</p>`,
       advisors: () => [
         { who: 'Trade Minister', role: 'Cabinet', said: 'We have eleven days of commercial fuel stocks. After that it is rationing or the strategic reserve.' },
         { who: 'Chief of Naval Staff', role: 'Defence', said: 'We can escort. It commits us to a confrontation we may not want.' }
       ],
       options: [
-        { label: 'Release the strategic reserve', detail: 'Buy time. Lose the cushion.',
+        { label: 'Release the strategic reserve', detail: 'Cover the shortfall from stocks. Depletes the reserve.',
           effects: { 'quality.energy': -4, 'economy.inflation': -0.8, 'society.approval': +3 },
           headline: 'Strategic Reserves Released to Steady Fuel Prices' },
-        { label: 'Escort our shipping', detail: 'Send warships. Make the point.',
+        { label: 'Escort our shipping', detail: 'Deploy naval escorts for merchant traffic. Risks confrontation.',
           effects: { 'military.readiness': -5, 'world.tension': +8, 'national.prestige': +5, 'national.aggressionScore': +8 },
           factions: { military: +6, nationalists: +9 },
           risk: { p: 0.25, text: 'Naval incident', fn: (st) => { st.world.tension += 8; st.society.unrest += 3; } },
@@ -466,7 +466,7 @@
         { label: 'Ration and reroute', detail: 'Longer routes, higher costs, managed shortages.',
           effects: { 'economy.shock': -1.0, 'economy.inflation': +1.4, 'society.approval': -5, 'society.unrest': +4 },
           headline: 'Fuel Rationing Introduced as Shipping Reroutes' },
-        { label: 'Convene the trading powers', detail: 'A diplomatic solution, slowly.',
+        { label: 'Convene the trading powers', detail: 'Seek a negotiated reopening. Slower than the alternatives.',
           effects: { 'national.prestige': +4, 'world.tension': -4, 'economy.inflation': +0.8 },
           factions: { intelligentsia: +4 }, headline: 'Emergency Conference Convened on Shipping Crisis' }
       ]
@@ -481,28 +481,28 @@
         const f = D.flavour(st, ctx);
         const framing = D.variant(st, ctx, 'frame', [
           `<p>The main combat systems programme is four years late and has consumed twice its authorisation. The auditor has found irregularities in three of the five prime contracts, all of them held by ${f.firm}.</p>`,
-          `<p>${f.official} has resigned rather than sign off the annual procurement accounts. The letter of resignation is two pages long and names ${f.firm} on both of them.</p>`,
-          `<p>A shipment of equipment arrived at the ${f.region} depot and turned out to be a quarter of what was invoiced. The paperwork was in order, which is the part that worries the auditor.</p>`
+          `<p>${f.official} has resigned rather than certify the annual procurement accounts, citing irregularities in contracts held by ${f.firm}.</p>`,
+          `<p>A consignment received at the ${f.region} depot contained roughly a quarter of the equipment invoiced. The accompanying documentation had been approved at every stage.</p>`
         ]);
-        return framing + `<p>Readiness stands at ${S.round(st.military.readiness, 0)} and equipment at ${S.round(st.military.equipment, 0)}. Cancelling leaves a capability gap; continuing rewards failure.</p>`;
+        return framing + `<p>Readiness stands at ${S.round(st.military.readiness, 0)} and equipment at ${S.round(st.military.equipment, 0)}. Cancellation leaves a capability gap; continuation retains the current contractors.</p>`;
       },
       advisors: () => [
         { who: 'Chief of Staff', role: 'Defence', said: 'Whatever you decide, decide it this month. My commanders are training on equipment we told them would be replaced.' },
-        { who: 'Auditor General', role: 'Oversight', said: 'I can name the officials. Whether you want them named is a political question, not an accounting one.' }
+        { who: 'Auditor General', role: 'Oversight', said: 'I can name the responsible officials. Whether the names are published is a decision for the government.' }
       ],
       options: [
-        { label: 'Cancel and re-tender', detail: 'Take the capability gap. Restore the principle.',
+        { label: 'Cancel and re-tender', detail: 'Terminate the contracts and run a new tender. Accepts a capability gap in the interim.',
           effects: { 'military.equipment': -6, 'society.corruption': -4, 'society.approval': +3, 'quality.admin': +2 },
           factions: { military: -8, reformers: +10, business: -6 }, headline: 'Flagship Defence Programme Cancelled' },
-        { label: 'Restructure and continue', detail: 'New management, new milestones, same contractors.',
+        { label: 'Restructure and continue', detail: 'Replace programme management and reset milestones while retaining the contractors.',
           effects: { 'military.equipment': +2, 'economy.shock': -0.1, 'society.corruption': +1 },
           factions: { military: +5, business: +5, reformers: -5 }, headline: 'Defence Programme Restructured, Not Cancelled' },
-        { label: 'Prosecute publicly', detail: 'Arrests, cameras, a very clear signal.',
+        { label: 'Prosecute publicly', detail: 'Refer the named officials for prosecution, announced publicly.',
           effects: { 'society.corruption': -7, 'society.approval': +6, 'military.morale': -5, 'quality.admin': +2 },
           factions: { reformers: +14, military: -11, business: -9 },
           risk: { p: 0.3, text: 'Investigation reaches your own office', fn: (st) => { st.society.scandal -= 6; st.society.approval -= 4; } },
           headline: 'Senior Officials Arrested in Defence Procurement Case' },
-        { label: 'Bury the audit', detail: 'Classify it. Move on.',
+        { label: 'Bury the audit', detail: 'Classify the audit and take no further action.',
           effects: { 'society.corruption': +4, 'policy.interior.pressFreedom': -3 },
           factions: { military: +7, business: +6, reformers: -12 },
           risk: { p: 0.35, text: 'It leaks', fn: (st) => { st.society.scandal -= 10; st.society.approval -= 7; S.News.custom(st, 'Leaked Audit Reveals Buried Defence Scandal', 'bad'); } } }
@@ -515,21 +515,21 @@
       brief: (st) => `<p>The armed forces are ${S.headcount(st.military.manpower)} strong against an establishment they cannot fill. Recruitment has missed target for three years running.</p>
         <p>Conscription currently sits at ${st.policy.mil.conscription} on the national scale.</p>`,
       advisors: (st) => [
-        { who: 'Chief of Staff', role: 'Defence', said: st.wars.length ? 'I am rotating exhausted formations because there is nobody to replace them.' : 'A conscript army is a large army of indifferent soldiers. I would rather have fewer good ones.' },
+        { who: 'Chief of Staff', role: 'Defence', said: st.wars.length ? 'I am rotating exhausted formations because there is nobody to replace them.' : 'Conscription would add numbers but lower average quality. I would prefer a smaller professional force.' },
         { who: 'Education Minister', role: 'Cabinet', said: 'Every conscript is a student or an apprentice we do not get for two years.' }
       ],
       options: [
-        { label: 'Universal conscription', detail: 'Everyone serves. Mass, at the cost of quality and youth.',
+        { label: 'Universal conscription', detail: 'Require service from the full cohort. Increases numbers; reduces average quality and delays entry to education and work.',
           effects: { 'policy.mil.conscription': +35, 'military.readiness': -4, 'society.approval': -7, 'society.cohesion': +5, 'economy.shock': -0.4 },
           factions: { military: +8, nationalists: +11, labour: -6, reformers: -9, intelligentsia: -7 },
           headline: 'Universal Military Service Introduced' },
-        { label: 'Selective service expansion', detail: 'A larger draft pool, lottery selection.',
+        { label: 'Selective service expansion', detail: 'Enlarge the draft pool with selection by lottery.',
           effects: { 'policy.mil.conscription': +15, 'society.approval': -3, 'society.cohesion': +2 },
           factions: { military: +5, nationalists: +5, reformers: -4 } },
-        { label: 'Professionalise: better pay and conditions', detail: 'Buy soldiers instead of taking them.',
+        { label: 'Professionalise: better pay and conditions', detail: 'Raise pay and conditions to meet recruitment targets with volunteers.',
           effects: { 'budget.alloc.defense': +0.35, 'policy.mil.veteranCare': +12, 'military.morale': +7, 'military.readiness': +4 },
           factions: { military: +11, labour: +3 }, headline: 'Forces Pay Rise Announced in Recruitment Drive' },
-        { label: 'Abolish conscription entirely', detail: 'A smaller, volunteer force. Free the cohort.',
+        { label: 'Abolish conscription entirely', detail: 'Move to a smaller all-volunteer force; return the conscript cohort to the civilian economy.',
           effects: { 'policy.mil.conscription': -100, 'military.readiness': +3, 'society.approval': +5, 'economy.shock': +0.4 },
           factions: { military: -9, nationalists: -12, reformers: +10, intelligentsia: +8 },
           headline: 'Conscription Abolished; Forces to Go All-Volunteer' }
@@ -539,11 +539,11 @@
       id: 'nuclear_program', cat: 'military', title: 'The Nuclear Option',
       from: 'Strategic Directorate', urgency: 'routine', deadline: 30,
       weight: (st) => (st.military.nuclear < 25 && st.quality.science > 45 && st.world.tension > 35) ? 14 : 0,
-      brief: (st) => `<p>The directorate reports that we could field a credible deterrent within a decade. The physics is not the hard part; the hard part is what happens diplomatically the day the world finds out.</p>
+      brief: (st) => `<p>The directorate reports that we could field a credible deterrent within a decade. The technical requirements can be met; the principal cost is the diplomatic response once the programme becomes known.</p>
         <p>World tension stands at ${S.round(st.world.tension, 0)}. ${st.diplomacy.nations.filter((n) => n.nuclear).length} states already hold weapons.</p>`,
       advisors: () => [
-        { who: 'Strategic Director', role: 'Defence', said: 'No nuclear state has ever been invaded. That is the entire argument and it is a good one.' },
-        { who: 'Foreign Minister', role: 'Diplomacy', said: 'The sanctions regime that would follow is not survivable for an economy like ours. Ask anyone who has tried.' }
+        { who: 'Strategic Director', role: 'Defence', said: 'A deterrent is the strongest available guarantee against invasion. No nuclear-armed state has been invaded.' },
+        { who: 'Foreign Minister', role: 'Diplomacy', said: 'The sanctions regime that would follow would impose costs an economy of our size cannot absorb.' }
       ],
       options: [
         { label: 'Pursue weapons openly', detail: 'Withdraw from the framework and build.',
@@ -556,7 +556,7 @@
           fn: (st) => { st.policy.mil.nuclearPosture = 'latent'; },
           factions: { military: +6, nationalists: +6 },
           risk: { p: 0.3, text: 'The programme is exposed', fn: (st) => { st.diplomacy.nations.forEach((n) => { n.relation -= 10; }); st.world.tension += 8; S.News.custom(st, 'Foreign Intelligence Exposes Covert Nuclear Work', 'bad'); } } },
-        { label: 'Renounce and seek guarantees', detail: 'Trade the option for someone else\'s umbrella.',
+        { label: 'Renounce and seek guarantees', detail: 'Formally renounce weapons and seek security guarantees from an existing nuclear power.',
           effects: { 'world.tension': -6, 'national.prestige': +3, 'national.softPower': +5 },
           fn: (st) => { st.policy.mil.nuclearPosture = 'renounced'; st.diplomacy.nations.forEach((n) => { if (n.ideology === S.Dip.ownIdeology(st)) n.relation += 8; }); },
           factions: { intelligentsia: +9, nationalists: -12, military: -6 },
@@ -570,7 +570,7 @@
       brief: (st) => {
         const n = st.diplomacy.nations.filter((x) => x.relation < -30).sort((a, b) => a.relation - b.relation)[0];
         return `<p>A patrol exchanged fire with ${n ? n.adj : 'foreign'} forces at the frontier. Four of ours are dead. Their account differs from ours in every particular.</p>
-          <p>The wire services have the story. Whatever we say in the next four hours becomes the official position for years.</p>`;
+          <p>The wire services have the story. The position taken in the next four hours will be difficult to alter later.</p>`;
       },
       options: [
         { label: 'Retaliate proportionately', detail: 'A measured strike on the responsible unit.',
@@ -579,10 +579,10 @@
           factions: { military: +9, nationalists: +12 },
           risk: { p: 0.22, text: 'Escalation to open war', fn: (st) => { const n = st.diplomacy.nations.filter((x) => x.relation < -40)[0]; if (n) S.Mil.startWar(st, n.id, { aggressor: true, intensity: 55 }); } },
           headline: 'Retaliatory Strike Ordered After Border Deaths' },
-        { label: 'Protest and reinforce', detail: 'Diplomatic note, more troops, no shooting.',
+        { label: 'Protest and reinforce', detail: 'Lodge a formal protest and reinforce the frontier without military action.',
           effects: { 'world.tension': +3, 'military.readiness': -2, 'society.approval': +1 },
           factions: { military: +3, nationalists: -3 }, headline: 'Border Reinforced After Fatal Exchange' },
-        { label: 'Play it down', detail: 'Call it a misunderstanding. Bury it in the third bulletin.',
+        { label: 'Play it down', detail: 'Characterise the incident as a misunderstanding and minimise coverage.',
           effects: { 'world.tension': -2, 'society.approval': -4, 'policy.interior.pressFreedom': -2 },
           factions: { nationalists: -11, military: -6, intelligentsia: +2 } },
         { label: 'Propose a joint investigation', detail: 'Invite them to establish the facts with us.',
@@ -595,26 +595,26 @@
       id: 'doctrine_review', cat: 'military', title: 'Strategic Defence Review',
       from: 'Ministry of Defence', urgency: 'routine', deadline: 30,
       weight: (st) => (st.date.year % 5 === 0 ? 20 : 5),
-      brief: (st) => `<p>The five-yearly review is due. It asks the only question that matters: what are the armed forces actually for?</p>
+      brief: (st) => `<p>The five-yearly review is due. It requires a decision on the primary mission of the armed forces.</p>
         <p>Current doctrine: ${S.Mil.DOCTRINES[st.policy.mil.doctrine].name}. Force quality index ${S.round(st.military.quality, 0)}; world power ranking ${S.ordinal(S.Mil.worldRank(st).findIndex((x) => x.self) + 1)}.</p>`,
       advisors: () => [
-        { who: 'Chief of Staff', role: 'Defence', said: 'Tell me the mission and I will tell you the force. Do not tell me the budget first.' },
-        { who: 'Finance Minister', role: 'Treasury', said: 'I am telling you the budget first.' }
+        { who: 'Chief of Staff', role: 'Defence', said: 'The mission should be defined first; force structure and cost follow from it.' },
+        { who: 'Finance Minister', role: 'Treasury', said: 'The budget constraint is fixed. The mission must be defined within it.' }
       ],
       options: [
-        { label: 'Territorial defence', detail: 'Fortify home. Cheap, unglamorous, effective at exactly one thing.',
+        { label: 'Territorial defence', detail: 'Structure the forces for defence of national territory only. The lowest-cost option.',
           effects: { 'budget.alloc.defense': -0.4, 'national.prestige': -3, 'economy.shock': +0.2 },
           fn: (st) => { st.policy.mil.doctrine = 'defensive'; },
           factions: { military: -3, nationalists: -4, business: +5, labour: +3 } },
-        { label: 'Strategic deterrence', detail: 'Make attacking us obviously unprofitable.',
+        { label: 'Strategic deterrence', detail: 'Structure the forces to make any attack visibly costly to an aggressor.',
           effects: { 'national.prestige': +2, 'world.tension': +2 },
           fn: (st) => { st.policy.mil.doctrine = 'deterrence'; }, factions: { military: +5, nationalists: +4 } },
-        { label: 'Expeditionary power', detail: 'Reach. Bases, lift, carriers, and the bills that come with them.',
+        { label: 'Expeditionary power', detail: 'Build capacity to project force abroad: bases, transport and carriers. The highest-cost option.',
           effects: { 'budget.alloc.defense': +0.6, 'national.prestige': +8, 'world.tension': +6 },
           fn: (st) => { st.policy.mil.doctrine = 'expeditionary'; },
           factions: { military: +10, nationalists: +9, business: -4, labour: -5 },
           headline: 'Defence Review Commits to Global Power Projection' },
-        { label: 'Asymmetric defence', detail: 'Dispersed, cheap and painful to invade. Nobody gets a parade.',
+        { label: 'Asymmetric defence', detail: 'Structure for dispersed, low-cost resistance to invasion rather than conventional forces.',
           effects: { 'budget.alloc.defense': -0.6, 'national.prestige': -5, 'economy.shock': +0.3 },
           fn: (st) => { st.policy.mil.doctrine = 'asymmetric'; },
           factions: { military: -6, nationalists: -7, reformers: +5, business: +6 } }
@@ -626,20 +626,20 @@
       id: 'summit_invitation', cat: 'diplomacy', title: 'An Invitation to the Summit',
       from: 'Foreign Ministry', urgency: 'routine', deadline: 22,
       weight: () => 10,
-      brief: (st) => `<p>The major economies have invited us to a leaders' summit. The agenda is trade rules, climate finance and, unofficially, whether the current order survives the decade.</p>
-        <p>Our prestige stands at ${S.round(st.national.prestige, 0)}. Attendance is a statement; so is absence.</p>`,
+      brief: (st) => `<p>The major economies have invited us to a leaders' summit. The formal agenda covers trade rules and climate finance.</p>
+        <p>Our prestige stands at ${S.round(st.national.prestige, 0)}. Both attendance and absence will be read abroad as signals.</p>`,
       advisors: () => [
-        { who: 'Foreign Minister', role: 'Diplomacy', said: 'Rooms like this are where the rules get written. We can be at the table or on the menu.' },
-        { who: 'Nationalist Caucus', role: 'Legislature', said: 'Every communiqué we sign is a piece of sovereignty we hand to a committee.' }
+        { who: 'Foreign Minister', role: 'Diplomacy', said: 'The rules under discussion will apply to us whether or not we attend. Attendance gives us influence over their content.' },
+        { who: 'Nationalist Caucus', role: 'Legislature', said: 'Each communiqué we sign transfers a measure of sovereignty to an international body.' }
       ],
       options: [
-        { label: 'Attend and lead', detail: 'Table proposals. Spend political capital on the collective.',
+        { label: 'Attend and lead', detail: 'Attend, table proposals and commit resources to joint initiatives.',
           effects: { 'national.prestige': +7, 'national.softPower': +5, 'world.tension': -3, 'society.approval': -1 },
           fn: (st) => { st.diplomacy.nations.forEach((n) => { if (n.relation > 0) n.relation += 5; }); },
           factions: { intelligentsia: +6, business: +5, nationalists: -6 }, headline: 'Leader Takes Centre Stage at World Summit' },
-        { label: 'Attend quietly', detail: 'Show up. Say little. Sign nothing binding.',
+        { label: 'Attend quietly', detail: 'Attend without making binding commitments.',
           effects: { 'national.prestige': +2 }, factions: {} },
-        { label: 'Decline the invitation', detail: 'We do not need their table.',
+        { label: 'Decline the invitation', detail: 'Refuse attendance and accept the diplomatic cost.',
           effects: { 'national.prestige': -6, 'national.softPower': -4, 'society.approval': +2 },
           fn: (st) => { st.diplomacy.nations.forEach((n) => { if (n.power > 50) n.relation -= 5; }); },
           factions: { nationalists: +9, intelligentsia: -7 }, headline: 'Government Snubs World Summit' }
@@ -651,19 +651,19 @@
       weight: (st) => st.policy.foreign.aid > 30 ? 12 : 3,
       brief: () => `<p>An investigative outlet has traced a substantial share of last year's development assistance into the private accounts of officials in a recipient state — and into two firms with links to our own governing circle.</p>`,
       advisors: () => [
-        { who: 'Foreign Minister', role: 'Diplomacy', said: 'Every aid programme leaks. The question is whether this one leaked to us.' },
-        { who: 'Attorney General', role: 'Justice', said: 'I can open a file. Once opened, I do not control where it goes.' }
+        { who: 'Foreign Minister', role: 'Diplomacy', said: 'Some diversion occurs in every aid programme. The material question is whether funds returned to firms connected to this government.' },
+        { who: 'Attorney General', role: 'Justice', said: 'I can open an investigation. Its scope cannot be controlled once it begins.' }
       ],
       options: [
-        { label: 'Full public inquiry', detail: 'Independent, published, unpredictable.',
+        { label: 'Full public inquiry', detail: 'Commission an independent inquiry with published findings. The outcome cannot be controlled.',
           effects: { 'society.corruption': -5, 'society.approval': +3, 'quality.admin': +2 },
           factions: { reformers: +12, intelligentsia: +7, business: -6 },
           risk: { p: 0.4, text: 'It reaches your circle', fn: (st) => { st.society.scandal -= 9; st.society.approval -= 6; } },
           headline: 'Independent Inquiry Opened into Aid Programme' },
-        { label: 'Suspend aid to the recipient', detail: 'Punish them. Say nothing about us.',
+        { label: 'Suspend aid to the recipient', detail: 'Suspend assistance to the recipient state without addressing the domestic allegations.',
           effects: { 'policy.foreign.aid': -10, 'national.softPower': -3, 'society.approval': +2 },
           factions: { nationalists: +6, intelligentsia: -3 } },
-        { label: 'Deny and discredit the reporting', detail: 'Attack the source.',
+        { label: 'Deny and discredit the reporting', detail: 'Reject the allegations and challenge the credibility of the outlet.',
           effects: { 'policy.interior.pressFreedom': -5, 'society.corruption': +3, 'society.latent': +4 },
           factions: { reformers: -11, intelligentsia: -10, nationalists: +4 },
           risk: { p: 0.4, text: 'Second story lands', fn: (st) => { st.society.scandal -= 12; st.society.approval -= 8; } } }
@@ -674,24 +674,24 @@
       from: 'Ministry of the Interior', urgency: 'pressing', deadline: 12,
       weight: (st) => (st.world.globalWars > 0 || st.world.tension > 50) ? 18 : 6,
       brief: (st) => `<p>Conflict in a neighbouring region has pushed several hundred thousand people toward our border. They are arriving faster than they can be processed and the camps were designed for a tenth of this.</p>
-        <p>Current immigration posture: ${st.policy.interior.immigration}/100. Public opinion on the question is not subtle.</p>`,
+        <p>Current immigration posture: ${st.policy.interior.immigration}/100. The question is politically contentious.</p>`,
       advisors: () => [
-        { who: 'Interior Minister', role: 'Security', said: 'We can hold them at the line. It will look exactly like what it is.' },
-        { who: 'Finance Minister', role: 'Treasury', said: 'In twenty years they are taxpayers. In two years they are a budget line and a headline.' }
+        { who: 'Interior Minister', role: 'Security', said: 'We can close the frontier, but the operation will be highly visible and widely reported.' },
+        { who: 'Finance Minister', role: 'Treasury', said: 'Admitted refugees are a net fiscal cost in the short term and net contributors over the long term.' }
       ],
       options: [
         { label: 'Open the border and integrate', detail: 'Reception, work rights, schooling.',
           effects: { 'policy.interior.immigration': +18, 'national.softPower': +8, 'society.unrest': +6, 'society.cohesion': -5, 'budget.alloc.welfare': +0.3, 'society.approval': -4, 'pop.total': +0.4 },
           factions: { intelligentsia: +10, reformers: +8, nationalists: -14, clergy: -4 },
           headline: 'Borders Opened to Refugees; Reception Centres Established' },
-        { label: 'Controlled intake with quotas', detail: 'A number, a process, and a queue.',
+        { label: 'Controlled intake with quotas', detail: 'Admit a fixed annual quota through a formal process.',
           effects: { 'policy.interior.immigration': +6, 'national.softPower': +3, 'society.unrest': +2, 'pop.total': +0.12 },
           factions: { nationalists: -4, intelligentsia: +3 } },
-        { label: 'Seal the border', detail: 'Troops, wire, and a firm public line.',
+        { label: 'Seal the border', detail: 'Close the frontier with troops and physical barriers.',
           effects: { 'policy.interior.immigration': -18, 'national.softPower': -9, 'society.approval': +5, 'society.cohesion': +3, 'world.tension': +3 },
           factions: { nationalists: +13, clergy: +4, intelligentsia: -11, reformers: -8 },
           headline: 'Border Sealed; Troops Deployed to Frontier' },
-        { label: 'Pay a neighbour to hold them', detail: 'Externalise the problem. Everyone does it; nobody admits it.',
+        { label: 'Pay a neighbour to hold them', detail: 'Fund a neighbouring state to host the refugees on our behalf.',
           effects: { 'economy.reserves': 0, 'national.softPower': -5, 'society.approval': +3 },
           fn: (st) => { st.economy.reserves -= st.economy.gdp * 0.006; const n = st.rng.pick(st.diplomacy.nations); n.relation += 8; },
           factions: { nationalists: +7, intelligentsia: -7 } }
@@ -706,11 +706,11 @@
       brief: (st) => `<p>The constitutional committee has reported. Its recommendations run from technical tidying to a fundamental restructuring of where power sits in this country.</p>
         <p>You currently govern as a ${S.gov(st).name.toLowerCase()}. Legitimacy stands at ${S.round(st.society.legitimacy, 0)}; stability at ${S.round(st.society.stability, 0)}.</p>`,
       advisors: (st) => [
-        { who: 'Attorney General', role: 'Justice', said: 'Constitutions are not policy documents. What you write now, someone else will use against you later.' },
+        { who: 'Attorney General', role: 'Justice', said: 'Constitutional provisions outlast governments. Powers created now will be available to future governments of any character.' },
         { who: 'Political Adviser', role: 'Office', said: st.society.approval > 55 ? 'You will never have more capital to spend on this than you do today.' : 'You do not have the standing for a fight of this size.' }
       ],
       options: [
-        { label: 'Strengthen democratic institutions', detail: 'Independent courts, term limits, real oversight.',
+        { label: 'Strengthen democratic institutions', detail: 'Entrench independent courts, term limits and legislative oversight.',
           effects: { 'society.freedom': +8, 'society.corruption': -6, 'quality.admin': +4, 'national.softPower': +8, 'society.stability': +4 },
           fn: (st) => { st.flags.recentConstitution = true; if (!democratic(st)) S.game.changeGovernment(st, 'managed'); else S.game.changeGovernment(st, 'liberal'); },
           factions: { reformers: +16, intelligentsia: +12, military: -6, nationalists: -5 },
@@ -724,7 +724,7 @@
           effects: { 'policy.social.devolution': +25, 'society.cohesion': -3, 'quality.admin': -2, 'society.stability': +3 },
           factions: { provinces: +18, nationalists: -6, reformers: +5 },
           headline: 'Constitutional Settlement Devolves Power to the Regions' },
-        { label: 'Technical amendments only', detail: 'Fix the typos. Change nothing.',
+        { label: 'Technical amendments only', detail: 'Adopt the technical corrections and no substantive change.',
           effects: {}, factions: { reformers: -4 } }
       ]
     },
@@ -736,28 +736,28 @@
         const f = D.flavour(st, ctx);
         const framing = D.variant(st, ctx, 'frame', [
           `<p>Three outlets have run coordinated investigations into the government. Some of it is accurate. Some of it is not. All of it is damaging.</p>`,
-          `<p>A single reporter has spent eight months on ${f.official} and published the result this morning. Nobody has disputed a line of it.</p>`,
-          `<p>A broadcaster has been running nightly items from ${f.region} about what the government has not done there. The footage is unanswerable and the ratings are enormous.</p>`
+          `<p>A reporter has published an eight-month investigation into ${f.official}. No factual challenge to the reporting has been made.</p>`,
+          `<p>A broadcaster is running nightly reports from ${f.region} on undelivered government commitments. The reporting is accurate and widely watched.</p>`
         ]);
         return framing + `<p>Press freedom currently sits at ${st.policy.interior.pressFreedom}/100 and approval at ${S.round(st.society.approval, 0)}%. Corruption is measured at ${S.round(st.society.corruption, 0)}/100.</p>`;
       },
       advisors: (st) => [
-        { who: 'Information Minister', role: 'Cabinet', said: 'Licensing is the quiet instrument. Nobody riots over a licensing regime.' },
-        { who: 'Attorney General', role: 'Justice', said: 'Everything you are considering is legal. That is not the same as wise.' },
-        { who: 'Intelligence Chief', role: 'Services', said: 'A press we control is a press that stops telling us what people actually think.' }
+        { who: 'Information Minister', role: 'Cabinet', said: 'A licensing regime is the least visible instrument available and attracts the least public reaction.' },
+        { who: 'Attorney General', role: 'Justice', said: 'Every measure under consideration is lawful. The wider consequences are a separate question.' },
+        { who: 'Intelligence Chief', role: 'Services', said: 'A controlled press stops providing accurate information about public opinion.' }
       ],
       options: [
-        { label: 'Ignore it', detail: 'Governments that fight the press make the press the story.',
+        { label: 'Ignore it', detail: 'Take no action against the outlets.',
           effects: { 'society.approval': -2, 'policy.interior.pressFreedom': +2 },
           factions: { intelligentsia: +6, reformers: +5 } },
-        { label: 'Sue for defamation', detail: 'Use the courts. Slow, expensive, deniable.',
+        { label: 'Sue for defamation', detail: 'Bring proceedings through the courts. Slow and costly.',
           effects: { 'policy.interior.pressFreedom': -5, 'society.approval': +1, 'society.latent': +2 },
           factions: { intelligentsia: -6, reformers: -5 } },
-        { label: 'Licensing and ownership rules', detail: 'Restructure who is allowed to own a printing press.',
+        { label: 'Licensing and ownership rules', detail: 'Introduce licensing and ownership requirements for media outlets.',
           effects: { 'policy.interior.pressFreedom': -18, 'policy.interior.propaganda': +10, 'society.approval': +3, 'society.latent': +7, 'national.softPower': -6 },
           factions: { intelligentsia: -14, reformers: -12, nationalists: +6 },
           headline: 'New Media Licensing Regime Announced' },
-        { label: 'Arrest the editors', detail: 'End the discussion.',
+        { label: 'Arrest the editors', detail: 'Detain the responsible editors.',
           requires: (st) => authoritarian(st) || st.policy.interior.civilLiberties < 35,
           effects: { 'policy.interior.pressFreedom': -30, 'society.latent': +14, 'society.unrest': +6, 'national.softPower': -14, 'society.approval': +2 },
           factions: { intelligentsia: -22, reformers: -20, military: +3 },
@@ -772,31 +772,31 @@
         const f = D.flavour(st, ctx);
         const framing = D.variant(st, ctx, 'frame', [
           `<p>Corruption is measured at ${S.round(st.society.corruption, 0)}/100 and is now visible enough that ordinary people discuss it openly.</p>`,
-          `<p>${f.official} was filmed accepting a bag in a car park in ${f.city}. The footage is nineteen seconds long and has been watched by most of the country.</p>`,
+          `<p>${f.official} was filmed accepting a cash payment in ${f.city}. The footage has circulated nationally.</p>`,
           `<p>An audit of public works in ${f.region} found that a third of the money never reached a construction site. Corruption stands at ${S.round(st.society.corruption, 0)}/100.</p>`
         ]);
-        return framing + `<p>A campaign would be popular. It would also be a weapon, and weapons get used.</p>`;
+        return framing + `<p>A campaign would be popular. The same powers could also be applied selectively against political opponents.</p>`;
       },
       advisors: () => [
         { who: 'Interior Minister', role: 'Security', said: 'Give me the files and I will give you arrests within the month.' },
-        { who: 'Political Adviser', role: 'Office', said: 'Half the people you would arrest funded your last campaign. Choose carefully whose corruption this is about.' }
+        { who: 'Political Adviser', role: 'Office', said: 'A number of likely targets are financial supporters of this government. The scope of any campaign should be settled first.' }
       ],
       options: [
-        { label: 'Independent commission with real powers', detail: 'Genuine, indiscriminate, slow.',
+        { label: 'Independent commission with real powers', detail: 'Establish an independent body with full investigative powers. Effective but slow; its targets cannot be chosen.',
           effects: { 'society.corruption': -12, 'quality.admin': +5, 'society.approval': +6, 'economy.businessConfidence': -5 },
           factions: { reformers: +16, intelligentsia: +9, business: -10, provinces: -8, military: -5 },
           risk: { p: 0.3, text: 'Allies indicted', fn: (st) => { st.society.scandal -= 6; st.factions.forEach((f) => { if (f.id === 'provinces' || f.id === 'business') f.loyalty -= 6; }); } },
           then: { id: 'purge_backlash', days: 1100, chance: 0.55 },
           headline: 'Independent Anti-Corruption Commission Established' },
-        { label: 'Targeted campaign against rivals', detail: 'Selective enforcement. Very effective, entirely cynical.',
+        { label: 'Targeted campaign against rivals', detail: 'Direct enforcement at political opponents only. Limited effect on overall corruption.',
           effects: { 'society.corruption': -3, 'society.approval': +4, 'society.latent': +6, 'policy.interior.surveillance': +8 },
           factions: { reformers: -8, business: -6, nationalists: +5 },
           then: { id: 'purge_backlash', days: 900, chance: 0.8 },
           headline: 'High-Profile Arrests as Anti-Corruption Drive Begins' },
-        { label: 'Administrative reform instead', detail: 'Digitise, simplify, pay officials properly. Boring and effective.',
+        { label: 'Administrative reform instead', detail: 'Digitise procedures, simplify regulation and raise official salaries.',
           effects: { 'society.corruption': -7, 'quality.admin': +6, 'budget.alloc.admin': +0.3 },
           factions: { reformers: +8, intelligentsia: +5 } },
-        { label: 'Do nothing', detail: 'The system functions. Differently than advertised, but it functions.',
+        { label: 'Do nothing', detail: 'Take no action on the findings.',
           effects: { 'society.corruption': +2, 'society.approval': -3 },
           factions: { reformers: -9, business: +5, provinces: +5 } }
       ]
@@ -809,23 +809,23 @@
         const f = D.flavour(st, ctx);
         const framing = D.variant(st, ctx, 'frame', [
           `<p>The security services want bulk collection powers, real-time access to communications metadata, and the ability to compel decryption.</p>`,
-          `<p>A plot was disrupted in ${f.city} last month. The services have used the fortnight since to submit a bill they have plainly had drafted for years.</p>`,
-          `<p>The Intelligence Director has asked for compelled decryption, and has brought a folder of cases she says were lost without it. The folder is persuasive and impossible to verify.</p>`
+          `<p>A plot was disrupted in ${f.city} last month. The services have since submitted a bill seeking expanded powers.</p>`,
+          `<p>The Intelligence Director has requested compelled-decryption powers, citing cases she states were lost without them. The case files cannot be independently verified.</p>`
         ]);
         return framing + `<p>Surveillance currently sits at ${st.policy.interior.surveillance}/100; civil liberties at ${st.policy.interior.civilLiberties}/100. Collection capability is rated ${S.round(st.intel.strength, 0)}.</p>`;
       },
       advisors: () => [
         { who: 'Intelligence Chief', role: 'Services', said: 'Every plot we have stopped in five years came from communications data. Every one.' },
-        { who: 'Attorney General', role: 'Justice', said: 'Powers granted for terrorism are used for tax evasion within a decade. That is not cynicism, it is the record.' }
+        { who: 'Attorney General', role: 'Justice', said: 'Powers granted for counter-terrorism have historically been extended to ordinary criminal and tax matters within a decade.' }
       ],
       options: [
         { label: 'Grant the full powers', detail: 'Everything they asked for.',
           effects: { 'policy.interior.surveillance': +25, 'policy.interior.civilLiberties': -12, 'intel.strength': +9, 'society.latent': +8, 'quality.security': +4 },
           factions: { intelligentsia: -12, reformers: -13, military: +5 }, headline: 'Sweeping Surveillance Powers Passed' },
-        { label: 'Grant with judicial warrants', detail: 'The powers, plus a judge.',
+        { label: 'Grant with judicial warrants', detail: 'Grant the powers subject to judicial warrant.',
           effects: { 'policy.interior.surveillance': +12, 'intel.strength': +5, 'society.latent': +2, 'quality.security': +2 },
           factions: { intelligentsia: -3, reformers: -2 } },
-        { label: 'Reject the bill', detail: 'Tell the services to work harder with what they have.',
+        { label: 'Reject the bill', detail: 'Retain the existing powers unchanged.',
           effects: { 'intel.strength': -3, 'policy.interior.civilLiberties': +5, 'society.freedom': +3 },
           factions: { intelligentsia: +10, reformers: +9, military: -5 } }
       ]
@@ -837,29 +837,29 @@
       brief: (st, ctx) => {
         const f = D.flavour(st, ctx);
         const framing = D.variant(st, ctx, 'frame', [
-          `<p>The union congress has called an indefinite general strike. Transport, ports and power generation are affected. Inflation at ${S.round(st.economy.inflation, 1)}% has done what no organiser could.</p>`,
-          `<p>${f.union} walked out on Monday and by Thursday four other unions had joined them. There is no central committee running this and therefore nobody with the authority to call it off.</p>`,
-          `<p>What began as a dispute at ${f.firm} over a pay formula has become a general strike. The ${f.city} are shut and the ports have stopped.</p>`
+          `<p>The union congress has called an indefinite general strike over the cost of living. Transport, ports and power generation are affected. Inflation stands at ${S.round(st.economy.inflation, 1)}%.</p>`,
+          `<p>${f.union} walked out on Monday; by Thursday four other unions had joined. The action has no central leadership with the authority to end it.</p>`,
+          `<p>A pay dispute at ${f.firm} has widened into a general strike. ${f.city} is largely shut and the ports have stopped.</p>`
         ]);
         return framing + `<p>Every day costs roughly ${S.money(st.economy.gdp * 0.0016)} in lost output. Real wages have fallen for ${st.rng.int(2, 5)} consecutive quarters.</p>`;
       },
       advisors: () => [
-        { who: 'Labour Minister', role: 'Cabinet', said: 'They want an indexation formula. That is expensive but it is a number, and numbers can be negotiated.' },
+        { who: 'Labour Minister', role: 'Cabinet', said: 'The central demand is a wage indexation formula. It is costly, but it is a specific figure that can be negotiated.' },
         { who: 'Interior Minister', role: 'Security', said: 'I can clear the ports in a day. I cannot make anyone work afterwards.' }
       ],
       options: [
-        { label: 'Negotiate an indexation deal', detail: 'Wages tied to prices. Peace now, inflation later.',
+        { label: 'Negotiate an indexation deal', detail: 'Link wages to prices. Ends the strike; entrenches inflation.',
           effects: { 'economy.inflation': +1.6, 'society.approval': +5, 'society.unrest': -10, 'policy.econ.laborProtection': +8 },
           factions: { labour: +16, business: -9 }, headline: 'Wage Indexation Deal Ends General Strike' },
-        { label: 'Targeted concessions to key sectors', detail: 'Split the coalition. Buy off the ones who can hurt you.',
+        { label: 'Targeted concessions to key sectors', detail: 'Settle separately with the sectors capable of the greatest economic damage.',
           effects: { 'society.unrest': -5, 'economy.shock': -0.2, 'society.approval': +1 },
           factions: { labour: +5, business: -3, reformers: -3 } },
-        { label: 'Declare essential services and compel work', detail: 'Legal orders, penalties, and a line drawn.',
+        { label: 'Declare essential services and compel work', detail: 'Designate essential services and order a return to work under penalty.',
           effects: { 'society.unrest': +8, 'society.latent': +8, 'economy.shock': +0.3, 'policy.econ.laborProtection': -10 },
           factions: { labour: -18, business: +12, military: +2 },
           risk: { p: 0.3, text: 'Strike spreads', fn: (st) => { st.society.unrest += 12; st.economy.shock -= 1.0; } },
           headline: 'Government Orders Strikers Back to Work' },
-        { label: 'Break the strike with force', detail: 'Police, arrests, and an end to it.',
+        { label: 'Break the strike with force', detail: 'End the strike by police action and arrests.',
           requires: (st) => !democratic(st) || st.policy.interior.policing > 60,
           effects: { 'society.unrest': +14, 'society.latent': +18, 'society.approval': -8, 'policy.econ.laborProtection': -18 },
           factions: { labour: -26, business: +14, reformers: -12 },
@@ -873,22 +873,22 @@
       from: 'Minister of Education', urgency: 'routine', deadline: 28,
       weight: (st) => st.quality.education < 70 ? 14 : 7,
       brief: (st) => `<p>Attainment has been flat for a decade. Education quality is measured at ${S.round(st.quality.education, 0)}/100 against a spend of ${S.round(st.budget.alloc.education, 2)}% of output.</p>
-        <p>The white paper offers four routes, and every one of them takes longer than a term of office to show results.</p>`,
+        <p>The white paper offers four routes. None will show measurable results within a single term of office.</p>`,
       advisors: () => [
-        { who: 'Education Minister', role: 'Cabinet', said: 'Nothing I do this year shows up in a statistic before you leave office. Do it anyway.' },
+        { who: 'Education Minister', role: 'Cabinet', said: 'No reform made this year will show in the statistics during this term. The investment case stands regardless.' },
         { who: 'Business Council', role: 'Industry', said: 'We import engineers because we do not produce them. Fix the technical schools.' }
       ],
       options: [
-        { label: 'Universal early years and basic schooling', detail: 'The highest-return investment in any economy, and the slowest.',
+        { label: 'Universal early years and basic schooling', detail: 'Fund early years and basic schooling universally. The highest measured returns; the longest lag.',
           effects: { 'budget.alloc.education': +0.8, 'quality.education': +4, 'society.inequality': -3 },
           factions: { labour: +9, intelligentsia: +7, reformers: +6 }, headline: 'Universal Early Years Programme Announced' },
         { label: 'Technical and vocational expansion', detail: 'Apprenticeships and polytechnics matched to industry.',
           effects: { 'budget.alloc.education': +0.5, 'quality.education': +2, 'economy.shock': +0.4, 'economy.businessConfidence': +5 },
           factions: { business: +10, labour: +6 }, headline: 'Major Expansion of Technical Colleges' },
-        { label: 'Elite universities and research', detail: 'Concentrate resources at the top of the pyramid.',
+        { label: 'Elite universities and research', detail: 'Concentrate resources in elite universities and research institutions.',
           effects: { 'budget.alloc.education': +0.4, 'budget.alloc.research': +0.3, 'quality.science': +4, 'society.inequality': +2, 'policy.social.eduUniversity': +15 },
           factions: { intelligentsia: +12, business: +5, labour: -5 } },
-        { label: 'Rewrite the national curriculum', detail: 'Teach the country\'s story the way you want it told.',
+        { label: 'Rewrite the national curriculum', detail: 'Rewrite the curriculum around national history and civic tradition.',
           effects: { 'society.cohesion': +7, 'quality.education': -1, 'policy.social.traditionalism': +10, 'national.softPower': -2 },
           factions: { nationalists: +11, clergy: +9, intelligentsia: -12 },
           headline: 'National Curriculum Rewritten Around Patriotic History' }

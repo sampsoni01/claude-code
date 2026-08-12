@@ -203,6 +203,22 @@
 
     w.exhaustion = S.clamp(w.exhaustion + (w.intensity / 100) * 7.5 * dt, 0, 100);
     w.enemyExhaustion = S.clamp(w.enemyExhaustion + (w.intensity / 100) * 6.2 * dt, 0, 100);
+
+    // When both sides are spent, the fighting stops of its own accord.
+    if (w.exhaustion > 93 && w.enemyExhaustion > 93 && w.type === 'conventional') {
+      return Mil.endWar(st, w, 'truce');
+    }
+
+    // The staff put an operational plan to you at intervals: attack, hold,
+    // or wind the war down. This is where offence and defence are chosen.
+    if (w.type === 'conventional') {
+      const abs = S.absDay(st.date);
+      if (!w.nextDirective) w.nextDirective = w.startAbs + 90;
+      if (abs >= w.nextDirective && !st.inbox.some((i) => i.def.id === 'war_directive')) {
+        w.nextDirective = abs + st.rng.int(110, 180);
+        S.game.pushDecision('war_directive', { war: w.id });
+      }
+    }
     void committed;
   };
 
@@ -333,8 +349,11 @@
       w.capitulationOffered = true;
       S.game.pushDecision('capitulation', { war: w.id });
     }
-    if (w.score >= 92 && w.type === 'conventional') {
-      return Mil.endWar(st, w, 'victory');
+    // Winning the war is not the last decision: what to do with the defeated
+    // country is. The terms are put to you rather than applied automatically.
+    if (w.score >= 92 && w.type === 'conventional' && !w.victoryOffered) {
+      w.victoryOffered = true;
+      S.game.pushDecision('victory_terms', { war: w.id });
     }
     if (w.score <= -92) {
       if (w.type === 'civil') return S.game.lose('civilwar');
@@ -369,7 +388,28 @@
     return null;
   };
 
-  Mil.endWar = function (st, w, outcome, terms) {
+  /* Absorption of one state by another. The loser stays in the data as a
+     rump entry (old references must keep working) but is flagged and
+     filtered out of every live list. */
+  Mil.absorbNation = function (st, victorId, loserId) {
+    const loser = S.dip(st, loserId);
+    if (!loser || loser.absorbedBy) return;
+    const victor = victorId === 'player' ? null : S.dip(st, victorId);
+    if (victor) {
+      victor.gdp += loser.gdp * 0.55;
+      victor.power = S.clamp(victor.power + loser.power * 0.30, 1, 100);
+      victor.manpower += loser.manpower * 0.5;
+    }
+    loser.absorbedBy = victorId;
+    loser.atWar = false; loser.sanctioningUs = false; loser.allyOfUs = false;
+    loser.gdp *= 0.05; loser.power = 3; loser.milPower = 0.5;
+    loser.treaties = [];
+    st.diplomacy.treaties = st.diplomacy.treaties.filter((t) => t.nation !== loserId);
+    st.world.tension = S.clamp(st.world.tension + 10, 0, 100);
+  };
+
+  Mil.endWar = function (st, w, outcome, terms, opts) {
+    opts = opts || {};
     const idx = st.wars.indexOf(w);
     if (idx >= 0) st.wars.splice(idx, 1);
     st.world.globalWars = Math.max(0, (st.world.globalWars || 1) - 1);
@@ -378,8 +418,40 @@
       n.atWar = false;
       n.relation = outcome === 'victory' ? -55 : outcome === 'defeat' ? -35 : -25;
       n.tradeStatus = 'restricted';
-      n.grievance = (n.grievance || 0) + (outcome === 'victory' ? 45 : 15);
+      n.grievance = (n.grievance || 0) + (outcome === 'victory' ? 45 : outcome === 'truce' ? 8 : 15);
       if (outcome === 'victory') { n.defeatedBy = true; n.power = Math.max(6, n.power * 0.72); }
+    }
+    // Victory settlements: what happens to the defeated state.
+    if (n && outcome === 'victory' && opts.mode) {
+      if (opts.mode === 'annex') {
+        Mil.absorbNation(st, 'player', n.id);
+        st.pop.total += n.manpower * 40;
+        st.economy.gdp += n.gdp * 9;  // rump gdp is 5% of original; recover ~45% of pre-war output
+        st.economy.gdpReal += n.gdp * 9;
+        st.society.unrest += 12; st.society.latent += 14;
+        st.national.prestige += 6; st.national.aggressionScore += 30;
+        st.world.tension = S.clamp(st.world.tension + 14, 0, 100);
+        st.diplomacy.nations.forEach((o) => { if (!o.absorbedBy && o.id !== n.id) { o.relation -= 16; o.threatPerception += 14; } });
+        S.News.custom(st, n.name + ' Annexed; Occupation Begins', 'bad');
+        S.Aftermath.schedule(st, 'occupation_resistance', { nation: n.id }, st.rng.int(200, 520));
+      } else if (opts.mode === 'client') {
+        n.clientOf = 'player'; n.relation = 55; n.affinity += 12; n.grievance = 12;
+        n.allyOfUs = true; n.power = Math.max(6, n.power * 0.80);
+        st.economy.reserves += n.gdp * 0.03;
+        st.world.tension = S.clamp(st.world.tension + 6, 0, 100);
+        S.News.custom(st, 'Client Government Installed in ' + n.name, '');
+      } else if (opts.mode === 'punitive') {
+        st.economy.reserves += n.gdp * 0.08;
+        n.gdp *= 0.94; n.power = Math.max(6, n.power * 0.85);
+        n.grievance = (n.grievance || 0) + 25;
+        st.world.tension = S.clamp(st.world.tension + 4, 0, 100);
+        S.News.custom(st, 'Treaty Signed: ' + n.name + ' to Pay Reparations and Disarm', '');
+      } else if (opts.mode === 'magnanimous') {
+        n.relation = -5; n.grievance = Math.max(0, (n.grievance || 0) - 30);
+        st.national.prestige += 6; st.national.softPower += 8;
+        st.world.tension = Math.max(0, st.world.tension - 8);
+        S.News.custom(st, 'Peace Signed With ' + n.name + ' on Moderate Terms', 'good');
+      }
     }
     st.military.veterancy = Math.min(100, st.military.veterancy + 12);
     st.world.tension = Math.max(0, st.world.tension - 10);
@@ -428,13 +500,15 @@
   /* ---------------------------------------------- foreign force ratings */
   Mil.recomputeForeign = function (st) {
     st.diplomacy.nations.forEach((n) => {
+      if (n.absorbedBy) { n.milPower = 0.5; return; }
       const spend = n.gdp * (n.defenseShare / 100);
       n.milPower = Mil.powerOf(spend, n.milQuality, n.nuclear ? n.nuclearLevel : 0, n.manpower);
     });
   };
 
   Mil.worldRank = function (st) {
-    const list = st.diplomacy.nations.map((n) => ({ id: n.id, name: n.name, power: n.milPower }));
+    const list = st.diplomacy.nations.filter((n) => !n.absorbedBy)
+      .map((n) => ({ id: n.id, name: n.name, power: n.milPower }));
     list.push({ id: 'self', name: st.nation.name, power: st.military.power, self: true });
     list.sort((a, b) => b.power - a.power);
     return list;
