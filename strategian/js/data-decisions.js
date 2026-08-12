@@ -902,26 +902,26 @@
         const f = D.flavour(st, ctx);
         const framing = D.variant(st, ctx, 'frame', [
           `<p>Waiting lists have reached levels that are being reported as a national scandal. Staff are leaving for better-paid work abroad faster than they can be replaced.</p>`,
-          `<p>The main hospital in ${f.region} has stopped admitting anyone who is not dying. The regional health board wrote to the ministry six times before it wrote to the newspapers.</p>`,
-          `<p>A child died in a corridor in ${f.city} waiting for a bed. The inquest has not reported and the country has already reached its verdict.</p>`
+          `<p>The main hospital in ${f.region} is admitting emergency cases only. The regional health board raised the situation with the ministry repeatedly before it reached the press.</p>`,
+          `<p>A child died in a hospital corridor in ${f.city} while waiting for a bed. The case has received national attention; the inquest has not yet reported.</p>`
         ]);
         return framing + `<p>Health quality stands at ${S.round(st.quality.health, 0)}/100 against a health budget of ${S.round(st.budget.alloc.health, 2)}% of output.</p>`;
       },
       advisors: () => [
-        { who: 'Health Minister', role: 'Cabinet', said: 'There is no clever answer. It is money, staff and time, in that order.' },
-        { who: 'Treasury', role: 'Finance', said: 'Health absorbs every additional unit you give it and asks for more. That is not an argument against giving it, but you should know.' }
+        { who: 'Health Minister', role: 'Cabinet', said: 'The requirements are funding, staff and time, in that order. There is no faster alternative.' },
+        { who: 'Treasury', role: 'Finance', said: 'Health spending is fully absorbed at any level provided. Demand has no natural ceiling.' }
       ],
       options: [
-        { label: 'Emergency funding package', detail: 'Money now, structural questions later.',
+        { label: 'Emergency funding package', detail: 'Provide immediate additional funding without structural change.',
           effects: { 'budget.alloc.health': +1.0, 'quality.health': +4, 'society.approval': +7 },
           factions: { labour: +9, business: -4 }, headline: 'Emergency Funding Package for Hospitals' },
-        { label: 'Recruit abroad and raise pay', detail: 'Import staff, pay the ones we have properly.',
+        { label: 'Recruit abroad and raise pay', detail: 'Recruit staff from abroad and raise domestic pay to slow departures.',
           effects: { 'budget.alloc.health': +0.5, 'policy.interior.immigration': +8, 'quality.health': +3, 'society.approval': +3 },
           factions: { labour: +6, nationalists: -6 } },
-        { label: 'Open the system to private provision', detail: 'Contracts, competition and a political fight.',
+        { label: 'Open the system to private provision', detail: 'Contract private providers to add capacity. Politically contested.',
           effects: { 'quality.health': +2, 'society.inequality': +3, 'society.approval': -3, 'economy.businessConfidence': +5 },
           factions: { business: +11, labour: -12, reformers: +2 }, headline: 'Health Service Opened to Private Contractors' },
-        { label: 'Restructure and ration', detail: 'Explicit priorities. Honest, unpopular, sustainable.',
+        { label: 'Restructure and ration', detail: 'Set explicit treatment priorities within the existing budget. Unpopular; fiscally sustainable.',
           effects: { 'quality.health': +1, 'society.approval': -6, 'budget.alloc.health': -0.2, 'quality.admin': +2 },
           factions: { labour: -8, business: +5 } }
       ]
@@ -934,10 +934,10 @@
         <p>Traditional authority holds ${S.round(S.Soc.factionLoyalty(st, 'clergy'), 0)}/100 loyalty; the reform movement ${S.round(S.Soc.factionLoyalty(st, 'reformers'), 0)}/100.</p>`,
       advisors: () => [
         { who: 'Justice Minister', role: 'Cabinet', said: 'Whatever we do, half the country will consider it an attack on their way of life.' },
-        { who: 'Political Adviser', role: 'Office', said: 'There is no version of this where you gain more than you lose. There is a version where you are remembered well.' }
+        { who: 'Political Adviser', role: 'Office', said: 'No available option gains more support than it loses. The main consideration is the long-term record.' }
       ],
       options: [
-        { label: 'Liberalise', detail: 'Reform the statutes. Accept the backlash.',
+        { label: 'Liberalise', detail: 'Reform the statutes. Significant opposition is expected.',
           effects: { 'society.freedom': +7, 'national.softPower': +6, 'society.cohesion': -6, 'policy.social.traditionalism': -18, 'policy.interior.civilLiberties': +6 },
           factions: { reformers: +15, intelligentsia: +11, clergy: -18, nationalists: -8 },
           headline: 'Landmark Social Reforms Pass Into Law' },
@@ -945,7 +945,7 @@
           effects: { 'society.cohesion': +7, 'society.freedom': -6, 'national.softPower': -6, 'policy.social.traditionalism': +18 },
           factions: { clergy: +16, nationalists: +9, reformers: -15, intelligentsia: -11 },
           headline: 'Traditional Family Law Entrenched in New Statute' },
-        { label: 'Refer to a referendum', detail: 'Let the country decide and stand back.',
+        { label: 'Refer to a referendum', detail: 'Put the question to a national vote and implement the result.',
           effects: { 'society.approval': -2, 'society.unrest': +4 },
           fn: (st) => {
             const lib = S.Soc.factionLoyalty(st, 'reformers') + st.quality.education - S.Soc.factionLoyalty(st, 'clergy');
@@ -953,35 +953,35 @@
             else { st.policy.social.traditionalism += 12; st.society.cohesion += 4; }
           },
           factions: { reformers: +4, clergy: +4, intelligentsia: +3 }, headline: 'Social Question Put to a National Referendum' },
-        { label: 'Leave the law alone', detail: 'The status quo has the advantage of already existing.',
+        { label: 'Leave the law alone', detail: 'Make no change to the law.',
           effects: {}, factions: { reformers: -5, clergy: -3 } }
       ]
     },
     {
-      id: 'housing_crisis', cat: 'social', title: 'Nobody Can Afford to Live in the Cities',
+      id: 'housing_crisis', cat: 'social', title: 'Urban Housing Costs',
       from: 'Ministry of Infrastructure', urgency: 'routine', deadline: 25,
       weight: (st) => st.pop.urban > 55 ? 14 : 6,
       brief: (st, ctx) => {
         const f = D.flavour(st, ctx);
         const framing = D.variant(st, ctx, 'frame', [
           `<p>Housing costs in the three largest cities have outpaced wages for a decade. Young professionals are leaving; essential workers commute two hours each way.</p>`,
-          `<p>A tent encampment has appeared along the approach road to ${f.city}, and a good proportion of the people in it have jobs.</p>`,
+          `<p>A tent encampment has formed on the approach road to ${f.city}. A substantial share of its residents are in employment.</p>`,
           `<p>${f.union} has published a survey showing its members now spend more than half their income on rent. The figure has been on the front pages for a week.</p>`
         ]);
-        return framing + `<p>It is the single most-cited grievance in every focus group and it has no fast solution. Inequality is measured at ${S.round(st.society.inequality, 0)}/100; ${S.round(st.pop.urban, 0)}% of the country is urban.</p>`;
+        return framing + `<p>Housing costs are the most frequently cited grievance in public opinion research, and no available measure works quickly. Inequality is measured at ${S.round(st.society.inequality, 0)}/100; ${S.round(st.pop.urban, 0)}% of the country is urban.</p>`;
       },
       advisors: () => [
-        { who: 'Infrastructure Minister', role: 'Cabinet', said: 'Build. It is the only thing that has ever worked, and it takes six years.' },
-        { who: 'Finance Minister', role: 'Treasury', said: 'Half the household wealth in this country is in the value of those houses. Be careful what you wish for.' }
+        { who: 'Infrastructure Minister', role: 'Cabinet', said: 'Increased construction is the only measure with a record of lowering costs, and it takes about six years to show results.' },
+        { who: 'Finance Minister', role: 'Treasury', said: 'Roughly half of household wealth is held in housing. Measures that lower prices will reduce it.' }
       ],
       options: [
         { label: 'Mass public housebuilding', detail: 'State construction at scale.',
           effects: { 'budget.alloc.infra': +0.8, 'quality.infra': +3, 'society.inequality': -4, 'society.approval': +5, 'economy.shock': +0.5 },
           factions: { labour: +12, provinces: +7, business: -3 }, headline: 'Largest Public Housing Programme in a Generation' },
-        { label: 'Deregulate planning', detail: 'Let the market build. Somebody will object to everything.',
+        { label: 'Deregulate planning', detail: 'Remove planning restrictions and rely on private construction. Local opposition is expected.',
           effects: { 'policy.econ.regulation': -8, 'quality.infra': +2, 'economy.shock': +0.4, 'society.approval': -2 },
           factions: { business: +11, provinces: -6, reformers: +5 } },
-        { label: 'Rent controls', detail: 'Immediate relief, long-term shortage.',
+        { label: 'Rent controls', detail: 'Cap rents. Immediate relief for tenants; reduces future supply.',
           effects: { 'society.approval': +7, 'economy.businessConfidence': -7, 'quality.infra': -2 },
           factions: { labour: +13, business: -12 }, headline: 'Rent Controls Imposed in Major Cities' },
         { label: 'Move the capital functions out', detail: 'Relocate ministries to secondary cities.',
@@ -996,21 +996,21 @@
       brief: (st) => `<p>The ministry proposes a decade-long programme: international broadcasting, film and music funds, scholarships for foreign students, cultural institutes in thirty capitals.</p>
         <p>Our culture index stands at ${S.round(st.quality.culture, 0)}; soft power at ${S.round(st.national.softPower, 0)}.</p>`,
       advisors: () => [
-        { who: 'Culture Minister', role: 'Cabinet', said: 'Nobody has ever invaded a country whose films their children love.' },
-        { who: 'Finance Minister', role: 'Treasury', said: 'I cannot put a return on this in any model I have.' }
+        { who: 'Culture Minister', role: 'Cabinet', said: 'Cultural presence abroad builds influence that military and economic instruments do not reach.' },
+        { who: 'Finance Minister', role: 'Treasury', said: 'The programme has no measurable financial return under any model the Treasury uses.' }
       ],
       options: [
-        { label: 'Fund it fully', detail: 'A serious, sustained cultural offensive.',
+        { label: 'Fund it fully', detail: 'Fund the full ten-year programme.',
           effects: { 'budget.alloc.culture': +0.6, 'quality.culture': +5, 'national.softPower': +8 },
           factions: { intelligentsia: +10, business: -2 }, headline: 'Nation Launches Global Cultural Programme' },
-        { label: 'Scholarships and exchange only', detail: 'Educate foreign elites. The long game.',
+        { label: 'Scholarships and exchange only', detail: 'Fund scholarships and exchanges only. Returns accrue over decades.',
           effects: { 'budget.alloc.culture': +0.2, 'budget.alloc.education': +0.2, 'national.softPower': +4 },
           fn: (st) => { st.diplomacy.nations.forEach((n) => { n.affinity += 2; }); },
           factions: { intelligentsia: +7 } },
-        { label: 'State broadcasting abroad', detail: 'Our narrative, our channels, our framing.',
+        { label: 'State broadcasting abroad', detail: 'Fund state international broadcasting only.',
           effects: { 'budget.alloc.culture': +0.3, 'policy.interior.propaganda': +10, 'national.softPower': +3, 'quality.culture': +1 },
           factions: { nationalists: +6, intelligentsia: -4 } },
-        { label: 'Decline', detail: 'Culture is not the state\'s business.', effects: {}, factions: { intelligentsia: -6 } }
+        { label: 'Decline', detail: 'Reject the programme.', effects: {}, factions: { intelligentsia: -6 } }
       ]
     },
 
@@ -1023,10 +1023,10 @@
         const n = st.diplomacy.nations.filter((x) => x.relation < -20).sort((a, b) => a.relation - b.relation)[0] ||
           st.rng.pick(st.diplomacy.nations);
         return `<p>The service proposes an operation against ${n.name}: cultivating opposition networks, degrading a strategic programme, and shaping the information environment ahead of their political season.</p>
-          <p>Our collection capability is rated ${S.round(st.intel.strength, 0)}/100. Deniability is described as "adequate", which is what they always say.</p>`;
+          <p>Our collection capability is rated ${S.round(st.intel.strength, 0)}/100. The service assesses deniability as adequate; that assessment cannot be verified in advance.</p>`;
       },
       options: [
-        { label: 'Authorise the full operation', detail: 'Everything proposed. Signed at the highest level.',
+        { label: 'Authorise the full operation', detail: 'Authorise all proposed measures.',
           effects: { 'intel.strength': -2, 'world.tension': +5 },
           fn: (st) => {
             const n = st.diplomacy.nations.filter((x) => x.relation < -20)[0] || st.diplomacy.nations[0];
@@ -1042,7 +1042,7 @@
             }
           },
           factions: { military: +5, intelligentsia: -6, nationalists: +6 } },
-        { label: 'Approve intelligence collection only', detail: 'Look, do not touch.',
+        { label: 'Approve intelligence collection only', detail: 'Authorise collection only, with no active measures.',
           effects: { 'intel.strength': +4, 'budget.alloc.intel': +0.08 }, factions: { military: +2 } },
         { label: 'Refuse and put it in writing', detail: 'Establish a limit and a paper trail.',
           effects: { 'intel.strength': -2, 'national.softPower': +3 },
@@ -1054,19 +1054,19 @@
       from: 'Counter-Intelligence', urgency: 'urgent', deadline: 10,
       weight: (st) => st.intel.strength < 70 ? 10 : 6,
       brief: () => `<p>Three operations have been compromised in eighteen months. The pattern points to a source inside the service or the ministry. Counter-intelligence wants authority for an internal investigation with no limits.</p>
-        <p>The last time a service did this properly, it took four years and destroyed itself in the process.</p>`,
+        <p>Comparable investigations elsewhere have taken years and caused lasting damage to the services conducting them.</p>`,
       advisors: () => [
-        { who: 'Counter-Intelligence', role: 'Services', said: 'Someone is reading our traffic. Until we find them, everything we do is theatre.' },
-        { who: 'Cabinet Secretary', role: 'Administration', said: 'A mole hunt eats an institution from the inside. Suspicion is not a fixed quantity; it grows.' }
+        { who: 'Counter-Intelligence', role: 'Services', said: 'Someone is reading our traffic. Until the source is found, all current operations must be assumed compromised.' },
+        { who: 'Cabinet Secretary', role: 'Administration', said: 'An unrestricted internal investigation damages trust across the institution and tends to widen as it proceeds.' }
       ],
       options: [
         { label: 'Full internal investigation', detail: 'No limits, no exceptions, no timetable.',
           effects: { 'intel.strength': -6, 'society.corruption': -2 },
-          fn: (st) => { if (st.rng.chance(0.55)) { st.intel.strength += 14; S.game.event('The source was identified and rolled up. Damage assessment continues.', 'good'); } else { st.intel.strength -= 6; st.factions.forEach((f) => { if (f.id === 'military') f.loyalty -= 5; }); S.game.event('The investigation found nothing and poisoned the service.', 'bad'); } },
+          fn: (st) => { if (st.rng.chance(0.55)) { st.intel.strength += 14; S.game.event('The source was identified and rolled up. Damage assessment continues.', 'good'); } else { st.intel.strength -= 6; st.factions.forEach((f) => { if (f.id === 'military') f.loyalty -= 5; }); S.game.event('The investigation found no source and left lasting damage to trust within the service.', 'bad'); } },
           factions: { military: -4, intelligentsia: -5 } },
         { label: 'Targeted counter-intelligence operation', detail: 'Feed controlled information and watch what moves.',
           effects: { 'intel.strength': +3 },
-          fn: (st) => { if (st.rng.chance(0.40 + st.intel.strength / 300)) { st.intel.strength += 10; S.game.event('The barium meal worked. The source is under control and being fed.', 'good'); } },
+          fn: (st) => { if (st.rng.chance(0.40 + st.intel.strength / 300)) { st.intel.strength += 10; S.game.event('The controlled material was traced. The source has been identified and is being used to pass false information.', 'good'); } },
           factions: {} },
         { label: 'Restructure and compartmentalise', detail: 'Assume compromise. Rebuild around it.',
           effects: { 'intel.strength': -3, 'quality.admin': +2 },
@@ -1078,17 +1078,17 @@
       from: 'National Cyber Centre', urgency: 'urgent', deadline: 5,
       weight: (st) => st.world.tension > 30 ? 15 : 6,
       brief: (st) => `<p>The grid operator in two regions lost control of its systems for eleven hours. Water treatment reported anomalies. Attribution points, with moderate confidence, at a state actor.</p>
-        <p>Moderate confidence means we would not want to go to war on it.</p>`,
+        <p>Moderate confidence is insufficient grounds for military action.</p>`,
       advisors: () => [
-        { who: 'Cyber Director', role: 'Services', said: 'They wanted us to know. That is a message, and messages expect replies.' },
+        { who: 'Cyber Director', role: 'Services', said: 'The intrusion was made detectable deliberately. Some response is expected.' },
         { who: 'Foreign Minister', role: 'Diplomacy', said: 'Attribute publicly and you must act. Do not attribute and everyone assumes you cannot.' }
       ],
       options: [
-        { label: 'Attribute publicly and sanction', detail: 'Name them. Impose costs.',
+        { label: 'Attribute publicly and sanction', detail: 'Name the state responsible and impose sanctions.',
           effects: { 'world.tension': +7, 'society.approval': +4, 'national.prestige': +3 },
           fn: (st) => { const n = st.diplomacy.nations.filter((x) => x.relation < -10)[0] || st.diplomacy.nations[0]; n.relation -= 15; n.grievance = (n.grievance || 0) + 12; },
           factions: { nationalists: +8, military: +5 }, headline: 'Government Names State Actor Behind Grid Attack' },
-        { label: 'Respond in kind, quietly', detail: 'Symmetric, deniable, understood.',
+        { label: 'Respond in kind, quietly', detail: 'Conduct an equivalent deniable operation against their infrastructure.',
           effects: { 'world.tension': +4, 'intel.strength': -3 },
           fn: (st) => { if (st.rng.chance(0.3)) { st.world.tension += 8; S.News.custom(st, 'Foreign Grid Failure Sparks Attribution Row', ''); } },
           factions: { military: +6, intelligentsia: -3 } },

@@ -525,7 +525,16 @@
           factions: { nationalists: +12, intelligentsia: -6 } },
         { label: 'State publicly that we do not negotiate', detail: 'Maintain the no-negotiation doctrine; the hostages remain held.',
           effects: { 'society.approval': -7, 'national.prestige': +2, 'society.cohesion': -3 },
-          factions: { military: +5, nationalists: +3, labour: -8 } }
+          factions: { military: +5, nationalists: +3, labour: -8 } },
+        { label: 'Pay in full through intermediaries', detail: 'A ransom routed through third parties, off the public accounts. Reliable, and deniable while it stays secret.', illegal: true,
+          effects: {},
+          fn: (st, ctx) => {
+            st.economy.reserves -= st.economy.gdp * 0.003;
+            st.society.approval += 7;
+            S.game.event('The hostages have been released unharmed. Officially, no ransom was paid.', 'good');
+          },
+          risk: { p: 0.30, text: 'The payment becomes public', fn: (st) => { st.society.approval -= 9; st.national.prestige -= 6; st.society.scandal += 8; st.world.tension += 3; } },
+          factions: { nationalists: -4 } }
       ]
     },
     {
