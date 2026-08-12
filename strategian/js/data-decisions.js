@@ -1060,7 +1060,7 @@
         { who: 'Cabinet Secretary', role: 'Administration', said: 'An unrestricted internal investigation damages trust across the institution and tends to widen as it proceeds.' }
       ],
       options: [
-        { label: 'Full internal investigation', detail: 'No limits, no exceptions, no timetable.',
+        { label: 'Full internal investigation', detail: 'An unrestricted internal investigation with no set end date.',
           effects: { 'intel.strength': -6, 'society.corruption': -2 },
           fn: (st) => { if (st.rng.chance(0.55)) { st.intel.strength += 14; S.game.event('The source was identified and rolled up. Damage assessment continues.', 'good'); } else { st.intel.strength -= 6; st.factions.forEach((f) => { if (f.id === 'military') f.loyalty -= 5; }); S.game.event('The investigation found no source and left lasting damage to trust within the service.', 'bad'); } },
           factions: { military: -4, intelligentsia: -5 } },
@@ -1092,7 +1092,7 @@
           effects: { 'world.tension': +4, 'intel.strength': -3 },
           fn: (st) => { if (st.rng.chance(0.3)) { st.world.tension += 8; S.News.custom(st, 'Foreign Grid Failure Sparks Attribution Row', ''); } },
           factions: { military: +6, intelligentsia: -3 } },
-        { label: 'Harden and say nothing', detail: 'Spend on defence, deny them the political win.',
+        { label: 'Harden and say nothing', detail: 'Fund defensive hardening without public attribution.',
           effects: { 'budget.alloc.intel': +0.15, 'budget.alloc.infra': +0.2, 'quality.energy': +2, 'intel.strength': +3, 'society.approval': -3 },
           factions: { nationalists: -6, business: +4 } }
       ]
@@ -1104,23 +1104,23 @@
       from: 'Ministry of Energy', urgency: 'routine', deadline: 30,
       weight: (st) => 11 + (st.world.climate > 40 ? 6 : 0),
       brief: (st) => `<p>The grid needs twenty years of investment decided in the next two. Climate stress is at ${S.round(st.world.climate, 0)}/100 and rising; our energy quality is ${S.round(st.quality.energy, 0)}/100.</p>
-        <p>Every path is expensive. Only one of them is expensive later.</p>`,
+        <p>All options carry a high cost; they differ mainly in when the cost falls.</p>`,
       advisors: () => [
-        { who: 'Energy Minister', role: 'Cabinet', said: 'Whatever you build takes a decade to switch on. Choose as if you will still be here.' },
-        { who: 'Industry', role: 'Business', said: 'Cheap power or clean power. Pick one and stop pretending.' }
+        { who: 'Energy Minister', role: 'Cabinet', said: 'Any new generation takes roughly a decade to come online. The decision should be made on that horizon.' },
+        { who: 'Industry', role: 'Business', said: 'Low energy costs and low emissions are competing objectives in the near term. The priority needs to be stated.' }
       ],
       options: [
-        { label: 'Full renewable and grid build-out', detail: 'Expensive now, cheap and clean later.',
+        { label: 'Full renewable and grid build-out', detail: 'High capital cost now; low operating cost and emissions later.',
           effects: { 'budget.alloc.energy': +0.7, 'policy.energy.transition': +30, 'quality.energy': +4, 'economy.shock': -0.3, 'national.softPower': +4 },
           factions: { intelligentsia: +9, reformers: +8, business: -5 }, headline: 'Nation Commits to Full Grid Decarbonisation' },
-        { label: 'Nuclear programme', detail: 'Baseload, dense, slow to build, politically fraught.',
+        { label: 'Nuclear programme', detail: 'Reliable baseload with long build times and significant political opposition.',
           effects: { 'budget.alloc.energy': +0.6, 'quality.energy': +5, 'quality.science': +2, 'policy.energy.transition': +15, 'society.unrest': +3 },
           factions: { business: +6, intelligentsia: +4, provinces: -5 }, headline: 'Government Approves New Nuclear Fleet' },
-        { label: 'Exploit domestic fossil reserves', detail: 'Cheap energy now. The bill arrives later, addressed to someone else.',
+        { label: 'Exploit domestic fossil reserves', detail: 'Lowest near-term cost; raises emissions and long-term climate exposure.',
           effects: { 'economy.shock': +0.7, 'quality.energy': +3, 'policy.energy.transition': -20, 'national.softPower': -5 },
           fn: (st) => { st.economy.sectors.resources += 2; st.world.climate += 2; },
           factions: { business: +10, labour: +6, intelligentsia: -10 }, headline: 'New Fossil Extraction Licences Issued' },
-        { label: 'Do the minimum', detail: 'Patch the grid. Defer the decision.',
+        { label: 'Do the minimum', detail: 'Maintain the existing grid and defer the investment decision.',
           effects: { 'quality.energy': -1 }, factions: { reformers: -5 } }
       ]
     },
@@ -1135,15 +1135,15 @@
       brief: (st, ctx) => {
         D.ensureDisaster(st, ctx);
         return `<p>A ${ctx.kind} has struck ${ctx.region}. The confirmed dead stand at <b>${S.num(ctx.deaths)}</b> and the figure is rising. Roughly <b>${S.num(ctx.displaced)}</b> people have lost their homes.</p>
-          <p>This is the worst thing to happen to this country in a generation. What you do in the next seventy-two hours decides how many of the missing are found alive — and the rest of your term will be measured against it.</p>`;
+          <p>This is the most severe disaster in a generation. Search-and-rescue outcomes depend heavily on the first seventy-two hours; the scale of the response must be decided now.</p>`;
       },
       advisors: () => [
-        { who: 'Emergency Committee', role: 'Cabinet Office', said: 'Every hour of delay in the first three days costs lives at a rate I can put a number on. I would rather not have to.' },
+        { who: 'Emergency Committee', role: 'Cabinet Office', said: 'Delay in the first three days raises the death toll at a measurable rate. Speed is the controlling factor.' },
         { who: 'Finance Minister', role: 'Treasury', said: 'Whatever we spend now we will spend again on reconstruction, for years. Budget for both.' }
       ],
       options: [
         {
-          label: 'Full national mobilisation', detail: 'Army, treasury, everything, immediately. Nothing held back.',
+          label: 'Full national mobilisation', detail: 'Commit the armed forces and emergency funds at maximum scale, immediately.',
           effects: { 'society.approval': +9, 'military.readiness': -6 },
           fn: (st, ctx) => {
             D.ensureDisaster(st, ctx);
@@ -1164,7 +1164,7 @@
           headline: 'Army Deployed as Nation Mobilises for Disaster Relief'
         },
         {
-          label: 'Standard emergency response', detail: 'The plan, as written, at the funded level.',
+          label: 'Standard emergency response', detail: 'Execute the existing emergency plan at its funded level.',
           effects: { 'society.approval': +1 },
           fn: (st, ctx) => {
             D.ensureDisaster(st, ctx);
@@ -1183,7 +1183,7 @@
           factions: { provinces: +3 }
         },
         {
-          label: 'Appeal for international assistance', detail: 'Accept help, and accept how accepting it looks.',
+          label: 'Appeal for international assistance', detail: 'Request foreign assistance. Adds capacity; carries a prestige cost.',
           effects: { 'national.prestige': -5 },
           fn: (st, ctx) => {
             D.ensureDisaster(st, ctx);
@@ -1205,7 +1205,7 @@
           headline: 'Government Appeals for International Disaster Aid'
         },
         {
-          label: 'Downplay the scale', detail: 'Manage the story rather than the disaster.',
+          label: 'Downplay the scale', detail: 'Understate the casualty figures and restrict coverage.',
           effects: { 'society.approval': -6, 'society.latent': +10, 'policy.interior.pressFreedom': -4 },
           fn: (st, ctx) => {
             D.ensureDisaster(st, ctx);
@@ -1235,11 +1235,11 @@
     {
       id: 'disaster_reconstruction', cat: 'crisis', dynamic: true, title: 'The Reconstruction Bill',
       from: 'Ministry of Infrastructure', urgency: 'pressing', deadline: 20,
-      brief: (st, ctx) => `<p>The emergency phase is over. ${S.num(ctx.displaced || 0)} people are still in temporary accommodation and the ministry has costed what it would take to rebuild properly rather than adequately.</p>
-        <p>The damage is still dragging on output and will keep doing so until it is repaired. This is the decision that determines for how long.</p>`,
+      brief: (st, ctx) => `<p>The emergency phase is over. ${S.num(ctx.displaced || 0)} people remain in temporary accommodation. The ministry has costed reconstruction at two standards: replacement and improved resilience.</p>
+        <p>The damage will continue to reduce output until it is repaired. The choice of programme determines for how long.</p>`,
       advisors: () => [
         { who: 'Infrastructure Minister', role: 'Cabinet', said: 'Rebuild to the old standard and we do this again in fifteen years. Rebuild properly and we do not.' },
-        { who: 'Finance Minister', role: 'Treasury', said: 'The proper version is a full point of output a year for five years. I want that said in the room.' }
+        { who: 'Finance Minister', role: 'Treasury', said: 'The higher-standard programme costs a full point of output a year for five years. That should be stated before the decision.' }
       ],
       options: [
         {
@@ -1257,13 +1257,13 @@
           factions: { provinces: +12, labour: +8, business: -3 }
         },
         {
-          label: 'Restore what was there, no more', detail: 'Cheaper, faster, and identically vulnerable.',
+          label: 'Restore what was there, no more', detail: 'Rebuild to the previous standard. Cheaper and faster; the vulnerability remains.',
           effects: { 'society.approval': +1 },
           fn: (st) => { st.economy.reserves -= st.economy.gdp * 0.012; st.quality.infra += 3; st.flags.rebuiltCheap = true; },
           factions: { business: +4, provinces: +3 }
         },
         {
-          label: 'Cash compensation and let people relocate', detail: 'Pay them and accept that the region will empty out.',
+          label: 'Cash compensation and let people relocate', detail: 'Pay compensation directly and accept permanent outward migration from the region.',
           effects: { 'society.approval': -2 },
           fn: (st, ctx) => {
             st.economy.reserves -= st.economy.gdp * 0.008;
@@ -1274,7 +1274,7 @@
           factions: { provinces: -14, business: +6 }
         },
         {
-          label: 'The regions must fund their own recovery', detail: 'Devolve the bill along with the responsibility.',
+          label: 'The regions must fund their own recovery', detail: 'Assign reconstruction costs to the regional governments.',
           effects: { 'society.approval': -6, 'society.unrest': +6 },
           fn: (st) => {
             const scar = (st.scars || []).find((s) => s.deaths);
@@ -1288,11 +1288,11 @@
     {
       id: 'disaster_inquiry', cat: 'civic', dynamic: true, title: 'The Inquiry Reports',
       from: 'Office of the Attorney General', urgency: 'routine', deadline: 25,
-      brief: (st, ctx) => `<p>The inquiry into the disaster has reported. It finds that warnings existed, that they were not acted on, and that the failures were institutional rather than individual — which is the finding that lets everyone off and satisfies nobody.</p>
+      brief: (st, ctx) => `<p>The inquiry into the disaster has reported. It finds that warnings existed, that they were not acted on, and that the failures were institutional rather than individual. No individual is recommended for prosecution.</p>
         <p>${ctx.coverUp ? 'It also finds that the official death toll was knowingly understated.' : 'The bereaved families have asked to be in the room when you respond.'}</p>`,
       advisors: () => [
-        { who: 'Attorney General', role: 'Justice', said: 'Accept the findings in full or reject them in full. Half-accepting is the only option with no defenders.' },
-        { who: 'Political Adviser', role: 'Office', said: 'This story has one more news cycle in it. How long it runs is entirely up to you.' }
+        { who: 'Attorney General', role: 'Justice', said: 'Accept the findings in full or reject them in full. A partial acceptance will satisfy neither the families nor the institutions.' },
+        { who: 'Political Adviser', role: 'Office', said: 'The duration of press coverage now depends on the response.' }
       ],
       options: [
         {
@@ -1307,12 +1307,12 @@
           headline: 'Leader Apologises in Full for Disaster Failures'
         },
         {
-          label: 'Accept the findings, resist the compensation', detail: 'Own the failure, not the bill.',
+          label: 'Accept the findings, resist the compensation', detail: 'Accept the findings while contesting the compensation claims.',
           effects: { 'society.approval': -1, 'quality.admin': +2 },
           factions: { reformers: +3, provinces: -4, business: +3 }
         },
         {
-          label: 'Reject the report', detail: 'Dispute the methodology and move on.',
+          label: 'Reject the report', detail: 'Dispute the methodology and take no further action.',
           effects: { 'society.approval': -7, 'society.latent': +10, 'quality.admin': -2 },
           fn: (st) => {
             const scar = (st.scars || []).find((s) => s.deaths);
@@ -1323,7 +1323,7 @@
           headline: 'Government Rejects Inquiry Findings; Families Walk Out'
         },
         {
-          label: 'Prosecute the officials named', detail: 'Someone will answer for this, whether or not they are the right someone.',
+          label: 'Prosecute the officials named', detail: 'Bring charges against the officials named in the report.',
           effects: { 'society.approval': +6, 'quality.admin': -3, 'society.corruption': -2 },
           fn: (st) => {
             const scar = (st.scars || []).find((s) => s.deaths);
@@ -1345,8 +1345,8 @@
           <p>${st.flags.pandemicPrepared ? 'The stockpile and surge plans you funded are being activated now, and the modelling already reflects them.' : 'There is no stockpile and no surge plan. The health system has limited capacity and the economy has none.'}</p>`;
       },
       advisors: () => [
-        { who: 'Chief Medical Officer', role: 'Health', said: 'Move early and you will be accused of overreacting. If it works, that accusation is all the evidence anyone will have.' },
-        { who: 'Finance Minister', role: 'Treasury', said: 'A full closure costs a tenth of annual output. I want that number said out loud before you decide.' }
+        { who: 'Chief Medical Officer', role: 'Health', said: 'Early action will be criticised as excessive if it succeeds, because the avoided deaths will not be visible. It remains the correct course.' },
+        { who: 'Finance Minister', role: 'Treasury', said: 'A full closure costs roughly a tenth of annual output. That figure should be on the record before the decision.' }
       ],
       options: [
         {
@@ -1359,7 +1359,7 @@
             S.Aftermath.markCatastrophe(st);
             S.Aftermath.addScar(st, {
               kind: 'pandemic', name: 'The Pandemic',
-              desc: S.num(deaths) + ' dead. The closure held the toll down and emptied the treasury doing it.',
+              desc: S.num(deaths) + ' dead. The closure reduced the toll at a severe fiscal cost.',
               severity: 70, years: 6, deaths: deaths,
               growth: -0.9, approval: -2, unrest: +3, qualityDrag: { health: -8, education: -10 }
             });
@@ -1369,7 +1369,7 @@
           headline: 'National Closure Ordered as Pathogen Spreads'
         },
         {
-          label: 'Targeted measures and surge capacity', detail: 'Protect the vulnerable, keep the economy breathing.',
+          label: 'Targeted measures and surge capacity', detail: 'Restrict high-risk settings and expand hospital capacity while keeping the economy open.',
           effects: { 'economy.shock': -1.2, 'budget.alloc.health': +0.6 },
           fn: (st, ctx) => {
             D.ensurePandemic(st, ctx);
@@ -1378,7 +1378,7 @@
             S.Aftermath.markCatastrophe(st);
             S.Aftermath.addScar(st, {
               kind: 'pandemic', name: 'The Pandemic',
-              desc: S.num(deaths) + ' dead. The measures were proportionate and are still argued about.',
+              desc: S.num(deaths) + ' dead. The targeted measures remain publicly contested.',
               severity: 62, years: 5, deaths: deaths,
               growth: -0.6, approval: -1, unrest: +3, qualityDrag: { health: -10, education: -5 }
             });
@@ -1396,7 +1396,7 @@
             S.Aftermath.markCatastrophe(st);
             S.Aftermath.addScar(st, {
               kind: 'pandemic', name: 'The Pandemic',
-              desc: S.num(deaths) + ' dead. The country was never closed and has never stopped arguing about it.',
+              desc: S.num(deaths) + ' dead. The country was not closed; the decision remains publicly contested.',
               severity: 95, years: 9, deaths: deaths,
               growth: -0.5, approval: -4, unrest: +6, qualityDrag: { health: -18 }
             });
@@ -1411,7 +1411,7 @@
       id: 'pandemic_aftermath', cat: 'social', dynamic: true, title: 'After the Pandemic',
       from: 'Chief Medical Officer', urgency: 'routine', deadline: 25,
       brief: (st, ctx) => `<p>The emergency is over. <b>${S.num(ctx.deaths || 0)}</b> people are dead, the health service is exhausted, and a cohort of children has lost the better part of two years of schooling.</p>
-        <p>None of that repairs itself. The question is what the state now does about it, and there is a real temptation to do nothing and let the subject fade.</p>`,
+        <p>None of this recovers without intervention. A decision is required on the scale of the response.</p>`,
       advisors: () => [
         { who: 'Chief Medical Officer', role: 'Health', said: 'My staff are leaving. If you do one thing, make it retention.' },
         { who: 'Education Minister', role: 'Cabinet', said: 'The learning loss is measurable and it will follow that cohort into the labour market for forty years.' }
@@ -1428,7 +1428,7 @@
           headline: 'Major Recovery Package for Health and Schools'
         },
         {
-          label: 'Build the preparedness we did not have', detail: 'A permanent agency, a stockpile and a plan, so the next one is different.',
+          label: 'Build the preparedness we did not have', detail: 'Establish a permanent agency, a stockpile and a response plan for future outbreaks.',
           effects: { 'budget.alloc.health': +0.3, 'society.approval': +1 },
           fn: (st) => { st.flags.pandemicPrepared = true; st.flags.pandemicDone = false; st.quality.health += 3; },
           factions: { intelligentsia: +7, business: -2 }
@@ -1443,7 +1443,7 @@
           factions: { reformers: +9, intelligentsia: +7 }
         },
         {
-          label: 'Declare it over and move on', detail: 'The country is tired of the subject.',
+          label: 'Declare it over and move on', detail: 'Close the emergency programmes and make no further provision.',
           effects: { 'society.approval': +2, 'society.latent': +6 },
           fn: (st) => {
             const scar = (st.scars || []).find((s) => s.kind === 'pandemic');
@@ -1458,22 +1458,22 @@
       from: 'Protective Detail', urgency: 'urgent', deadline: 3,
       weight: (st) => (st.society.unrest > 50 || st.society.latent > 55) ? 8 : 1,
       brief: () => `<p>A device detonated forty metres from your motorcade. Two of the detail are dead. You are unhurt.</p>
-        <p>Nobody has claimed it. The services have three theories and no evidence. Everything you do in the next day sets the tone for the next year.</p>`,
+        <p>No group has claimed responsibility. The services have three working theories and no confirmed evidence. The public response chosen now will shape the security climate for the coming year.</p>`,
       options: [
-        { label: 'Address the nation calmly', detail: 'Continuity, restraint, business as usual.',
+        { label: 'Address the nation calmly', detail: 'A public address emphasising continuity and restraint.',
           effects: { 'society.approval': +8, 'society.cohesion': +5, 'national.prestige': +3 },
           factions: { reformers: +6, intelligentsia: +5 }, headline: 'Leader Addresses Nation Hours After Attack' },
-        { label: 'Declare a state of emergency', detail: 'Powers, curfews, and a very visible response.',
+        { label: 'Declare a state of emergency', detail: 'Assume emergency powers and impose curfews.',
           effects: { 'policy.interior.surveillance': +18, 'policy.interior.civilLiberties': -14, 'society.unrest': -8, 'society.latent': +10, 'society.approval': +4 },
           factions: { military: +7, nationalists: +9, reformers: -12, intelligentsia: -11 },
           headline: 'State of Emergency Declared After Assassination Attempt' },
-        { label: 'Mass arrests of the opposition', detail: 'Blame the obvious enemy. Remove them.',
+        { label: 'Mass arrests of the opposition', detail: 'Attribute the attack to the opposition and detain its members.',
           requires: (st) => authoritarian(st),
           effects: { 'policy.interior.civilLiberties': -22, 'society.latent': +20, 'society.unrest': +6, 'national.softPower': -12, 'society.approval': +2 },
           factions: { reformers: -24, intelligentsia: -20, military: +6 },
           risk: { p: 0.3, text: 'Backlash', fn: (st) => { st.society.unrest += 14; st.society.stability -= 8; } },
           headline: 'Thousands Detained in Nationwide Sweep' },
-        { label: 'Quiet, thorough investigation', detail: 'No spectacle. Find them.',
+        { label: 'Quiet, thorough investigation', detail: 'Conduct the investigation without public measures.',
           effects: { 'intel.strength': +5, 'society.approval': +2, 'budget.alloc.intel': +0.1 },
           factions: { intelligentsia: +4 } }
       ]
@@ -1484,14 +1484,14 @@
       id: 'war_memorial', cat: 'social', dynamic: true, title: 'What to Do About the Dead',
       from: 'Office of the Leader', urgency: 'routine', deadline: 30,
       brief: (st, ctx) => `<p>${S.num(ctx.dead || 0)} of our people died in ${ctx.war}. The veterans' associations, the bereaved families and the General Staff all want different things, and all three have written to you.</p>
-        <p>How a country buries a war determines how long it takes to stop fighting it.</p>`,
+        <p>The form of commemoration chosen will affect how long the war remains a live political grievance.</p>`,
       advisors: () => [
-        { who: 'Chief of Staff', role: 'Defence', said: 'My people need to know the country thinks it was worth something. Whether it was is a separate question.' },
-        { who: 'Political Adviser', role: 'Office', said: 'A memorial is cheap and lasts a century. A settlement for the wounded is expensive and lasts a generation. You can do both.' }
+        { who: 'Chief of Staff', role: 'Defence', said: 'The forces need public acknowledgement that the losses are valued. Morale depends on it.' },
+        { who: 'Political Adviser', role: 'Office', said: 'A memorial is a one-off cost. A settlement for the wounded is a recurring cost for a generation. Both can be funded.' }
       ],
       options: [
         {
-          label: 'A national memorial and a full veterans\' settlement', detail: 'Both. Pay for it.',
+          label: 'A national memorial and a full veterans\' settlement', detail: 'Fund both the memorial and the full settlement.',
           effects: { 'society.cohesion': +7, 'society.approval': +5, 'military.morale': +9 },
           fn: (st) => {
             st.economy.reserves -= st.economy.gdp * 0.010;
@@ -1503,12 +1503,12 @@
           headline: 'National Memorial Unveiled; Veterans\' Settlement Passes'
         },
         {
-          label: 'A memorial only', detail: 'The stone is affordable. The pensions are not.',
+          label: 'A memorial only', detail: 'Fund the memorial; defer the pension settlement on cost grounds.',
           effects: { 'society.cohesion': +4, 'military.morale': +2 },
           factions: { nationalists: +7, military: -3 }
         },
         {
-          label: 'A public reckoning instead', detail: 'An honest accounting of why it happened and who decided it.',
+          label: 'A public reckoning instead', detail: 'Commission a public account of the decisions that led to the war.',
           effects: { 'quality.admin': +4, 'national.softPower': +5, 'society.approval': -3 },
           fn: (st) => {
             const scar = (st.scars || []).find((s) => s.tag === 'war');
@@ -1519,7 +1519,7 @@
           headline: 'Government Orders Full Public Reckoning on the War'
         },
         {
-          label: 'Move on quietly', detail: 'No ceremony, no inquiry, no line in the budget.',
+          label: 'Move on quietly', detail: 'Hold no ceremony, open no inquiry and allocate no funds.',
           effects: { 'society.approval': -4, 'military.morale': -8, 'society.latent': +6 },
           fn: (st) => {
             const scar = (st.scars || []).find((s) => s.tag === 'war');
@@ -1535,21 +1535,21 @@
       brief: (st) => `<p>The country votes in twelve months. Approval stands at <b>${S.round(st.society.approval, 0)}%</b>; inflation at ${S.round(st.economy.inflation, 1)}% and unemployment at ${S.round(st.economy.unemployment, 1)}%.</p>
         <p>On present numbers the projected vote share is around <b>${S.round(S.clamp(50 + (st.society.approval - 47) * 0.8 + 5, 2, 98), 0)}%</b>. Anything below fifty and you leave office.</p>`,
       advisors: (st) => [
-        { who: 'Campaign Director', role: 'Party', said: st.society.approval < 45 ? 'We are behind. Something has to change and it has to be visible before the summer.' : 'We are ahead. The main risk now is doing something clever.' },
-        { who: 'Finance Minister', role: 'Treasury', said: 'Everything the campaign wants costs money we would rather spend after the election.' }
+        { who: 'Campaign Director', role: 'Party', said: st.society.approval < 45 ? 'We are behind. Something has to change and it has to be visible before the summer.' : 'We are ahead. The priority is avoiding unforced errors.' },
+        { who: 'Finance Minister', role: 'Treasury', said: 'Each measure the campaign requests carries a fiscal cost that will fall due after the election.' }
       ],
       options: [
-        { label: 'Pre-election giveaway', detail: 'Tax cuts, transfers, and a very well-timed cheque.',
+        { label: 'Pre-election giveaway', detail: 'Tax cuts and transfer payments timed before the vote.',
           effects: { 'society.approval': +8, 'economy.shock': +0.6, 'economy.inflation': +0.9, 'policy.tax.income': -3, 'budget.alloc.welfare': +0.8 },
           factions: { labour: +8, business: -4, reformers: -4 }, headline: 'Government Announces Pre-Election Package' },
-        { label: 'Run on the record', detail: 'No gimmicks. Defend what you did.',
+        { label: 'Run on the record', detail: 'Campaign on the government record without new commitments.',
           effects: { 'society.approval': +2, 'national.prestige': +2 },
           factions: { reformers: +5, intelligentsia: +4 } },
-        { label: 'Rally the base on identity', detail: 'Fight the campaign on culture, borders and flags.',
+        { label: 'Rally the base on identity', detail: 'Centre the campaign on identity, immigration and national tradition.',
           effects: { 'society.approval': +5, 'society.cohesion': +4, 'society.unrest': +4, 'policy.interior.propaganda': +10, 'policy.interior.immigration': -8 },
           factions: { nationalists: +12, clergy: +6, intelligentsia: -9, reformers: -8 },
           headline: 'Campaign Turns to Identity and Borders' },
-        { label: 'Tilt the field', detail: 'Redraw boundaries, lean on the broadcasters, delay a few registrations.',
+        { label: 'Shape the electoral process', detail: 'Redraw boundaries, pressure broadcasters and delay selected voter registrations.',
           requires: (st) => S.gov(st).mods.legitimacyFrom !== 'approval',
           effects: { 'society.latent': +12, 'policy.interior.pressFreedom': -10, 'society.approval': +6, 'national.softPower': -6 },
           factions: { reformers: -14, intelligentsia: -12 },
@@ -1575,7 +1575,7 @@
         ];
       },
       options: [
-        { label: 'Open negotiations', detail: 'Send a delegation. Take the meeting.',
+        { label: 'Open negotiations', detail: 'Send a delegation and open talks.',
           effects: {}, opensNegotiation: (st, ctx) => { const w = st.wars.find((x) => x.id === ctx.war); return w ? { kind: 'peace', nation: w.enemyId, ctx: { war: w.id } } : null; } },
         { label: 'Refuse and escalate', detail: 'Answer with an offensive instead.',
           effects: { 'world.tension': +5 },
@@ -1595,18 +1595,18 @@
         if (!w) return '<p>The situation has moved on.</p>';
         const n = w.enemyId ? S.dip(st, w.enemyId) : null;
         return `<p>The line has broken in three places. Formations are combat-ineffective and the reserve is committed. War score stands at <b>${S.round(w.score, 0)}</b>.</p>
-          <p>The Chief of Staff, who has never once used this word in your presence, has used the word <i>capitulation</i>. ${n ? n.name + ' will take a surrender.' : 'The rebels will take a surrender.'} If we fight on and lose anyway, the terms will be worse and they will be dictated in our capital.</p>`;
+          <p>The Chief of Staff has advised that <i>capitulation</i> must now be considered. ${n ? n.name + ' will take a surrender.' : 'The rebels will take a surrender.'} If we fight on and lose, the terms will be worse and will be dictated in our capital.</p>`;
       },
       advisors: (st, ctx) => {
         const w = st.wars.find((x) => x.id === ctx.war) || {};
         return [
-          { who: 'Chief of Staff', role: 'Defence', said: 'I can give you three more months of resistance. I cannot give you a different ending.' },
-          { who: 'Foreign Minister', role: 'Diplomacy', said: 'Terms negotiated now are terms. Terms accepted after a rout are an occupation.' },
-          { who: 'Nationalist Caucus', role: 'Legislature', said: 'Every nation that has surrendered has regretted it. Fight.' }
+          { who: 'Chief of Staff', role: 'Defence', said: 'Resistance can be extended by roughly three months. The outcome will not change.' },
+          { who: 'Foreign Minister', role: 'Diplomacy', said: 'Terms agreed now will be negotiated. Terms after a full collapse will be dictated, and may include occupation.' },
+          { who: 'Nationalist Caucus', role: 'Legislature', said: 'Surrender is unacceptable. The war must be continued.' }
         ];
       },
       options: [
-        { label: 'Negotiate terms of surrender', detail: 'Sit down while we still have something to trade.',
+        { label: 'Negotiate terms of surrender', detail: 'Open surrender negotiations while some leverage remains.',
           effects: { 'national.prestige': -8, 'society.approval': -4 },
           opensNegotiation: (st, ctx) => { const w = st.wars.find((x) => x.id === ctx.war); return w && w.enemyId ? { kind: 'peace', nation: w.enemyId, ctx: { war: w.id } } : null; },
           fn: (st, ctx) => {
@@ -1617,14 +1617,14 @@
             else S.Mil.endWar(st, w, 'defeat');
           },
           factions: { nationalists: -14, military: -4, labour: +6 } },
-        { label: 'Withdraw to the final defensive line', detail: 'Trade every remaining kilometre for time and casualties.',
+        { label: 'Withdraw to the final defensive line', detail: 'Fall back to the final defensive line to slow the advance.',
           effects: { 'military.morale': -6, 'society.unrest': +6 },
           fn: (st, ctx) => {
             const w = st.wars.find((x) => x.id === ctx.war);
             if (w) { w.posture = 'defend'; w.intensity = Math.max(25, w.intensity - 20); w.score = Math.min(-40, w.score + 12); }
           },
           factions: { military: +4, nationalists: +6 } },
-        { label: 'Total mobilisation', detail: 'Everyone who can hold a rifle. It has worked before, rarely.',
+        { label: 'Total mobilisation', detail: 'Conscript the full remaining population of military age. A low-probability measure.',
           effects: { 'policy.mil.conscription': +40, 'society.unrest': +14, 'economy.shock': -2.0, 'military.morale': +6 },
           fn: (st, ctx) => {
             const w = st.wars.find((x) => x.id === ctx.war);
@@ -1647,16 +1647,16 @@
           effects: { 'society.approval': +4, 'national.prestige': -5 },
           opensNegotiation: (st, ctx) => { const w = st.wars.find((x) => x.id === ctx.war); return w ? { kind: 'peace', nation: w.enemyId, ctx: { war: w.id } } : null; },
           factions: { nationalists: -10, military: -6, labour: +9 } },
-        { label: 'Reduce intensity and hold', detail: 'Fewer offensives, fewer coffins, no end.',
+        { label: 'Reduce intensity and hold', detail: 'Reduce operations and casualties without ending the war.',
           effects: { 'society.approval': +2 },
           fn: (st, ctx) => { const w = st.wars.find((x) => x.id === ctx.war); if (w) { w.posture = 'defend'; w.intensity = Math.max(20, w.intensity - 20); } },
           factions: { military: -3, labour: +4 } },
-        { label: 'Suppress the protests and continue', detail: 'The war ends when it is won.',
+        { label: 'Suppress the protests and continue', detail: 'Disperse the protests and continue the war.',
           effects: { 'society.unrest': +12, 'society.latent': +14, 'policy.interior.policing': +10, 'society.approval': -6 },
           fn: (st, ctx) => { const w = st.wars.find((x) => x.id === ctx.war); if (w) w.homeSupport += 6; },
           factions: { nationalists: +9, military: +6, labour: -14, reformers: -12 },
           headline: 'Anti-War Demonstrations Broken Up by Police' },
-        { label: 'Rally the nation', detail: 'A national address. Make the case again.',
+        { label: 'Rally the nation', detail: 'A national address restating the case for the war.',
           effects: { 'policy.interior.propaganda': +8, 'society.cohesion': +4 },
           fn: (st, ctx) => { const w = st.wars.find((x) => x.id === ctx.war); if (w) w.homeSupport += 10 * (st.society.approval / 55); },
           factions: { nationalists: +5 } }
@@ -1671,19 +1671,19 @@
           <p>Our own arsenal is rated ${S.round(st.military.nuclear, 0)}/100. Our posture is ${S.Mil.NUCLEAR_POSTURES[st.policy.mil.nuclearPosture].name}.</p>`;
       },
       options: [
-        { label: 'Halt offensive operations', detail: 'Take the off-ramp. Slow everything down.',
+        { label: 'Halt offensive operations', detail: 'Suspend offensive operations to reduce escalation risk.',
           effects: { 'world.tension': -6, 'national.prestige': -4, 'society.approval': -3 },
           fn: (st, ctx) => { st.wars.forEach((w) => { if (w.enemyId === ctx.nation) { w.posture = 'defend'; w.intensity = Math.max(20, w.intensity - 25); } }); },
           factions: { nationalists: -9, military: -4, intelligentsia: +8 } },
-        { label: 'Raise our own alert level', detail: 'Match them. Make the deterrent visible.',
+        { label: 'Raise our own alert level', detail: 'Match their alert level and make the deterrent visible.',
           effects: { 'world.tension': +12, 'military.readiness': +3, 'society.unrest': +6 },
           factions: { military: +7, nationalists: +9 },
           risk: { p: 0.10, text: 'Miscalculation', fn: (st, ctx) => { const w = st.wars.find((x) => x.enemyId === ctx.nation); if (w) S.Mil.nuclearExchange(st, w); } } },
-        { label: 'Open an emergency channel', detail: 'Direct contact between capitals. Now.',
+        { label: 'Open an emergency channel', detail: 'Establish direct contact between capitals immediately.',
           effects: { 'world.tension': -8, 'intel.strength': -2 },
           fn: (st, ctx) => { const n = S.dip(st, ctx.nation); if (n) { n.relation += 6; n.grievance = Math.max(0, (n.grievance || 0) - 10); } },
           factions: { intelligentsia: +6, nationalists: -5 } },
-        { label: 'Call the bluff and press the offensive', detail: 'They will not do it.',
+        { label: 'Call the bluff and press the offensive', detail: 'Assess the signalling as bluff and continue offensive operations.',
           effects: { 'world.tension': +18, 'society.approval': +2 },
           fn: (st, ctx) => { st.wars.forEach((w) => { if (w.enemyId === ctx.nation) { w.posture = 'full'; w.intensity = 100; } }); },
           factions: { nationalists: +12, military: +5, intelligentsia: -14 },
@@ -1695,29 +1695,29 @@
       from: 'Foreign Ministry', urgency: 'urgent', deadline: 6,
       brief: (st, ctx) => {
         const n = S.dip(st, ctx.nation);
-        return `<p>${n.name} has delivered a formal ultimatum. Their demands touch our sovereignty in ways that would be difficult to explain to anyone.</p>
+        return `<p>${n.name} has delivered a formal ultimatum. The demands involve significant concessions of sovereignty.</p>
           <p>Their military power is rated ${S.round(n.milPower, 0)} against our ${S.round(st.military.power, 0)}. Relations stand at ${S.round(n.relation, 0)}.</p>`;
       },
       options: [
-        { label: 'Negotiate', detail: 'Take the meeting. Find out what they actually need.',
+        { label: 'Negotiate', detail: 'Open negotiations to establish their minimum terms.',
           effects: {}, opensNegotiation: (st, ctx) => ({ kind: 'ultimatum', nation: ctx.nation, ctx: {} }) },
-        { label: 'Reject outright', detail: 'No. Publicly.',
+        { label: 'Reject outright', detail: 'Reject the ultimatum publicly.',
           effects: { 'society.approval': +6, 'national.prestige': +4, 'world.tension': +8 },
           fn: (st, ctx) => { const n = S.dip(st, ctx.nation); n.relation -= 20; n.grievance = (n.grievance || 0) + 20; },
           factions: { nationalists: +14, military: +6 },
           risk: { p: 0.35, text: 'They act on it', fn: (st, ctx) => { S.Mil.startWar(st, ctx.nation, { aggressor: false, intensity: 65 }); } } },
-        { label: 'Comply', detail: 'Give them what they want and survive the humiliation.',
+        { label: 'Comply', detail: 'Accept the demands in full.',
           effects: { 'society.approval': -10, 'national.prestige': -12, 'national.concessions': +2, 'world.tension': -6 },
           fn: (st, ctx) => { const n = S.dip(st, ctx.nation); n.relation += 18; n.grievance = 0; },
           factions: { nationalists: -20, military: -10, reformers: -5 },
           headline: 'Government Accepts Foreign Demands in Full' },
-        { label: 'Seek allies and stall', detail: 'Buy time. Internationalise the crisis.',
+        { label: 'Seek allies and stall', detail: 'Delay a reply while seeking statements of support from friendly powers.',
           effects: { 'world.tension': +3 },
           fn: (st, ctx) => {
             let helped = 0;
             st.diplomacy.nations.forEach((o) => { if (o.id !== ctx.nation && o.relation > 45) { helped++; o.relation += 3; } });
             if (helped >= 2) { const n = S.dip(st, ctx.nation); n.relation += 5; st.national.prestige += 4; S.game.event('Two friendly powers issued statements of support. The ultimatum quietly lapsed.', 'good'); }
-            else { st.national.prestige -= 5; S.game.event('Nobody came. The ultimatum stands and everyone noticed our isolation.', 'bad'); }
+            else { st.national.prestige -= 5; S.game.event('No state offered support. The ultimatum stands and our isolation has been noted abroad.', 'bad'); }
           },
           factions: { intelligentsia: +4 } }
       ]
@@ -1730,8 +1730,8 @@
         const kind = st.rng.pick(['expelled our ambassador', 'seized one of our fishing vessels', 'flown bombers through our identification zone',
           'arrested three of our nationals on espionage charges', 'sponsored riots outside our embassy']);
         ctx.kind = ctx.kind || kind;
-        return `<p>${n.name} has ${ctx.kind}. It is calibrated to be humiliating without being an act of war.</p>
-          <p>Relations stand at ${S.round(n.relation, 0)}. They are testing what we do.</p>`;
+        return `<p>${n.name} has ${ctx.kind}. The act falls below the threshold of war but is plainly deliberate.</p>
+          <p>Relations stand at ${S.round(n.relation, 0)}. The action appears designed to test our response.</p>`;
       },
       options: [
         { label: 'Respond symmetrically', detail: 'Do the same thing back, immediately.',
@@ -1742,7 +1742,7 @@
           effects: { 'world.tension': +6, 'economy.shock': -0.3 },
           fn: (st, ctx) => { const n = S.dip(st, ctx.nation); n.relation -= 14; n.tradeStatus = 'restricted'; },
           factions: { nationalists: +9, business: -6 } },
-        { label: 'Protest and let it pass', detail: 'A note. Nothing more.',
+        { label: 'Protest and let it pass', detail: 'Lodge a formal protest and take no further action.',
           effects: { 'society.approval': -3, 'world.tension': -2 },
           factions: { nationalists: -8, intelligentsia: +4 } },
         { label: 'Offer talks', detail: 'Treat the provocation as an opening.',
@@ -1757,16 +1757,16 @@
       brief: (st, ctx) => {
         const n = S.dip(st, ctx.nation);
         return `<p>${n.name} has proposed a formal defence relationship. Relations stand at ${S.round(n.relation, 0)} and their military power is rated ${S.round(n.milPower, 0)} against our ${S.round(st.military.power, 0)}.</p>
-          <p>An alliance is a promise to fight someone else's war. It is also a promise that someone will fight yours.</p>`;
+          <p>A defence treaty would commit us to their conflicts and commit them to ours.</p>`;
       },
       options: [
-        { label: 'Negotiate the terms', detail: 'Yes in principle. The detail is where the sovereignty goes.',
+        { label: 'Negotiate the terms', detail: 'Accept in principle and negotiate the terms.',
           effects: {}, opensNegotiation: (st, ctx) => ({ kind: 'alliance', nation: ctx.nation, ctx: {} }) },
-        { label: 'Accept the standard text', detail: 'Sign it as offered. Fast and generous to them.',
+        { label: 'Accept the standard text', detail: 'Sign the offered text without amendment. Faster; the terms favour them.',
           effects: { 'national.prestige': +4, 'world.tension': +2 },
           fn: (st, ctx) => { S.Dip.signTreaty(st, ctx.nation, 'defense'); },
           factions: { military: +5, nationalists: -3 } },
-        { label: 'Decline politely', detail: 'Keep our hands free.',
+        { label: 'Decline politely', detail: 'Decline and retain full freedom of action.',
           effects: {},
           fn: (st, ctx) => { const n = S.dip(st, ctx.nation); n.relation -= 6; n.cooldown = 12; },
           factions: { nationalists: +5, intelligentsia: -3 } }
@@ -1781,13 +1781,13 @@
           <p>Our tariff wall averages ${S.round(st.policy.trade.tariff, 1)}%. Domestic producers in the exposed sectors have already been in touch.</p>`;
       },
       options: [
-        { label: 'Negotiate the agreement', detail: 'Sit down and fight over the schedules.',
+        { label: 'Negotiate the agreement', detail: 'Negotiate the tariff schedules in detail.',
           effects: {}, opensNegotiation: (st, ctx) => ({ kind: 'trade', nation: ctx.nation, ctx: {} }) },
-        { label: 'Sign a simple mutual-access deal', detail: 'Quick, symmetric, unambitious.',
+        { label: 'Sign a simple mutual-access deal', detail: 'Sign a limited reciprocal-access agreement.',
           effects: { 'economy.shock': +0.3, 'policy.trade.openness': +5 },
           fn: (st, ctx) => { S.Dip.signTreaty(st, ctx.nation, 'trade'); },
           factions: { business: +6, labour: -4 } },
-        { label: 'Decline', detail: 'Protect what we have.',
+        { label: 'Decline', detail: 'Decline and retain the existing tariffs.',
           effects: {},
           fn: (st, ctx) => { const n = S.dip(st, ctx.nation); n.relation -= 5; n.cooldown = 10; },
           factions: { labour: +5, nationalists: +5, business: -6 } }
@@ -1798,19 +1798,19 @@
       from: 'Foreign Ministry', urgency: 'routine', deadline: 16,
       brief: (st, ctx) => {
         const n = S.dip(st, ctx.nation);
-        return `<p>${n.name} has requested emergency assistance — ${st.rng.pick(['budget support', 'famine relief', 'vaccine supply', 'post-disaster reconstruction', 'balance-of-payments support'])}. They have asked us first, which is itself information.</p>
+        return `<p>${n.name} has requested emergency assistance — ${st.rng.pick(['budget support', 'famine relief', 'vaccine supply', 'post-disaster reconstruction', 'balance-of-payments support'])}. They approached us before any other state.</p>
           <p>Their relation to us is ${S.round(n.relation, 0)}; their cultural affinity ${S.round(n.affinity, 0)}.</p>`;
       },
       options: [
-        { label: 'Grant it generously', detail: 'More than asked, publicly.',
+        { label: 'Grant it generously', detail: 'Provide more than requested, announced publicly.',
           effects: { 'national.softPower': +6, 'national.prestige': +3, 'society.approval': -2 },
           fn: (st, ctx) => { const n = S.dip(st, ctx.nation); n.relation += 18; n.affinity += 8; st.economy.reserves -= st.economy.gdp * 0.008; },
           factions: { intelligentsia: +5, nationalists: -5 } },
-        { label: 'Grant it with conditions', detail: 'Assistance, in exchange for something specific.',
+        { label: 'Grant it with conditions', detail: 'Provide assistance in exchange for specific concessions.',
           effects: { 'national.softPower': +2 },
           fn: (st, ctx) => { const n = S.dip(st, ctx.nation); n.relation += 8; st.economy.reserves -= st.economy.gdp * 0.004; if (st.rng.chance(0.5)) S.Dip.signTreaty(st, ctx.nation, 'trade'); },
           factions: { business: +4 } },
-        { label: 'Decline', detail: 'We have our own problems.',
+        { label: 'Decline', detail: 'Refuse the request.',
           effects: { 'society.approval': +2 },
           fn: (st, ctx) => { const n = S.dip(st, ctx.nation); n.relation -= 10; n.affinity -= 4; },
           factions: { nationalists: +5, intelligentsia: -5 } }
@@ -1825,41 +1825,41 @@
           'exclusion of their rival from our telecoms network', 'transit rights for military cargo',
           'suspension of our energy contract with their rival']);
         ctx.ask = ctx.ask || ask;
-        return `<p>${n.name} has asked, in terms that are not quite a request, for ${ctx.ask}.</p>
-          <p>They are rated at power ${S.round(n.power, 0)}. Refusing has consequences; agreeing has different ones.</p>`;
+        return `<p>${n.name} has requested, in terms close to a demand, ${ctx.ask}.</p>
+          <p>They are rated at power ${S.round(n.power, 0)}. Refusal damages relations with them; agreement damages relations with their rivals.</p>`;
       },
       options: [
-        { label: 'Agree', detail: 'Bank the goodwill. Absorb the cost.',
+        { label: 'Agree', detail: 'Grant the request and accept the cost with their rivals.',
           effects: { 'national.prestige': -3, 'national.concessions': +1, 'society.approval': -3 },
           fn: (st, ctx) => {
             const n = S.dip(st, ctx.nation); n.relation += 22;
             st.diplomacy.nations.forEach((o) => { if (o.id !== n.id && o.relation < 0 && o.power > 55) o.relation -= 10; });
           },
           factions: { nationalists: -12, business: +4 } },
-        { label: 'Refuse', detail: 'Politely, firmly, and at a price.',
+        { label: 'Refuse', detail: 'Decline the request and accept the damage to relations.',
           effects: { 'national.prestige': +5, 'society.approval': +4 },
           fn: (st, ctx) => { const n = S.dip(st, ctx.nation); n.relation -= 16; n.grievance = (n.grievance || 0) + 12; },
           factions: { nationalists: +12, intelligentsia: +3 } },
-        { label: 'Demand payment', detail: 'Everything is available at the right price.',
+        { label: 'Demand payment', detail: 'Offer to grant the request in exchange for payment.',
           effects: { 'national.prestige': -1 },
           fn: (st, ctx) => {
             const n = S.dip(st, ctx.nation);
             if (st.rng.chance(0.55 + (st.national.prestige - 50) / 200)) {
               st.economy.reserves += st.economy.gdp * 0.015; n.relation += 8;
-              S.game.event('They paid. Quietly, and more than we expected.', 'good');
-            } else { n.relation -= 12; S.game.event('They declined to pay and will remember being asked.', 'bad'); }
+              S.game.event('Payment was made without publicity, above the expected amount.', 'good');
+            } else { n.relation -= 12; S.game.event('They declined to pay. Relations have been damaged by the request.', 'bad'); }
           },
           factions: { business: +7, nationalists: +3 } },
-        { label: 'Play both sides', detail: 'Promise them. Promise their rival. Deliver ambiguity.',
+        { label: 'Play both sides', detail: 'Signal agreement to both powers without delivering to either.',
           effects: { 'national.prestige': -2 },
           fn: (st, ctx) => {
             if (st.rng.chance(0.45 + st.intel.strength / 250)) {
               st.diplomacy.nations.forEach((o) => { if (o.power > 55) o.relation += 6; });
-              S.game.event('Both capitals believe they have our commitment. For now.', 'good');
+              S.game.event('Both capitals currently believe they hold our commitment.', 'good');
             } else {
               st.diplomacy.nations.forEach((o) => { if (o.power > 55) o.relation -= 14; });
               st.national.prestige -= 8;
-              S.game.event('Our double-dealing was exposed. Nobody enjoys being played.', 'bad');
+              S.game.event('The parallel assurances were exposed. Relations with both powers have deteriorated.', 'bad');
             }
           },
           factions: { intelligentsia: -4, nationalists: +2 } }
@@ -1870,14 +1870,14 @@
       from: 'Foreign Ministry', urgency: 'routine', deadline: 14,
       brief: (st, ctx) => {
         const n = S.dip(st, ctx.nation);
-        return `<p>${n.name} has offered to mediate an end to our war. They are not neutral — nobody is — but they are trusted enough by both sides to carry a message.</p>`;
+        return `<p>${n.name} has offered to mediate an end to our war. They are not fully neutral, but both sides regard them as an acceptable channel.</p>`;
       },
       options: [
         { label: 'Accept mediation', detail: 'Let them convene it.',
           effects: { 'national.prestige': +2, 'world.tension': -3 },
           fn: (st, ctx) => { const n = S.dip(st, ctx.nation); n.relation += 10; const w = st.wars.find((x) => x.type === 'conventional'); if (w) { w.peaceOffered = true; S.game.pushDecision('peace_feeler', { war: w.id }); } },
           factions: { intelligentsia: +6, nationalists: -5 } },
-        { label: 'Decline', detail: 'This is our war to finish.',
+        { label: 'Decline', detail: 'Refuse mediation and continue the war.',
           effects: { 'society.approval': +1 },
           fn: (st, ctx) => { const n = S.dip(st, ctx.nation); n.relation -= 6; },
           factions: { nationalists: +7, military: +3 } }
