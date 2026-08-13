@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Animazing — 絢 — Team Card Battler</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%20100%20100'%3E%3Crect%20width='100'%20height='100'%20rx='16'%20fill='%23230f14'/%3E%3Ctext%20x='50'%20y='72'%20font-size='62'%20text-anchor='middle'%20fill='%23dcb54d'%20font-family='serif'%3E絢%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="css/animazing.css">
+</head>
+<body>
+<div id="app">
+  <div id="bg">
+    <div class="bg-weave"></div>
+    <div class="bg-glow"></div>
+    <div class="bg-vignette"></div>
+  </div>
+
+  <header id="topbar" class="hidden">
+    <div class="brand" id="brand-home" title="Return to the Sanctum">
+      <span class="brand-mark">絢</span>
+      <span class="brand-name gold-text">ANIMAZING</span>
+    </div>
+    <nav id="nav">
+      <button class="nav-btn" data-screen="hub">Sanctum</button>
+      <button class="nav-btn" data-screen="expedition">Expedition</button>
+      <button class="nav-btn" data-screen="collection">Collection</button>
+      <button class="nav-btn" data-screen="team">Team</button>
+      <button class="nav-btn" data-screen="summon">Summon</button>
+      <button class="nav-btn nav-btn-studio" data-screen="studio">Studio</button>
+      <button class="nav-btn" data-screen="settings">⚙</button>
+    </nav>
+    <div id="currencies">
+      <span class="currency" title="Gold — earned in battle, spent on packs and relics"><span class="cur-icon">🪙</span><b id="cur-gold">0</b></span>
+      <span class="currency" title="Anima Crystals — the summoner's currency"><span class="cur-icon">💠</span><b id="cur-crystals">0</b></span>
+    </div>
+  </header>
+
+  <main id="screens">
+    <section id="screen-title" class="screen"></section>
+    <section id="screen-hub" class="screen"></section>
+    <section id="screen-collection" class="screen"></section>
+    <section id="screen-team" class="screen"></section>
+    <section id="screen-summon" class="screen"></section>
+    <section id="screen-expedition" class="screen"></section>
+    <section id="screen-battle" class="screen"></section>
+    <section id="screen-studio" class="screen"></section>
+    <section id="screen-settings" class="screen"></section>
+  </main>
+
+  <div id="modal-root"></div>
+  <div id="toast-root"></div>
+  <div id="fx-root"></div>
+</div>
+
+<!-- Optional file-based content packs register themselves here -->
+<script src="packs/index.js"></script>
+
+<!-- Core -->
+<script src="js/core/util.js"></script>
+<script src="js/data/schema.js"></script>
+<script src="js/core/storage.js"></script>
+<!-- Game logic -->
+<script src="js/game/effects.js"></script>
+<script src="js/game/battle.js"></script>
+<script src="js/data/starter.js"></script>
+<script src="js/game/content.js"></script>
+<script src="js/game/state.js"></script>
+<!-- UI -->
+<script src="js/ui/ui.js"></script>
+<script src="js/ui/screens-meta.js"></script>
+<script src="js/ui/battle-ui.js"></script>
+<script src="js/ui/studio.js"></script>
+<script src="js/main.js"></script>
+</body>
+</html>
