@@ -16,6 +16,19 @@ python3 -m http.server 8123     # or: npx serve
 
 Opening `index.html` directly from disk (`file://`) also works in Chromium-based browsers and Firefox.
 
+### Single-file build
+
+For sharing — one HTML file you can email, drop on any static host, or open by double-clicking, with the stylesheet and all scripts inlined:
+
+```bash
+node tools/build-single.js                 # → dist/animazing.html (~310 KB)
+node tools/build-single.js --fragment out.html --title "Animazing"
+```
+
+The build reads its script list from `index.html`, so content packs you add there are included automatically. `--fragment` omits the `<html>/<head>/<body>` shell for hosts that supply their own (embedded viewers, artifact frames).
+
+The game degrades gracefully where a host restricts browser APIs: with storage blocked it runs fully in memory and says so; where a page can't hand over a file, pack export falls back to the host's save API and then to copy-out text, and **Paste pack text** imports without a file picker.
+
 > Progress (collection, currencies, expeditions) and Studio content (heroes, cards, uploaded PNG art) are saved **in the browser** — localStorage for data, IndexedDB for images. Use **Settings → Export full save** and **Studio → Packs & Export** for file backups.
 
 ## The game
@@ -56,6 +69,7 @@ animazing/
 │   ├── game/                effects interpreter, battle engine (DOM-free), content registry, meta state
 │   └── ui/                  screen renderers: hub/collection/team/summon/settings, battle+expedition, studio
 ├── packs/                   file-based content packs (see packs/README.md)
+├── tools/build-single.js    inlines everything into one shareable .html
 ├── docs/DESIGN.md           mechanics + full effect-DSL reference + architecture + extension points
 ├── docs/ROADMAP.md          where the story mode and deeper progression will plug in
 └── tests/engine-test.js     headless engine suite — run: node tests/engine-test.js

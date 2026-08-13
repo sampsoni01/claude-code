@@ -113,6 +113,48 @@
     });
   }
 
+  /* ---------------- save results ---------------- */
+
+  /* Surface the outcome of AZ.storage.saveTextFile. When the host refuses to
+     hand over a file at all, show the text so it can still be copied out —
+     a pack the player can't retrieve is a pack they've lost. */
+  function reportSave(result, text, label) {
+    label = label || 'File';
+    if (result.status === 'saved') {
+      var renamed = /\.txt$/i.test(result.filename) && !/\.txt$/i.test(label);
+      toast(renamed
+        ? label + ' saved as <b>' + esc(result.filename) + '</b> — rename it, dropping the “.txt”, to use it.'
+        : label + ' saved.', 'good');
+      return;
+    }
+    if (result.status === 'declined') { toast('Save cancelled.', 'info'); return; }
+    modal({
+      title: label + ' — copy it out',
+      body: '<p class="confirm-text">This viewer won’t let the page hand you a file directly. ' +
+        'Select all of the text below, copy it, and save it yourself as a file — it is the complete ' +
+        (label.indexOf('save') >= 0 ? 'save' : 'pack') + '.</p>' +
+        '<textarea class="json-ta" rows="14" readonly>' + esc(text) + '</textarea>',
+      wide: true,
+      actions: [
+        { label: 'Copy to clipboard', cls: 'btn-gold', onClick: function (api) {
+          var ta = api.el.querySelector('.json-ta');
+          ta.select();
+          var done = false;
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(text).then(function () { toast('Copied.', 'good'); }, function () {});
+            done = true;
+          }
+          if (!done) {
+            try { document.execCommand('copy'); toast('Copied.', 'good'); }
+            catch (e) { toast('Press Ctrl/Cmd+C to copy.', 'info'); }
+          }
+          return true;
+        } },
+        { label: 'Close', cls: 'btn-ghost' }
+      ]
+    });
+  }
+
   /* ---------------- 3D tilt ---------------- */
 
   function bindTilt(rootEl) {
@@ -260,6 +302,7 @@
     toast: toast,
     modal: modal,
     confirmModal: confirmModal,
+    reportSave: reportSave,
     bindTilt: bindTilt,
     floatText: floatText,
     shake: shake,

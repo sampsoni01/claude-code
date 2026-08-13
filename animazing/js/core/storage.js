@@ -36,6 +36,19 @@
     delete mem[key];
   }
 
+  /* True when writes actually survive a reload. Sandboxed frames and some
+     file:// setups block storage; the game still runs entirely in memory,
+     but it should say so rather than silently losing a run. */
+  function isPersistent() {
+    try {
+      if (typeof localStorage === 'undefined') return false;
+      var probe = 'animazing.probe';
+      localStorage.setItem(probe, '1');
+      localStorage.removeItem(probe);
+      return true;
+    } catch (e) { return false; }
+  }
+
   function loadJSON(key, fallback) {
     var raw = lsGet(key);
     if (!raw) return fallback;
@@ -247,21 +260,76 @@
     return Promise.all(writes);
   }
 
-  /* ---------------- download helper (browser only) ---------------- */
+  /* ---------------- file export ----------------
+     Two worlds: a normal page can hand the browser an <a download>, while
+     an embedded/sandboxed host (e.g. a published artifact frame) makes such
+     links inert and mediates saves through window.claude.downloads instead.
+     saveTextFile picks the right path and always resolves — callers surface
+     the outcome, and 'unsupported' means "show the text so it can be copied".
+     Resolves { status: 'saved' | 'declined' | 'unsupported', filename }.   */
+
+  function hostDownloads() {
+    if (typeof window === 'undefined') return null;
+    var c = window.claude;
+    return (c && c.downloads && typeof c.downloads.save === 'function') ? c.downloads : null;
+  }
+
+  function guessMime(filename) {
+    if (/\.json$/i.test(filename)) return 'application/json';
+    if (/\.js$/i.test(filename)) return 'text/javascript';
+    return 'text/plain';
+  }
+
+  function anchorDownload(text, filename) {
+    if (typeof document === 'undefined') return false;
+    try {
+      var blob = new Blob([text], { type: guessMime(filename) });
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(function () { URL.revokeObjectURL(url); a.remove(); }, 250);
+      return true;
+    } catch (e) { return false; }
+  }
+
+  function saveTextFile(filename, text) {
+    var host = hostDownloads();
+    if (!host) {
+      var ok = anchorDownload(text, filename);
+      return Promise.resolve({ status: ok ? 'saved' : 'unsupported', filename: filename });
+    }
+    function attempt(name) {
+      return host.save({ filename: name, data: text })
+        .then(function () { return { status: 'saved', filename: name }; });
+    }
+    return attempt(filename).catch(function (err) {
+      var code = err && err.code;
+      /* The host allowlists extensions — .js is not on it, so offer the same
+         bytes as .txt and let the player rename after downloading. */
+      if (code === 'rejected_extension' || code === 'extension_not_enabled') {
+        return attempt(filename + '.txt').catch(function (e2) {
+          return {
+            status: (e2 && e2.code === 'declined') ? 'declined' : 'unsupported',
+            filename: filename, error: e2
+          };
+        });
+      }
+      if (code === 'declined' || code === 'rate_limited') {
+        return { status: 'declined', filename: filename, error: err };
+      }
+      return { status: 'unsupported', filename: filename, error: err };
+    });
+  }
 
   function downloadJSON(obj, filename) {
-    if (typeof document === 'undefined') return;
-    var blob = new Blob([JSON.stringify(obj, null, 2)], { type: 'application/json' });
-    var url = URL.createObjectURL(blob);
-    var a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    setTimeout(function () { URL.revokeObjectURL(url); a.remove(); }, 250);
+    return saveTextFile(filename, JSON.stringify(obj, null, 2));
   }
 
   AZ.storage = {
+    isPersistent: isPersistent,
     loadProfile: loadProfile,
     saveProfile: saveProfile,
     clearProfile: clearProfile,
@@ -277,6 +345,7 @@
     importContentPack: importContentPack,
     buildFullSave: buildFullSave,
     importFullSave: importFullSave,
+    saveTextFile: saveTextFile,
     downloadJSON: downloadJSON
   };
 })(typeof window !== 'undefined' ? (window.AZ = window.AZ || {}) : (globalThis.AZ = globalThis.AZ || {}));

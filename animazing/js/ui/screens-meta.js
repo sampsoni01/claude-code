@@ -537,8 +537,10 @@
         });
       });
       el.querySelector('#set-export').addEventListener('click', function () {
-        AZ.storage.downloadJSON(AZ.storage.buildFullSave(), 'animazing-save.json');
-        AZ.ui.toast('Save exported.', 'good');
+        var text = JSON.stringify(AZ.storage.buildFullSave(), null, 2);
+        AZ.storage.saveTextFile('animazing-save.json', text).then(function (res) {
+          AZ.ui.reportSave(res, text, 'Save file');
+        });
       });
       el.querySelector('#set-import').addEventListener('change', function (e) {
         var file = e.target.files[0];

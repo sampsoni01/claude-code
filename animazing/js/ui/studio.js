@@ -903,6 +903,7 @@
       '<button class="btn btn-gold" id="pk-export-json">⬇ Export pack (.json)</button>' +
       '<button class="btn btn-gold" id="pk-export-js">⬇ Export auto-loading pack (.js)</button>' +
       '<label class="btn btn-ghost btn-file">⬆ Import pack (.json)<input type="file" id="pk-import" accept="application/json"></label>' +
+      '<button class="btn btn-ghost" id="pk-paste">⬆ Paste pack text</button>' +
       '</div>' +
       '<div class="st-actions"><button class="btn btn-crimson" id="pk-clear">Clear ALL my custom content</button></div>' +
       '</div>';
@@ -910,39 +911,65 @@
     function packMeta() {
       return { name: main.querySelector('#pk-name').value || 'Animazing Pack', author: main.querySelector('#pk-author').value || '' };
     }
+    function emptyPackGuard() {
+      var c = AZ.content.customContent();
+      if (c.characters.length || c.cards.length || c.items.length || c.enemies.length) return false;
+      AZ.ui.toast('Nothing to export yet — create a hero, card, relic or enemy first.', 'info');
+      return true;
+    }
     on(main, 'pk-export-json', 'click', function () {
+      if (emptyPackGuard()) return;
       var pack = AZ.storage.buildContentPack(AZ.content.customContent(), packMeta());
-      AZ.storage.downloadJSON(pack, AZ.util.slug(pack.name) + '.animazing-pack.json');
-      AZ.ui.toast('Pack exported.', 'good');
+      var name = AZ.util.slug(pack.name) + '.animazing-pack.json';
+      var text = JSON.stringify(pack, null, 2);
+      AZ.storage.saveTextFile(name, text).then(function (res) {
+        AZ.ui.reportSave(res, text, 'Pack');
+      });
     });
     on(main, 'pk-export-js', 'click', function () {
+      if (emptyPackGuard()) return;
       var pack = AZ.storage.buildContentPack(AZ.content.customContent(), packMeta());
       var js = '/* Animazing content pack — drop into packs/ and register in packs/index.js (see packs/README.md). */\n' +
         '(function () {\n  var root = typeof window !== "undefined" ? window : globalThis;\n' +
         '  root.AZ = root.AZ || {};\n  root.AZ.PACKS = root.AZ.PACKS || [];\n' +
         '  root.AZ.PACKS.push(' + JSON.stringify(packToLayer(pack), null, 2) + ');\n})();\n';
-      var blob = new Blob([js], { type: 'text/javascript' });
-      var a = document.createElement('a');
-      a.href = URL.createObjectURL(blob);
-      a.download = AZ.util.slug(pack.name) + '.pack.js';
-      document.body.appendChild(a);
-      a.click();
-      setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 250);
-      AZ.ui.toast('JS pack exported — see packs/README.md to wire it in.', 'good');
+      AZ.storage.saveTextFile(AZ.util.slug(pack.name) + '.pack.js', js).then(function (res) {
+        AZ.ui.reportSave(res, js, 'JS pack');
+      });
     });
-    on(main, 'pk-import', 'change', function (e) {
-      var file = e.target.files[0];
-      if (!file) return;
-      file.text().then(function (text) {
-        return AZ.storage.importContentPack(JSON.parse(text));
-      }).then(function (result) {
+    function applyImport(text) {
+      return AZ.storage.importContentPack(JSON.parse(text)).then(function (result) {
         AZ.content.init();
         grantAllCustom();
         var msg = 'Imported: ' + result.added + ' new, ' + result.replaced + ' updated, ' + result.images + ' images.';
         if (result.errors.length) msg += ' Skipped ' + result.errors.length + ' invalid entries.';
         AZ.ui.toast(msg, result.errors.length ? 'info' : 'good');
         AZ.screens.studio.render();
-      }).catch(function (err) { AZ.ui.toast('Import failed: ' + esc(err.message), 'error'); });
+      });
+    }
+    on(main, 'pk-import', 'change', function (e) {
+      var file = e.target.files[0];
+      if (!file) return;
+      file.text()
+        .then(applyImport)
+        .catch(function (err) { AZ.ui.toast('Import failed: ' + esc(err.message), 'error'); });
+    });
+    on(main, 'pk-paste', 'click', function () {
+      AZ.ui.modal({
+        title: 'Paste pack text',
+        body: '<p class="confirm-text">Paste the contents of an <code>.animazing-pack.json</code> file. ' +
+          'Useful when a file picker isn’t available — on mobile, or in an embedded viewer.</p>' +
+          '<textarea class="json-ta" rows="12" placeholder="{ &quot;format&quot;: &quot;animazing-pack&quot;, … }"></textarea>',
+        wide: true,
+        actions: [
+          { label: 'Import', cls: 'btn-gold', onClick: function (api) {
+            var text = api.el.querySelector('.json-ta').value.trim();
+            if (!text) { AZ.ui.toast('Nothing pasted.', 'error'); return true; }
+            applyImport(text).catch(function (err) { AZ.ui.toast('Import failed: ' + esc(err.message), 'error'); });
+          } },
+          { label: 'Cancel', cls: 'btn-ghost' }
+        ]
+      });
     });
     on(main, 'pk-clear', 'click', function () {
       AZ.ui.confirmModal('Delete ALL your custom heroes, cards, relics and enemies? Uploaded art is kept in the browser but unreferenced. Export a pack first!', function () {

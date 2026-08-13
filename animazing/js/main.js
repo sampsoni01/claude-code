@@ -33,6 +33,12 @@
         });
         AZ.ui.bindTilt(document.body);
         AZ.ui.showScreen('title');
+
+        if (!AZ.storage.isPersistent()) {
+          setTimeout(function () {
+            AZ.ui.toast('This browser blocks local storage here — the game plays fine, but progress and Studio art won’t survive a reload. Export packs to keep them.', 'info');
+          }, 1400);
+        }
       })
       .catch(function (err) {
         console.error('Boot failed:', err);
