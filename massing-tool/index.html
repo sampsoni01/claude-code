@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🏗️</text></svg>">
+  <title>Massing Tool</title>
+  <style>
+    :root {
+      --bg: #14181c; --panel: #1d2329; --panel2: #242b33; --text: #e8edf2;
+      --muted: #93a1ad; --accent: #ff8c42; --accent2: #4fa3d1; --line: #313a44;
+      font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); }
+    #app { position: fixed; inset: 0; }
+    #app canvas { display: block; }
+
+    #panel {
+      position: fixed; top: 12px; right: 12px; width: 268px;
+      background: var(--panel); color: var(--text); border: 1px solid var(--line);
+      border-radius: 10px; padding: 14px; box-shadow: 0 8px 30px rgba(0,0,0,.45);
+      font-size: 13px; max-height: calc(100vh - 24px); overflow-y: auto;
+    }
+    #panel h1 { font-size: 15px; margin: 0 0 10px; font-weight: 600; letter-spacing: .3px; }
+    #panel h2 { font-size: 13px; margin: 0 0 8px; color: var(--accent); font-weight: 600; }
+    .row { display: flex; gap: 6px; margin-bottom: 8px; }
+    button {
+      flex: 1; background: var(--panel2); color: var(--text); border: 1px solid var(--line);
+      border-radius: 6px; padding: 6px 8px; font-size: 12.5px; cursor: pointer;
+    }
+    button:hover { border-color: var(--accent2); }
+    button.tab.active { background: var(--accent2); color: #0d1216; border-color: var(--accent2); font-weight: 600; }
+    button:disabled { opacity: .4; cursor: default; }
+    .stats { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; margin: 10px 0; }
+    .stats div, .kv { display: flex; justify-content: space-between; padding: 3px 0; }
+    .stats span, .kv span { color: var(--muted); }
+    .stats b, .kv b { font-variant-numeric: tabular-nums; font-weight: 600; }
+    #selCard { border: 1px solid var(--line); border-radius: 8px; padding: 10px; margin: 10px 0; background: var(--panel2); }
+    #selCard.hidden { display: none; }
+    label { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin: 7px 0; color: var(--muted); }
+    input[type="number"] { width: 76px; background: var(--bg); border: 1px solid var(--line); color: var(--text);
+      border-radius: 5px; padding: 4px 6px; font-size: 12.5px; }
+    input[type="color"] { width: 40px; height: 24px; border: 1px solid var(--line); border-radius: 5px;
+      background: var(--bg); padding: 1px; }
+    .note { color: var(--muted); font-size: 11.5px; margin-top: 6px; line-height: 1.4; }
+    .chk { justify-content: flex-start; font-size: 12px; }
+    #err { color: #ff7676; font-size: 12px; min-height: 16px; margin-top: 6px; }
+
+    #hint {
+      position: fixed; left: 12px; bottom: 12px; color: var(--text);
+      background: rgba(20, 24, 28, .82); border: 1px solid var(--line); border-radius: 8px;
+      padding: 8px 12px; font-size: 12.5px; max-width: 520px; line-height: 1.45;
+    }
+    #hint kbd {
+      background: var(--panel2); border: 1px solid var(--line); border-radius: 4px;
+      padding: 0 5px; font-size: 11px; font-family: inherit;
+    }
+  </style>
+</head>
+<body>
+  <div id="app"></div>
+
+  <div id="panel">
+    <h1>Massing Tool</h1>
+    <div class="row">
+      <button id="btnDraw" class="tab">Draw</button>
+      <button id="btnEdit" class="tab">Edit</button>
+    </div>
+    <div class="row">
+      <button id="btnUndo" title="Ctrl+Z">Undo</button>
+      <button id="btnRedo" title="Ctrl+Shift+Z">Redo</button>
+      <button id="btnNew">New</button>
+    </div>
+
+    <div class="stats">
+      <div><span>Floors</span><b id="stFloors">&ndash;</b></div>
+      <div><span>Height</span><b id="stHeight">&ndash;</b></div>
+      <div><span>Footprint</span><b id="stFootprint">&ndash;</b></div>
+      <div><span>Gross floor area</span><b id="stGFA">&ndash;</b></div>
+    </div>
+
+    <div id="selCard" class="hidden">
+      <h2 id="selTitle">Level &ndash;</h2>
+      <div class="kv"><span>Plate area</span><b id="selArea">&ndash;</b></div>
+      <div class="kv"><span>Run</span><b id="selRun">&ndash;</b></div>
+      <label>Setback (ft) <input id="inSetback" type="number" step="0.5" value="5"></label>
+      <div class="row"><button id="btnSetback">Apply setback</button></div>
+      <label>Floor height (ft) <input id="inFH" type="number" step="0.5" min="6"></label>
+      <label>Floors in run <input id="inFC" type="number" step="1" min="1"></label>
+      <label>Color <input id="inColor" type="color"></label>
+      <div class="note">Setback applies from this level up through the rest of its run. Drag a wall of the selected run to set back interactively.</div>
+    </div>
+
+    <div class="row">
+      <button id="btnSave">Save</button>
+      <button id="btnLoad">Load</button>
+      <button id="btnExport">Export GLB</button>
+    </div>
+    <label class="chk"><input id="chkMeters" type="checkbox" checked>&nbsp;export scaled to meters</label>
+    <div id="err"></div>
+  </div>
+
+  <div id="hint"></div>
+  <input id="fileInput" type="file" accept=".json,application/json" style="display:none">
+
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>
