@@ -65,9 +65,12 @@ export function maybeRealismEvent(state: SimulationState): void {
     const b = pick(state, businesses);
     if (b.details.kind !== 'business') return;
     const good = nextRandom(state) < 0.5;
-    const pctChange = (0.05 + nextRandom(state) * 0.15) * (good ? 1 : -1);
-    b.details.business.annualRevenue = round2(b.details.business.annualRevenue * (1 + pctChange));
-    note(`${b.name}: ${good ? 'major contract won' : 'key customer lost'}`, `Annual revenue ${good ? 'up' : 'down'} ${(Math.abs(pctChange) * 100).toFixed(0)}%.`, undefined, b.id);
+    const pctChange = (0.02 + nextRandom(state) * 0.06) * (good ? 1 : -1);
+    const biz = b.details.business;
+    // Revenue moves; variable costs (assumed 60% of operating expenses) follow it, so profit changes are leveraged but not absurd.
+    biz.annualRevenue = round2(biz.annualRevenue * (1 + pctChange));
+    biz.annualOperatingExpenses = round2(biz.annualOperatingExpenses * (1 + pctChange * 0.6));
+    note(`${b.name}: ${good ? 'major contract won' : 'key customer lost'}`, `Annual revenue ${good ? 'up' : 'down'} ${(Math.abs(pctChange) * 100).toFixed(0)}%; variable costs move with it.`, undefined, b.id);
   });
   const securities = owned.filter((a) => a.details.kind === 'security');
   if (securities.length) candidates.push(() => {

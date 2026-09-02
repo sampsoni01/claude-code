@@ -1,6 +1,6 @@
 export * from './types';
 export * from './errors';
-export { round2, formatMoney, roundEstimate, pct } from './money';
+export { round2, formatMoney, roundEstimate, pct, label } from './money';
 export * from './dates';
 export { nextId } from './ids';
 export { postTransaction, reverseTransaction, sumPostings, transactionsBetween, validatePostings } from './ledger';

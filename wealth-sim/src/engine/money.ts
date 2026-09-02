@@ -43,3 +43,8 @@ export function currencySymbol(c: string): string {
 export function pct(n: number, digits = 1): string {
   return `${(n * 100).toFixed(digits)}%`;
 }
+
+/** Human label for snake_case identifiers. */
+export function label(s: string): string {
+  return s.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+}
