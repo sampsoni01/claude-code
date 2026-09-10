@@ -176,6 +176,26 @@ impl ScalarField {
         });
     }
 
+    /// Indices of tiles whose contents differ between two same-sized fields.
+    pub fn changed_tiles(&self, other: &ScalarField) -> Vec<u32> {
+        assert_eq!((self.width, self.height), (other.width, other.height));
+        let n = self.tile_count();
+        (0..n)
+            .into_par_iter()
+            .filter(|&t| {
+                let r = self.tile_rect_index(t);
+                let w = r.width() as usize;
+                for y in r.y0..r.y1 {
+                    let off = y as usize * self.width as usize + r.x0 as usize;
+                    if self.data[off..off + w] != other.data[off..off + w] {
+                        return true;
+                    }
+                }
+                false
+            })
+            .collect()
+    }
+
     pub fn min_max(&self) -> (f32, f32) {
         self.data
             .par_chunks(1 << 16)

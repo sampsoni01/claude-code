@@ -3,9 +3,11 @@
 use crate::camera::Camera;
 use crate::document::Document;
 use crate::gpu::field::ReadbackStats;
+use crate::gpu::map_render::ViewMode;
 use crate::gpu::profiler::CpuStats;
 use crate::tools::{Tool, ToolState};
 use glam::Vec2;
+use isoline_core::biome::{Biome, MOIST_BINS, MOIST_BIN_LABELS, TEMP_BINS, TEMP_BIN_LABELS};
 use isoline_core::brush::Falloff;
 use isoline_core::project::Manifest;
 use isoline_core::terrain::{TerrainParams, TerrainPreset};
@@ -35,6 +37,7 @@ pub struct RecoveryPrompt {
 }
 
 #[derive(Clone, Debug)]
+#[allow(clippy::large_enum_variant)]
 pub enum UiAction {
     New(NewProjectParams),
     Open,
@@ -47,6 +50,9 @@ pub enum UiAction {
     Recover(RecoveryPrompt),
     DiscardRecovery,
     SeaLevelCommit { from: f32, to: f32 },
+    SettingsChanged,
+    ViewMode(ViewMode),
+    ShowWater(bool),
 }
 
 #[derive(Default)]
@@ -54,6 +60,7 @@ pub struct UiState {
     pub show_profiler: bool,
     pub show_new: bool,
     pub show_about: bool,
+    pub show_biome_matrix: bool,
     pub new_params: NewProjectParams,
     pub recovery: Option<RecoveryPrompt>,
     pub status: String,
@@ -79,6 +86,11 @@ pub struct UiContext<'a> {
     pub cursor_field: Option<Vec2>,
     pub job: Option<(String, f32)>,
     pub max_field_dim: u32,
+    pub view_mode: ViewMode,
+    pub show_water: bool,
+    pub derived_running: Option<f32>,
+    pub derived_device_bytes: u64,
+    pub derived_upload_tiles: u32,
 }
 
 fn fmt_bytes(b: u64) -> String {
@@ -141,6 +153,7 @@ pub fn draw(root: &mut egui::Ui, st: &mut UiState, c: UiContext) -> Vec<UiAction
                 }
                 ui.checkbox(&mut c.doc.render.show_contours, "Contours");
                 ui.checkbox(&mut st.show_profiler, "Profiler          F3");
+                ui.checkbox(&mut st.show_biome_matrix, "Biome matrix…");
             });
             ui.menu_button("Help", |ui| {
                 if ui.button("About Isoline").clicked() {
@@ -210,6 +223,72 @@ pub fn draw(root: &mut egui::Ui, st: &mut UiState, c: UiContext) -> Vec<UiAction
         }
         ui.label(format!("Land: {:.1}%", c.doc.stats.land_fraction * 100.0));
         ui.separator();
+        ui.heading("View");
+        let mut vm = c.view_mode;
+        egui::ComboBox::from_id_salt("view_mode").selected_text(vm.label()).show_ui(ui, |ui| {
+            for m in ViewMode::ALL {
+                ui.selectable_value(&mut vm, m, m.label());
+            }
+        });
+        if vm != c.view_mode {
+            actions.push(UiAction::ViewMode(vm));
+        }
+        let mut sw = c.show_water;
+        if ui.checkbox(&mut sw, "Rivers and lakes").changed() {
+            actions.push(UiAction::ShowWater(sw));
+        }
+        if let Some(p) = c.derived_running {
+            ui.add(egui::ProgressBar::new(p).text("computing rivers & biomes"));
+        } else if let Some(d) = &c.doc.derived {
+            ui.small(format!("{} rivers, {} lakes · {:.0} ms", d.rivers.len(), d.lakes.len(), d.timings.total_ms));
+        }
+        ui.separator();
+        egui::CollapsingHeader::new("Climate").default_open(true).show(ui, |ui| {
+            let cl = &mut c.doc.params.climate;
+            let mut changed = false;
+            changed |= ui.checkbox(&mut cl.moisture_enabled, "Orographic moisture").changed();
+            if cl.moisture_enabled {
+                changed |= ui.add(egui::Slider::new(&mut cl.wind_deg, 0.0..=360.0).suffix("°").text("Wind toward")).drag_stopped();
+                changed |= ui.add(egui::Slider::new(&mut cl.orographic, 0.0..=1.0).text("Orographic strength")).drag_stopped();
+                changed |= ui.add(egui::Slider::new(&mut cl.continentality, 0.05..=2.0).logarithmic(true).text("Continentality")).drag_stopped();
+                changed |= ui.add(egui::Slider::new(&mut cl.boundary_moisture, 0.0..=1.0).text("Incoming moisture")).drag_stopped();
+            } else {
+                changed |= ui.add(egui::Slider::new(&mut cl.uniform_moisture, 0.0..=1.0).text("Uniform moisture")).drag_stopped();
+            }
+            changed |= ui.add(egui::Slider::new(&mut cl.lat_north, -90.0..=90.0).suffix("°").text("Latitude north")).drag_stopped();
+            changed |= ui.add(egui::Slider::new(&mut cl.lat_south, -90.0..=90.0).suffix("°").text("Latitude south")).drag_stopped();
+            changed |= ui.add(egui::Slider::new(&mut cl.lapse_rate, 0.0..=12.0).text("Lapse °C/km")).drag_stopped();
+            changed |= ui.add(egui::Slider::new(&mut cl.temperature_offset, -20.0..=20.0).suffix(" °C").text("Temperature offset")).drag_stopped();
+            if changed {
+                actions.push(UiAction::SettingsChanged);
+            }
+        });
+        egui::CollapsingHeader::new("Hydrology").default_open(true).show(ui, |ui| {
+            let hy = &mut c.doc.params.hydrology;
+            let mut changed = false;
+            changed |= ui.checkbox(&mut hy.enabled, "Rivers").changed();
+            changed |= ui.checkbox(&mut hy.lakes_enabled, "Lakes").changed();
+            changed |= ui.checkbox(&mut hy.deltas, "Deltas").changed();
+            let mut thr = hy.river_threshold_frac * 1e4;
+            if ui.add(egui::Slider::new(&mut thr, 0.1..=50.0).logarithmic(true).text("River threshold")).drag_stopped() {
+                changed = true;
+            }
+            hy.river_threshold_frac = thr * 1e-4;
+            changed |= ui.add(egui::Slider::new(&mut hy.river_width_scale, 0.2..=5.0).text("River width")).drag_stopped();
+            changed |= ui.add(egui::Slider::new(&mut hy.arid_loss, 0.0..=0.05).text("Arid loss")).drag_stopped();
+            changed |= ui.add(egui::Slider::new(&mut hy.braid_strength, 0.0..=2.0).text("Braiding")).drag_stopped();
+            changed |= ui.add(egui::Slider::new(&mut hy.min_lake_depth, 1.0..=200.0).logarithmic(true).text("Min lake depth")).drag_stopped();
+            let mut area = hy.min_lake_area as f32;
+            if ui.add(egui::Slider::new(&mut area, 1.0..=2000.0).logarithmic(true).text("Min lake area")).drag_stopped() {
+                changed = true;
+            }
+            hy.min_lake_area = area as u32;
+            changed |= ui.add(egui::Slider::new(&mut hy.lake_min_moisture, 0.0..=0.5).text("Lake min moisture")).drag_stopped();
+            if changed {
+                actions.push(UiAction::SettingsChanged);
+            }
+        });
+        ui.separator();
         ui.heading("Shading");
         let rs = &mut c.doc.render;
         ui.add(egui::Slider::new(&mut rs.sun_azimuth_deg, 0.0..=360.0).suffix("°").text("Sun azimuth"));
@@ -249,6 +328,17 @@ pub fn draw(root: &mut egui::Ui, st: &mut UiState, c: UiContext) -> Vec<UiAction
                 Some(p) if p.x >= 0.0 && p.y >= 0.0 && p.x < c.doc.width() as f32 && p.y < c.doc.height() as f32 => {
                     let h = c.doc.elevation.sample(p.x, p.y);
                     ui.monospace(format!("x {:7.1}  y {:7.1}   h {:8.1} m", p.x, p.y, h));
+                    if let Some(d) = &c.doc.derived {
+                        let i = p.y as usize * c.doc.width() as usize + p.x as usize;
+                        ui.separator();
+                        ui.monospace(format!(
+                            "{}  moist {:.2}  {:.1} °C  flow {:.0}",
+                            Biome::from_u8(d.biome[i]).label(),
+                            d.moisture.data()[i],
+                            d.temperature.data()[i],
+                            d.flow.data()[i]
+                        ));
+                    }
                 }
                 _ => {
                     ui.monospace("x    —     y    —     h      —   ");
@@ -341,6 +431,15 @@ pub fn draw(root: &mut egui::Ui, st: &mut UiState, c: UiContext) -> Vec<UiAction
                 crate::jobs::running_jobs()
             ));
             ui.label(format!("Max texture dimension: {}", c.max_field_dim));
+            ui.separator();
+            if let Some(d) = &c.doc.derived {
+                let t = &d.timings;
+                ui.label(format!(
+                    "Derived job {:.0} ms: moisture {:.0}, temp {:.0}, fill {:.0}, flow {:.0}, lakes {:.0}, rivers {:.0}, water {:.0}, biome {:.0}",
+                    t.total_ms, t.moisture_ms, t.temperature_ms, t.fill_ms, t.flow_ms, t.lakes_ms, t.rivers_ms, t.water_ms, t.biome_ms
+                ));
+                ui.label(format!("Derived textures {} on GPU, last upload {} tiles", fmt_bytes(c.derived_device_bytes), c.derived_upload_tiles));
+            }
         });
         st.show_profiler = open;
     }
@@ -389,6 +488,57 @@ pub fn draw(root: &mut egui::Ui, st: &mut UiState, c: UiContext) -> Vec<UiAction
         if !open {
             st.show_new = false;
         }
+    }
+
+    if st.show_biome_matrix {
+        let mut open = true;
+        egui::Window::new("Biome matrix").open(&mut open).default_pos((260.0, 420.0)).show(ctx, |ui| {
+            let m = &mut c.doc.params.biomes;
+            let mut changed = false;
+            ui.label("Rows: temperature bins (cold → hot). Columns: moisture bins (dry → wet).");
+            egui::Grid::new("biome_matrix").striped(true).show(ui, |ui| {
+                ui.label("");
+                for label in MOIST_BIN_LABELS {
+                    ui.strong(label);
+                }
+                ui.end_row();
+                for (i, row) in m.cells.iter_mut().enumerate().take(TEMP_BINS) {
+                    ui.strong(TEMP_BIN_LABELS[i]);
+                    for (j, cell) in row.iter_mut().enumerate().take(MOIST_BINS) {
+                        egui::ComboBox::from_id_salt(("bm", i, j)).selected_text(cell.label()).width(150.0).show_ui(ui, |ui| {
+                            for b in Biome::ALL.iter().skip(2) {
+                                if ui.selectable_value(cell, *b, b.label()).changed() {
+                                    changed = true;
+                                }
+                            }
+                        });
+                    }
+                    ui.end_row();
+                }
+            });
+            ui.separator();
+            ui.horizontal(|ui| {
+                ui.label("Temperature edges (°C):");
+                for e in m.temp_edges.iter_mut() {
+                    changed |= ui.add(egui::DragValue::new(e).speed(0.5)).drag_stopped();
+                }
+            });
+            ui.horizontal(|ui| {
+                ui.label("Moisture edges:");
+                for e in m.moist_edges.iter_mut() {
+                    changed |= ui.add(egui::DragValue::new(e).speed(0.01).range(0.0..=1.0)).drag_stopped();
+                }
+            });
+            changed |= ui.add(egui::Slider::new(&mut m.alpine_slope, 5.0..=300.0).text("Alpine slope (m/texel)")).drag_stopped();
+            if ui.button("Reset to default").clicked() {
+                *m = Default::default();
+                changed = true;
+            }
+            if changed {
+                actions.push(UiAction::SettingsChanged);
+            }
+        });
+        st.show_biome_matrix = open;
     }
 
     if let Some(rp) = st.recovery.clone() {

@@ -58,6 +58,10 @@ pub struct ReadbackStats {
 
 impl GpuField {
     pub fn new(device: &wgpu::Device, width: u32, height: u32) -> Self {
+        Self::new_labelled(device, width, height, "elevation")
+    }
+
+    pub fn new_labelled(device: &wgpu::Device, width: u32, height: u32, label: &str) -> Self {
         let make = |label: &str| {
             device.create_texture(&wgpu::TextureDescriptor {
                 label: Some(label),
@@ -73,8 +77,8 @@ impl GpuField {
                 view_formats: &[],
             })
         };
-        let texture = make("elevation");
-        let scratch = make("elevation scratch");
+        let texture = make(label);
+        let scratch = make(&format!("{label} scratch"));
         let view = texture.create_view(&Default::default());
         let scratch_view = scratch.create_view(&Default::default());
         let (tx, rx) = crossbeam_channel::unbounded();
@@ -151,6 +155,23 @@ impl GpuField {
             wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(TILE * 4), rows_per_image: Some(TILE) },
             wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
         );
+    }
+
+    /// Upload only the tiles that differ between `old` and `new` (or
+    /// everything when `old` is `None`). Returns the number of tiles uploaded.
+    pub fn upload_diff(&self, queue: &wgpu::Queue, old: Option<&ScalarField>, new: &ScalarField) -> u32 {
+        match old {
+            Some(o) if o.width() == new.width() && o.height() == new.height() => {
+                let tiles = o.changed_tiles(new);
+                let n = tiles.len() as u32;
+                self.upload_tiles(queue, new, tiles.into_iter());
+                n
+            }
+            _ => {
+                self.upload_all(queue, new);
+                new.tile_count()
+            }
+        }
     }
 
     /// Upload the given tiles from the mirror.

@@ -4,7 +4,7 @@ use crate::camera::Camera;
 use crate::document::Document;
 use crate::gpu::brush::{BrushPass, MAX_DABS_PER_FRAME};
 use crate::gpu::field::GpuField;
-use crate::gpu::map_render::{MapRenderer, ViewUniform, FLAG_CONTOURS, FLAG_CURSOR, FLAG_HYPSO};
+use crate::gpu::map_render::{DerivedViews, MapRenderer, ViewMode, ViewUniform, FLAG_CONTOURS, FLAG_CURSOR, FLAG_HAS_DERIVED, FLAG_HYPSO, FLAG_WATER};
 use crate::gpu::profiler::{CpuStats, GpuProfiler};
 use crate::gpu::Gpu;
 use crate::jobs::Job;
@@ -12,7 +12,9 @@ use crate::tools::{Tool, ToolState};
 use crate::ui::{self, NewProjectParams, RecoveryPrompt, UiAction, UiContext, UiState};
 use anyhow::{Context, Result};
 use glam::Vec2;
+use isoline_core::biome::Biome;
 use isoline_core::brush::{StrokeInput, StrokeSampler};
+use isoline_core::derived::{self, Derived};
 use isoline_core::field::ScalarField;
 use isoline_core::project::{self, ProjectData, ViewState};
 use isoline_core::terrain;
@@ -28,6 +30,63 @@ use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{Window, WindowId};
 
 pub const AUTOSAVE_INTERVAL: Duration = Duration::from_secs(120);
+/// Quiet time after the last edit before the derived job starts.
+pub const DERIVED_DEBOUNCE: Duration = Duration::from_millis(200);
+
+/// GPU copies of the derived fields.
+struct DerivedTextures {
+    water: GpuField,
+    moisture: GpuField,
+    temperature: GpuField,
+    biome: GpuField,
+    flow: GpuField,
+    /// The CPU fields currently on the GPU, for tile diffing.
+    uploaded: Option<Derived>,
+    pub last_upload_tiles: u32,
+}
+
+impl DerivedTextures {
+    fn new(device: &wgpu::Device, w: u32, h: u32) -> Self {
+        Self {
+            water: GpuField::new_labelled(device, w, h, "water"),
+            moisture: GpuField::new_labelled(device, w, h, "moisture"),
+            temperature: GpuField::new_labelled(device, w, h, "temperature"),
+            biome: GpuField::new_labelled(device, w, h, "biome"),
+            flow: GpuField::new_labelled(device, w, h, "flow"),
+            uploaded: None,
+            last_upload_tiles: 0,
+        }
+    }
+
+    fn views(&self) -> DerivedViews<'_> {
+        DerivedViews {
+            water: &self.water.view,
+            moisture: &self.moisture.view,
+            temperature: &self.temperature.view,
+            biome: &self.biome.view,
+            flow: &self.flow.view,
+        }
+    }
+
+    fn device_bytes(&self) -> u64 {
+        self.water.device_bytes + self.moisture.device_bytes + self.temperature.device_bytes + self.biome.device_bytes + self.flow.device_bytes
+    }
+
+    /// Upload changed tiles only.
+    fn upload(&mut self, queue: &wgpu::Queue, d: &Derived) {
+        let old = self.uploaded.as_ref();
+        let mut n = 0;
+        n += self.water.upload_diff(queue, old.map(|o| &o.water), &d.water);
+        n += self.moisture.upload_diff(queue, old.map(|o| &o.moisture), &d.moisture);
+        n += self.temperature.upload_diff(queue, old.map(|o| &o.temperature), &d.temperature);
+        n += self.flow.upload_diff(queue, old.map(|o| &o.flow), &d.flow);
+        let biome_f = ScalarField::from_vec(d.water.width(), d.water.height(), d.biome.iter().map(|b| *b as f32).collect());
+        let old_biome = old.map(|o| ScalarField::from_vec(o.water.width(), o.water.height(), o.biome.iter().map(|b| *b as f32).collect()));
+        n += self.biome.upload_diff(queue, old_biome.as_ref(), &biome_f);
+        self.last_upload_tiles = n;
+        self.uploaded = Some(d.clone());
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct StartupOptions {
@@ -67,6 +126,12 @@ struct AppState {
     egui_renderer: egui_wgpu::Renderer,
     doc: Document,
     field: GpuField,
+    derived_tex: DerivedTextures,
+    derived_job: Option<Job<Derived>>,
+    /// A change arrived while a job was running; rerun when it finishes.
+    derived_rerun: bool,
+    view_mode: ViewMode,
+    show_water: bool,
     brush: BrushPass,
     map: MapRenderer,
     profiler: GpuProfiler,
@@ -196,7 +261,8 @@ impl AppState {
         let mut brush = BrushPass::new(&gpu.device);
         brush.bind(&gpu.device, &field);
         let mut map = MapRenderer::new(&gpu.device, format);
-        map.bind(&gpu.device, &field);
+        let derived_tex = DerivedTextures::new(&gpu.device, doc.width(), doc.height());
+        map.bind(&gpu.device, &field, derived_tex.views());
         let profiler = GpuProfiler::new(&gpu.device, &gpu.queue, gpu.has_timestamps());
 
         let mut st = Self {
@@ -209,6 +275,11 @@ impl AppState {
             egui_renderer,
             doc,
             field,
+            derived_tex,
+            derived_job: None,
+            derived_rerun: false,
+            view_mode: ViewMode::BiomeShaded,
+            show_water: true,
             brush,
             map,
             profiler,
@@ -260,6 +331,8 @@ impl AppState {
             || self.load_job.is_some()
             || self.save_job.is_some()
             || self.autosave_job.is_some()
+            || self.derived_job.is_some()
+            || self.doc.derived_stale
             || self.egui_ctx.has_requested_repaint()
     }
 
@@ -268,10 +341,17 @@ impl AppState {
     fn install_document(&mut self, doc: Document) {
         self.finish_stroke_now();
         self.doc = doc;
+        if let Some(j) = self.derived_job.take() {
+            j.cancel();
+        }
+        self.derived_rerun = false;
         self.field = GpuField::new(&self.gpu.device, self.doc.width(), self.doc.height());
         self.field.upload_all(&self.gpu.queue, &self.doc.elevation);
+        self.derived_tex = DerivedTextures::new(&self.gpu.device, self.doc.width(), self.doc.height());
         self.brush.bind(&self.gpu.device, &self.field);
-        self.map.bind(&self.gpu.device, &self.field);
+        self.map.bind(&self.gpu.device, &self.field, self.derived_tex.views());
+        self.doc.derived_stale = true;
+        self.doc.derived_last_change = Instant::now() - DERIVED_DEBOUNCE;
         self.tools.queued.clear();
         self.tools.sampler = None;
         self.input.stroke = false;
@@ -481,6 +561,53 @@ impl AppState {
                 }
             }
         }
+        // Derived systems: start after a quiet period, restart on change.
+        if let Some(job) = &self.derived_job {
+            if let Some(result) = job.try_take() {
+                let elapsed = job.started.elapsed();
+                self.derived_job = None;
+                if !result.cancelled {
+                    let t = Instant::now();
+                    self.derived_tex.upload(&self.gpu.queue, &result);
+                    self.cpu.sections.insert("derived upload", t.elapsed().as_secs_f32() * 1000.0);
+                    self.doc.last_derived_ms = result.timings.total_ms;
+                    self.ui.status = format!(
+                        "Rivers & biomes: {:.0} ms ({} rivers, {} lakes, {} tiles uploaded)",
+                        elapsed.as_secs_f32() * 1000.0,
+                        result.rivers.len(),
+                        result.lakes.len(),
+                        self.derived_tex.last_upload_tiles
+                    );
+                    self.doc.derived = Some(result);
+                }
+                if self.derived_rerun {
+                    self.derived_rerun = false;
+                    self.doc.derived_stale = true;
+                }
+            } else if self.doc.derived_stale && !self.derived_rerun {
+                // Newer edits: cancel and rerun once this job exits.
+                job.cancel();
+                self.derived_rerun = true;
+                self.doc.derived_stale = false;
+            }
+        } else if self.doc.derived_stale
+            && !self.input.stroke
+            && self.tools.queued.is_empty()
+            && self.doc.pending_readback.is_empty()
+            && !self.field.has_in_flight()
+            && self.doc.derived_last_change.elapsed() >= DERIVED_DEBOUNCE
+            && self.gen_job.is_none()
+            && self.load_job.is_none()
+        {
+            self.doc.derived_stale = false;
+            let elev = self.doc.elevation.clone();
+            let sea = self.doc.sea_level;
+            let params = self.doc.params.clone();
+            self.derived_job = Some(Job::spawn("Rivers & biomes", move |progress, cancel| {
+                derived::compute(&elev, sea, &params, cancel, progress)
+            }));
+        }
+
         // Periodic autosave of modified documents.
         if self.doc.modified
             && self.autosave_job.is_none()
@@ -641,6 +768,9 @@ impl AppState {
                     project::discard_autosave(None);
                 }
                 UiAction::SeaLevelCommit { from, to } => self.doc.commit_sea_level(from, to),
+                UiAction::SettingsChanged => self.doc.settings_changed(),
+                UiAction::ViewMode(m) => self.view_mode = m,
+                UiAction::ShowWater(b) => self.show_water = b,
             }
         }
     }
@@ -863,6 +993,7 @@ impl AppState {
             self.load_job.as_ref().map(|j| (j.name.clone(), 0.5)),
             self.save_job.as_ref().map(|j| (j.name.clone(), 0.5)),
             self.autosave_job.as_ref().map(|j| (j.name.clone(), 0.5)),
+            self.derived_job.as_ref().map(|j| (j.name.clone(), j.progress01())),
         ]
         .into_iter()
         .flatten()
@@ -890,6 +1021,11 @@ impl AppState {
                 cursor_field,
                 job,
                 max_field_dim: self.gpu.max_field_dim(),
+                view_mode: self.view_mode,
+                show_water: self.show_water,
+                derived_running: self.derived_job.as_ref().map(|j| j.progress01()),
+                derived_device_bytes: self.derived_tex.device_bytes(),
+                derived_upload_tiles: self.derived_tex.last_upload_tiles,
             });
             ctx.run_ui(raw, |root| {
                 if let Some(uc) = uc.take() {
@@ -939,6 +1075,25 @@ impl AppState {
         if self.doc.render.show_contours {
             flags |= FLAG_CONTOURS;
         }
+        if self.show_water {
+            flags |= FLAG_WATER;
+        }
+        if self.derived_tex.uploaded.is_some() {
+            flags |= FLAG_HAS_DERIVED;
+        }
+        let (flow_max, temp_min, temp_max) = match &self.doc.derived {
+            Some(d) => {
+                let fm = d.flow.min_max().1.max(1.0);
+                let (tlo, thi) = d.temperature.min_max();
+                (fm, tlo, thi.max(tlo + 1.0))
+            }
+            None => (1.0, -20.0, 30.0),
+        };
+        let mut palette = [[0f32; 4]; 16];
+        for (i, b) in Biome::ALL.iter().enumerate() {
+            let c = b.color();
+            palette[i] = [c[0], c[1], c[2], 1.0];
+        }
         let egui_over = self.egui_ctx.is_pointer_over_egui();
         let show_cursor = self.tools.tool.is_brush() && self.input.cursor.is_some() && !egui_over && !self.input.panning;
         if show_cursor {
@@ -963,6 +1118,11 @@ impl AppState {
             elev_max: self.doc.stats.max,
             time: self.start.elapsed().as_secs_f32(),
             _pad: 0.0,
+            view_mode: self.view_mode as u32,
+            flow_max,
+            temp_min,
+            temp_max,
+            palette,
         };
         self.map.render(&self.gpu.queue, &mut encoder, &target, &view, &mut self.profiler);
 
@@ -1003,7 +1163,13 @@ impl AppState {
         self.field.after_submit();
         self.profiler.after_submit();
         self.window.pre_present_notify();
-        let take_shot = self.screenshot.is_some() && self.frames_since_install >= 20 && self.gen_job.is_none() && self.load_job.is_none();
+        let take_shot = self.screenshot.is_some()
+            && self.frames_since_install >= 20
+            && self.gen_job.is_none()
+            && self.load_job.is_none()
+            && self.derived_job.is_none()
+            && !self.doc.derived_stale
+            && self.doc.derived.is_some();
         if take_shot {
             let path = self.screenshot.take().unwrap();
             if self.surface_copyable {

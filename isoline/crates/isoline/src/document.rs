@@ -1,9 +1,10 @@
 //! The open map: fields, settings, dependency graph, derived data and undo.
 
 use anyhow::Result;
+use isoline_core::derived::{Derived, DerivedParams};
 use isoline_core::field::ScalarField;
 use isoline_core::graph::{DepGraph, Edge, NodeId, Reach};
-use isoline_core::project::{Manifest, ProjectData, RenderSettings, ViewState};
+use isoline_core::project::{Geometry, Manifest, ProjectData, RenderSettings, ViewState};
 use isoline_core::stats::FieldStats;
 use isoline_core::tiles::{PixelRect, TileSet};
 use isoline_core::undo::{TileDelta, UndoOp, UndoStack};
@@ -22,6 +23,10 @@ pub struct Nodes {
     pub coast: NodeId,
     /// CPU: incremental per-tile statistics.
     pub stats: NodeId,
+    /// Source: climate / hydrology / biome settings.
+    pub settings: NodeId,
+    /// CPU job: moisture → temperature → fill/flow/lakes/rivers → biomes.
+    pub derived: NodeId,
 }
 
 struct StrokeRecord {
@@ -49,6 +54,13 @@ pub struct Document {
     pub last_autosave: Instant,
     /// Wall time of the last derived-data update, for the profiler.
     pub last_derived_ms: f32,
+    /// Parameters for the derived systems.
+    pub params: DerivedParams,
+    /// Latest complete derived set (None until the first job lands).
+    pub derived: Option<Derived>,
+    /// Something changed since `derived` was computed.
+    pub derived_stale: bool,
+    pub derived_last_change: Instant,
 }
 
 pub const UNDO_RAM_BUDGET: usize = 512 << 20;
@@ -66,7 +78,16 @@ fn build_graph(width: u32, height: u32) -> (DepGraph, Nodes) {
         "stats",
         vec![Edge { from: elevation, reach: Reach::Local(0) }, Edge { from: sea_level, reach: Reach::Global }],
     );
-    (g, Nodes { elevation, sea_level, hillshade, coast, stats })
+    let settings = g.add_node("settings", vec![]);
+    let derived = g.add_node(
+        "derived",
+        vec![
+            Edge { from: elevation, reach: Reach::Global },
+            Edge { from: sea_level, reach: Reach::Global },
+            Edge { from: settings, reach: Reach::Global },
+        ],
+    );
+    (g, Nodes { elevation, sea_level, hillshade, coast, stats, settings, derived })
 }
 
 impl Document {
@@ -94,11 +115,15 @@ impl Document {
             finishing: Vec::new(),
             last_autosave: Instant::now(),
             last_derived_ms: 0.0,
+            params: DerivedParams::default(),
+            derived: None,
+            derived_stale: true,
+            derived_last_change: Instant::now(),
         }
     }
 
     pub fn from_project(data: ProjectData, path: Option<PathBuf>) -> Result<Self> {
-        let ProjectData { manifest, fields } = data;
+        let ProjectData { manifest, fields, geometry: _ } = data;
         let (_, elevation) = fields
             .into_iter()
             .find(|(n, _)| n == "elevation")
@@ -106,6 +131,7 @@ impl Document {
         let mut doc = Self::new(manifest.name.clone(), elevation, manifest.sea_level, manifest.meters_per_texel);
         doc.render = manifest.render;
         doc.saved_view = manifest.view;
+        doc.params = manifest.derived;
         doc.path = path;
         Ok(doc)
     }
@@ -116,7 +142,12 @@ impl Document {
         m.meters_per_texel = self.meters_per_texel;
         m.render = self.render.clone();
         m.view = view;
-        ProjectData { manifest: m, fields: vec![("elevation".into(), self.elevation.clone())] }
+        m.derived = self.params.clone();
+        let geometry = match &self.derived {
+            Some(d) => Geometry { rivers: d.rivers.clone(), lakes: d.lakes.clone() },
+            None => Geometry::default(),
+        };
+        ProjectData { manifest: m, fields: vec![("elevation".into(), self.elevation.clone())], geometry }
     }
 
     pub fn width(&self) -> u32 {
@@ -250,8 +281,16 @@ impl Document {
 
     // ---- derived data ------------------------------------------------------
 
+    /// Settings for the derived systems changed.
+    pub fn settings_changed(&mut self) {
+        self.graph.mark_all_dirty(self.nodes.settings);
+        self.modified = true;
+        self.recompute_derived();
+    }
+
     /// Propagate dirtiness and recompute CPU-side derived nodes. GPU-live
-    /// nodes are cleared here because the next frame re-derives them.
+    /// nodes are cleared here because the next frame re-derives them. The
+    /// long-running `derived` node is only flagged; the app schedules its job.
     pub fn recompute_derived(&mut self) {
         let t = Instant::now();
         self.graph.propagate();
@@ -259,6 +298,12 @@ impl Document {
         if !dirty.is_empty() {
             self.stats.update(&self.elevation, &dirty, self.sea_level);
         }
+        if self.graph.is_dirty(self.nodes.derived) {
+            self.graph.clear_dirty(self.nodes.derived);
+            self.derived_stale = true;
+            self.derived_last_change = Instant::now();
+        }
+        self.graph.clear_dirty(self.nodes.settings);
         self.graph.clear_dirty(self.nodes.hillshade);
         self.graph.clear_dirty(self.nodes.coast);
         self.graph.clear_dirty(self.nodes.elevation);

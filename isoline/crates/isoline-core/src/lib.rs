@@ -13,12 +13,18 @@
 //!   history to disk.
 //! * [`terrain`] — initial terrain synthesis (fBm / domain warp) for new projects.
 //! * [`project`] — the on-disk project format and autosave/recovery.
-//! * [`stats`]   — incremental per-tile field statistics (a first CPU-side
-//!   derived node in the graph).
+//! * [`stats`]   — incremental per-tile field statistics.
+//! * [`hydrology`], [`climate`], [`biome`] — the Milestone 2 derived systems:
+//!   depression fill, flow, lakes, rivers, orographic moisture, temperature
+//!   and biome classification.
 
+pub mod biome;
 pub mod brush;
+pub mod climate;
+pub mod derived;
 pub mod field;
 pub mod graph;
+pub mod hydrology;
 pub mod noise;
 pub mod project;
 pub mod stats;

@@ -12,7 +12,9 @@
 //! Field blobs are memory-mapped on load so opening a project does not stall
 //! on a synchronous read of the whole file.
 
+use crate::derived::DerivedParams;
 use crate::field::ScalarField;
+use crate::hydrology::{Lake, River};
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -77,6 +79,8 @@ pub struct Manifest {
     pub fields: Vec<FieldEntry>,
     pub view: ViewState,
     pub render: RenderSettings,
+    #[serde(default)]
+    pub derived: DerivedParams,
     pub saved_at_unix: u64,
     pub saved_at: String,
 }
@@ -94,6 +98,7 @@ impl Manifest {
             fields: vec![],
             view: ViewState { center: [width as f32 / 2.0, height as f32 / 2.0], zoom: 0.0 },
             render: RenderSettings::default(),
+            derived: DerivedParams::default(),
             saved_at_unix: 0,
             saved_at: String::new(),
         }
@@ -105,6 +110,17 @@ impl Manifest {
 pub struct ProjectData {
     pub manifest: Manifest,
     pub fields: Vec<(String, ScalarField)>,
+    /// Derived vector geometry, written for other tools to read; the app
+    /// recomputes it from the fields on load.
+    pub geometry: Geometry,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct Geometry {
+    #[serde(default)]
+    pub rivers: Vec<River>,
+    #[serde(default)]
+    pub lakes: Vec<Lake>,
 }
 
 fn now_unix() -> u64 {
@@ -160,6 +176,8 @@ pub fn save(dir: &Path, data: &ProjectData) -> Result<()> {
             height: field.height(),
         });
     }
+    let geom = serde_json::to_vec(&data.geometry)?;
+    write_atomic(&dir.join("geometry.json"), &geom)?;
     manifest.saved_at_unix = now_unix();
     manifest.saved_at = iso_utc(manifest.saved_at_unix);
     let json = serde_json::to_vec_pretty(&manifest)?;
@@ -213,7 +231,11 @@ pub fn load(dir: &Path) -> Result<ProjectData> {
         }
         fields.push((entry.name.clone(), ScalarField::from_vec(entry.width, entry.height, data)));
     }
-    Ok(ProjectData { manifest, fields })
+    let geometry = fs::read_to_string(dir.join("geometry.json"))
+        .ok()
+        .and_then(|t| serde_json::from_str(&t).ok())
+        .unwrap_or_default();
+    Ok(ProjectData { manifest, fields, geometry })
 }
 
 // ---- autosave / recovery -------------------------------------------------
@@ -280,7 +302,7 @@ mod tests {
         f.par_map_inplace(|x, y, _| x as f32 * 0.5 - y as f32);
         let mut m = Manifest::new("t", 130, 70);
         m.sea_level = 12.5;
-        let data = ProjectData { manifest: m, fields: vec![("elevation".into(), f.clone())] };
+        let data = ProjectData { manifest: m, fields: vec![("elevation".into(), f.clone())], geometry: Geometry::default() };
         save(&dir, &data).unwrap();
         let back = load(&dir).unwrap();
         assert_eq!(back.manifest.sea_level, 12.5);

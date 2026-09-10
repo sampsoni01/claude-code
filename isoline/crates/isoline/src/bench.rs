@@ -39,6 +39,16 @@ pub fn run(size: u32) -> Result<()> {
     println!("full stats scan (CPU):                 {:8.1} ms  (land {:.1}%)", ms(t), stats.land_fraction * 100.0);
 
     let original = terrain.clone();
+    {
+        let params = isoline_core::derived::DerivedParams::default();
+        let t = Instant::now();
+        let d = isoline_core::derived::compute(&terrain, 0.0, &params, &AtomicBool::new(false), &AtomicU32::new(0));
+        let tm = &d.timings;
+        println!(
+            "derived chain (CPU): {:8.1} ms  = moisture {:.0} + temp {:.0} + fill {:.0} + flow {:.0} + lakes {:.0} + rivers {:.0} + water {:.0} + biome {:.0}   ({} rivers, {} lakes)",
+            ms(t), tm.moisture_ms, tm.temperature_ms, tm.fill_ms, tm.flow_ms, tm.lakes_ms, tm.rivers_ms, tm.water_ms, tm.biome_ms, d.rivers.len(), d.lakes.len()
+        );
+    }
     let mut doc = Document::new("bench", terrain, 0.0, 100.0);
 
     let t = Instant::now();

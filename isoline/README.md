@@ -7,9 +7,88 @@ climate, biomes, forests, settlements) is *derived* from those fields, live.
 
 The coastline is literally the isoline `elevation == seaLevel`, hence the name.
 
-![Milestone 1](docs/milestone1.png)
+![Milestone 2](docs/milestone2.png)
 
-## Status: Milestone 1 — field engine + rendering
+## Status: Milestone 2 — water and biome coupling
+
+Everything below is derived from the elevation field and the map settings,
+recomputed on a background thread after every stroke, sea-level change or
+settings change, and swapped in when it lands. The UI never blocks; only
+tiles whose contents changed are re-uploaded to the GPU.
+
+- **Orographic moisture** (`isoline-core::climate`). Air parcels advect along
+  a prevailing wind, recharge over sea, rain at a base rate plus an uplift
+  term on windward slopes, and dry in the lee. Implemented as a wind-aligned
+  resample so every wind line is a row and rows sweep in parallel. Sliders:
+  wind direction, orographic strength, continentality, incoming moisture; a
+  disable toggle with a uniform-moisture fallback.
+- **Temperature** from a north/south latitude range, lapse rate and offset.
+- **Hydrology** (`isoline-core::hydrology`): priority-flood depression fill
+  with an epsilon gradient (sea and map border drain), D8 flow directions,
+  **precipitation-weighted** flow accumulation with a per-texel arid loss so
+  rivers thin and vanish in deserts, lake labelling (min depth, min area,
+  and lakes dry up in arid basins), channel tracing into width-carrying
+  polylines (trunks own junctions; tributaries record what they join),
+  width ∝ √flow with extra width on low slopes (braiding), and distributary
+  fans where large rivers meet the sea. Water coverage is rasterized to a
+  field the renderer thresholds with screen-space anti-aliasing.
+- **Biomes** (`isoline-core::biome`): a Whittaker-style matrix over five
+  temperature bins × five moisture bins, editable in the *Biome matrix*
+  window (cells, bin edges, alpine slope). Ocean and lakes are forced;
+  steep cold ground becomes alpine. A **forest density** field is derived
+  from the biome with a treeline fade; the scatter that consumes it comes in
+  Milestone 4.
+- **View modes**: terrain (biome colour × relief), elevation tint, flat
+  biomes, moisture, temperature, flow accumulation; rivers and lakes toggle.
+  The status bar reports biome, moisture, temperature and flow under the
+  cursor from the CPU mirrors.
+- **Project format**: derived parameters live in `manifest.json`; river and
+  lake geometry is written to `geometry.json` for other tools. Derived
+  fields are recomputed on load, not stored.
+- **Graph**: `settings` and `derived` nodes were added with global reach
+  from `elevation`, `sea_level` and `settings`. Regional recompute of the
+  derived chain is not attempted yet (see deferred).
+
+### Measured (Milestone 2)
+
+Same caveat as Milestone 1: software Vulkan, four CPU cores, no GPU. The
+derived chain is CPU work and these numbers are representative of a
+four-core machine; a six-core desktop will be roughly proportionally faster.
+
+| Field | Derived chain total | moisture | fill | flow | rivers + water | biome |
+|------:|--------------------:|---------:|-----:|-----:|---------------:|------:|
+| 2048² | 0.71 s | 0.11 s | 0.22 s | 0.28 s | 0.06 s | 0.01 s |
+| 4096² | 3.9 s | 0.55 s | 1.0 s | 1.9 s | 0.19 s | 0.11 s |
+| 8192² | 26 s | 3.4 s | 5.5 s | 16 s | 0.57 s | 0.20 s |
+
+At 8192² the serial accumulation walk (67 M cells with random access into
+the accumulation array) dominates; that is the pass to parallelise or
+restructure by drainage basin next. Full numbers, including the brush and
+undo checks that still pass bit-exactly, are in `docs/bench.txt`.
+
+The fill and the accumulation loop are serial by nature (a priority queue
+and a topological walk); everything else runs on all cores. The chain
+starts 200 ms after the last edit lands and is cancelled and restarted if
+another edit arrives, so painting stays at full brush rate and the rivers
+follow a beat later.
+
+### Deferred within Milestone 2
+
+- **Regional recompute.** A stroke re-runs the whole chain. The dirty-tile
+  machinery is in place; what is missing is a windowed fill/accumulation
+  that patches only the affected drainage basins.
+- **Parallel depression fill.** Tiled priority-flood with seam correction
+  would make the fill scale with cores.
+- **Braiding** only widens channels on low slopes; it does not split them
+  into anastomosing threads. Deltas are simple radial fans.
+- **Erosion** (rivers carving back) is not started; it is the natural next
+  step on this chain and will be stored as a re-runnable command per the
+  decision above.
+- **Derived textures use R32Float** for everything, including the biome id.
+  R8 for the biome and R16 for moisture/temperature would cut derived VRAM
+  by more than half.
+
+## Milestone 1 — field engine + rendering
 
 Implemented:
 
@@ -53,7 +132,8 @@ Implemented:
 
 ```
 isoline/
-  crates/isoline-core   field engine: fields, tiles, graph, brushes, undo, terrain, project I/O (no GPU)
+  crates/isoline-core   field engine: fields, tiles, graph, brushes, undo, terrain, project I/O,
+                        hydrology, climate, biomes, derived chain (no GPU)
   crates/isoline        the application: wgpu pipelines, winit/egui shell, jobs, bench
     src/shaders/brush.wgsl   brush kernel (mirrors isoline-core::brush)
     src/shaders/map.wgsl     map render pass
@@ -132,25 +212,19 @@ restored the original field bit-exactly on both sides.
   a proper min-filtered pyramid would look better on 8192² fields.
 - **Non-multiple-of-64 resolutions** are rejected (row alignment for uploads).
 
-### Decisions I need
+### Decisions taken after Milestone 1
 
-1. **Elevation units and world scale.** Fields are in metres with a per-project
-   `meters_per_texel` (default 100 m, so 2048² ≈ 205 km across). Hydrology and
-   orographic moisture in Milestone 2 depend on this. Keep metres, or make the
-   world scale purely presentational?
-2. **Brush strength semantics.** Raise/lower apply `strength × metres-per-dab`
-   per dab. An alternative is a fixed stroke height independent of spacing and
-   speed (accumulate a max instead of summing dabs). Which feels right to you?
-3. **Undo of global operations.** Sea level is stored as a value delta. When
-   erosion arrives, a full-field before/after at 8192² is 512 MiB per entry.
-   I plan to store such passes as a re-runnable command (seed + parameters)
-   rather than a delta. Confirm?
-4. **Project file extension.** Currently a directory named `Name.isoline`.
-   Fine, or would you rather have the single-file bundle be the default and
-   the directory the "unpacked" form?
+1. World scale (`meters_per_texel`) is presentational only. Elevation stays
+   in metres; hydrology and climate work in texels and elevation units.
+2. Brush strength keeps the summing model: each dab adds a fixed amount, so
+   slower or repeated strokes build higher terrain.
+3. Global passes such as erosion will be stored as re-runnable commands
+   (seed + parameters), not full-field deltas.
+4. Projects stay directories named `Name.isoline`; the single-file bundle is
+   an export.
 
 ## Roadmap
 
-See the spec: 2 water and biome coupling, 3 procedural coastline and ridge
-brushes, 4 assets, 5 naming and labels, 6 borders and regions, 7 settlement
-layouts, 8 themes, export, polish.
+See the spec: 3 procedural coastline and ridge brushes, 4 assets, 5 naming
+and labels, 6 borders and regions, 7 settlement layouts, 8 themes, export,
+polish.
