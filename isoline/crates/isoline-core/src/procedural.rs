@@ -354,9 +354,9 @@ impl CoastParams {
         match preset {
             CoastPreset::Custom => CoastParams { preset, ..self.clone() },
             CoastPreset::Fjord => CoastParams {
-                roughness: 0.35,
-                octaves: 5,
-                inlet_frequency: 0.7,
+                roughness: 0.3,
+                octaves: 4,
+                inlet_frequency: 0.5,
                 inlet_depth: 1.6,
                 headland_bias: 0.15,
                 island_density: 0.35,
@@ -478,7 +478,7 @@ pub fn apply_coast(field: &mut ScalarField, path: &[P2], sea_level: f32, p: &Coa
         let mut sd = sd_raw + p.roughness * w * 0.7 * n_coast.fbm(q[0] * f0, q[1] * f0, octaves, 2.1, 0.5) + p.headland_bias * w * 0.25;
         // Inlets: pulses along the coast pushing the shoreline inland.
         if p.inlet_depth > 0.0 && p.inlet_frequency > 0.0 {
-            let pulse = n_inlet.ridged(s.t / inlet_period + 0.5, 0.31, 2, 2.0, 0.5);
+            let pulse = n_inlet.ridged(s.t / inlet_period + 0.5, 0.31, 1, 2.0, 0.5);
             let sharp = match preset {
                 CoastPreset::Fjord => 4.0,
                 CoastPreset::DrownedValley => 2.0,

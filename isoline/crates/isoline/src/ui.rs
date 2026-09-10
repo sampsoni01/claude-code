@@ -12,6 +12,7 @@ use isoline_core::brush::Falloff;
 use isoline_core::procedural::{CoastPreset, LandSide};
 use isoline_core::project::Manifest;
 use isoline_core::terrain::{TerrainParams, TerrainPreset};
+use isoline_core::theme::{ForestStyle, ReliefStyle, Theme, ThemeStyle};
 use isoline_core::water::RecomputeMode;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -46,13 +47,108 @@ pub enum WaterSel {
 }
 
 /// Screen-space (egui points) geometry drawn over the map.
-#[derive(Default)]
 pub struct Overlay {
     pub path: Vec<egui::Pos2>,
     pub path_is_coast: bool,
     pub rivers: Vec<Vec<egui::Pos2>>,
     pub lakes: Vec<Vec<egui::Pos2>>,
     pub selected: Option<egui::Pos2>,
+    pub map_rect: egui::Rect,
+    pub title: String,
+    pub show_ornaments: bool,
+    pub sun_azimuth_deg: f32,
+    pub ink: egui::Color32,
+    pub paper: egui::Color32,
+}
+
+impl Default for Overlay {
+    fn default() -> Self {
+        Self {
+            path: Vec::new(),
+            path_is_coast: false,
+            rivers: Vec::new(),
+            lakes: Vec::new(),
+            selected: None,
+            map_rect: egui::Rect::NOTHING,
+            title: String::new(),
+            show_ornaments: false,
+            sun_azimuth_deg: 315.0,
+            ink: egui::Color32::BLACK,
+            paper: egui::Color32::WHITE,
+        }
+    }
+}
+
+pub const SERIF: &str = "serif";
+pub const SERIF_ITALIC: &str = "serif-italic";
+
+pub fn serif(size: f32) -> egui::FontId {
+    egui::FontId::new(size, egui::FontFamily::Name(SERIF.into()))
+}
+pub fn serif_italic(size: f32) -> egui::FontId {
+    egui::FontId::new(size, egui::FontFamily::Name(SERIF_ITALIC.into()))
+}
+
+/// Register the embedded serif faces (Liberation Serif, SIL OFL).
+pub fn install_fonts(ctx: &egui::Context) {
+    let mut fonts = egui::FontDefinitions::default();
+    fonts.font_data.insert("LiberationSerif".into(), std::sync::Arc::new(egui::FontData::from_static(include_bytes!("../assets/fonts/LiberationSerif-Regular.ttf"))));
+    fonts.font_data.insert("LiberationSerifItalic".into(), std::sync::Arc::new(egui::FontData::from_static(include_bytes!("../assets/fonts/LiberationSerif-Italic.ttf"))));
+    fonts.font_data.insert("LiberationSerifBold".into(), std::sync::Arc::new(egui::FontData::from_static(include_bytes!("../assets/fonts/LiberationSerif-Bold.ttf"))));
+    fonts.families.insert(egui::FontFamily::Name(SERIF.into()), vec!["LiberationSerifBold".into(), "LiberationSerif".into()]);
+    fonts.families.insert(egui::FontFamily::Name(SERIF_ITALIC.into()), vec!["LiberationSerifItalic".into()]);
+    ctx.set_fonts(fonts);
+}
+
+/// Warm "map room" chrome.
+pub fn apply_style(ctx: &egui::Context) {
+    use egui::{Color32, CornerRadius, Stroke};
+    let mut v = egui::Visuals::dark();
+    let panel = Color32::from_rgb(41, 34, 28);
+    let raised = Color32::from_rgb(58, 48, 39);
+    let hover = Color32::from_rgb(78, 64, 50);
+    let active = Color32::from_rgb(112, 88, 58);
+    let text = Color32::from_rgb(226, 212, 186);
+    let gold = Color32::from_rgb(206, 166, 92);
+    v.panel_fill = panel;
+    v.window_fill = Color32::from_rgb(47, 39, 32);
+    v.extreme_bg_color = Color32::from_rgb(28, 23, 19);
+    v.faint_bg_color = Color32::from_rgb(50, 42, 35);
+    v.code_bg_color = Color32::from_rgb(30, 25, 21);
+    v.override_text_color = Some(text);
+    v.window_stroke = Stroke::new(1.0, gold.gamma_multiply(0.5));
+    v.window_corner_radius = CornerRadius::same(10);
+    v.menu_corner_radius = CornerRadius::same(8);
+    v.selection.bg_fill = active;
+    v.selection.stroke = Stroke::new(1.0, gold);
+    v.hyperlink_color = gold;
+    v.warn_fg_color = Color32::from_rgb(230, 170, 80);
+    v.widgets.noninteractive.bg_fill = panel;
+    v.widgets.noninteractive.weak_bg_fill = panel;
+    v.widgets.noninteractive.bg_stroke = Stroke::new(1.0, Color32::from_rgb(70, 58, 46));
+    v.widgets.noninteractive.fg_stroke = Stroke::new(1.0, text);
+    v.widgets.inactive.bg_fill = raised;
+    v.widgets.inactive.weak_bg_fill = raised;
+    v.widgets.inactive.fg_stroke = Stroke::new(1.0, text);
+    v.widgets.hovered.bg_fill = hover;
+    v.widgets.hovered.weak_bg_fill = hover;
+    v.widgets.hovered.bg_stroke = Stroke::new(1.0, gold);
+    v.widgets.hovered.fg_stroke = Stroke::new(1.5, Color32::from_rgb(245, 232, 205));
+    v.widgets.active.bg_fill = active;
+    v.widgets.active.weak_bg_fill = active;
+    v.widgets.active.bg_stroke = Stroke::new(1.0, gold);
+    v.widgets.open.bg_fill = hover;
+    v.widgets.open.weak_bg_fill = hover;
+    for w in [&mut v.widgets.noninteractive, &mut v.widgets.inactive, &mut v.widgets.hovered, &mut v.widgets.active, &mut v.widgets.open] {
+        w.corner_radius = CornerRadius::same(6);
+    }
+    ctx.set_visuals(v);
+    ctx.all_styles_mut(|style| {
+        style.spacing.item_spacing = egui::vec2(8.0, 6.0);
+        style.spacing.slider_width = 130.0;
+        style.spacing.button_padding = egui::vec2(8.0, 4.0);
+        style.text_styles.insert(egui::TextStyle::Heading, serif(19.0));
+    });
 }
 
 #[derive(Clone, Debug)]
@@ -131,8 +227,58 @@ fn fmt_bytes(b: u64) -> String {
     }
 }
 
+fn draw_ornaments(painter: &egui::Painter, ov: &Overlay) {
+    let r = ov.map_rect;
+    if r.width() < 200.0 || r.height() < 200.0 {
+        return;
+    }
+    let ink = ov.ink;
+    let paper = ov.paper;
+    // Compass rose, top right.
+    let size = (r.width().min(r.height()) * 0.07).clamp(36.0, 90.0);
+    let c = egui::pos2(r.right() - size * 1.2, r.top() + size * 1.2);
+    painter.circle(c, size * 0.98, paper.gamma_multiply(0.85), egui::Stroke::new(1.5, ink));
+    painter.circle_stroke(c, size * 0.86, egui::Stroke::new(0.8, ink));
+    for i in 0..16 {
+        let a = i as f32 / 16.0 * std::f32::consts::TAU;
+        let (sa, ca) = a.sin_cos();
+        let (lo, hi) = if i % 4 == 0 { (0.55, 0.86) } else if i % 2 == 0 { (0.72, 0.86) } else { (0.80, 0.86) };
+        painter.line_segment([c + egui::vec2(sa, -ca) * size * lo, c + egui::vec2(sa, -ca) * size * hi], egui::Stroke::new(if i % 4 == 0 { 1.4 } else { 0.7 }, ink));
+    }
+    // Eight-point star: long north/south/east/west points and short diagonals.
+    for (k, len) in [(0.0f32, 0.92f32), (0.125, 0.5), (0.25, 0.92), (0.375, 0.5), (0.5, 0.92), (0.625, 0.5), (0.75, 0.92), (0.875, 0.5)] {
+        let a = k * std::f32::consts::TAU;
+        let tip = c + egui::vec2(a.sin(), -a.cos()) * size * len;
+        let w = size * 0.11;
+        let l = c + egui::vec2((a - std::f32::consts::FRAC_PI_2).sin(), -(a - std::f32::consts::FRAC_PI_2).cos()) * w;
+        let rr = c + egui::vec2((a + std::f32::consts::FRAC_PI_2).sin(), -(a + std::f32::consts::FRAC_PI_2).cos()) * w;
+        painter.add(egui::Shape::convex_polygon(vec![tip, l, c], ink, egui::Stroke::new(0.8, ink)));
+        painter.add(egui::Shape::convex_polygon(vec![tip, c, rr], paper, egui::Stroke::new(0.8, ink)));
+    }
+    painter.text(c + egui::vec2(0.0, -size * 1.08), egui::Align2::CENTER_BOTTOM, "N", serif(size * 0.36), ink);
+    // Title cartouche, bottom left.
+    if !ov.title.is_empty() {
+        let font = serif_italic((size * 0.55).clamp(16.0, 34.0));
+        let galley = painter.layout_no_wrap(ov.title.clone(), font.clone(), ink);
+        let pad = egui::vec2(size * 0.45, size * 0.3);
+        let tl = egui::pos2(r.left() + size * 0.6, r.bottom() - size * 0.6 - galley.size().y - pad.y * 2.0);
+        let rect = egui::Rect::from_min_size(tl, galley.size() + pad * 2.0);
+        painter.rect(rect, egui::CornerRadius::same(4), paper.gamma_multiply(0.9), egui::Stroke::new(1.6, ink), egui::StrokeKind::Outside);
+        painter.rect_stroke(rect.shrink(4.0), egui::CornerRadius::same(2), egui::Stroke::new(0.7, ink), egui::StrokeKind::Inside);
+        // Corner flourishes.
+        for (cx, cy) in [(rect.left(), rect.top()), (rect.right(), rect.top()), (rect.left(), rect.bottom()), (rect.right(), rect.bottom())] {
+            painter.circle_filled(egui::pos2(cx, cy), 3.2, ink);
+            painter.circle_filled(egui::pos2(cx, cy), 1.6, paper);
+        }
+        painter.galley(rect.min + pad, galley, ink);
+    }
+}
+
 fn draw_overlay(ctx: &egui::Context, ov: &Overlay) {
     let painter = ctx.layer_painter(egui::LayerId::background());
+    if ov.show_ornaments {
+        draw_ornaments(&painter, ov);
+    }
     if ov.path.len() >= 2 {
         let col = if ov.path_is_coast { egui::Color32::from_rgb(90, 200, 255) } else { egui::Color32::from_rgb(255, 190, 80) };
         painter.add(egui::Shape::line(ov.path.clone(), egui::Stroke::new(2.0, col)));
@@ -151,6 +297,91 @@ fn draw_overlay(ctx: &egui::Context, ov: &Overlay) {
     if let Some(p) = ov.selected {
         painter.circle_stroke(p, 6.0, egui::Stroke::new(2.0, egui::Color32::YELLOW));
     }
+}
+
+/// A 44×44 icon button with a drawn glyph per tool.
+fn tool_button(ui: &mut egui::Ui, tool: Tool, selected: bool, enabled: bool) -> egui::Response {
+    let size = egui::vec2(46.0, 46.0);
+    let (rect, resp) = ui.allocate_exact_size(size, if enabled { egui::Sense::click() } else { egui::Sense::hover() });
+    let resp = resp.on_hover_text(format!("{}  ({})", tool.label(), tool.hotkey()));
+    let v = ui.visuals();
+    let fill = if selected {
+        v.selection.bg_fill
+    } else if resp.hovered() && enabled {
+        v.widgets.hovered.bg_fill
+    } else {
+        v.widgets.inactive.bg_fill
+    };
+    let stroke = if selected { v.selection.stroke } else { egui::Stroke::new(1.0, egui::Color32::from_rgb(70, 58, 46)) };
+    let p = ui.painter();
+    p.rect(rect, egui::CornerRadius::same(8), fill, stroke, egui::StrokeKind::Inside);
+    let ink = if enabled { egui::Color32::from_rgb(232, 214, 176) } else { egui::Color32::from_rgb(110, 96, 80) };
+    let blue = if enabled { egui::Color32::from_rgb(120, 180, 230) } else { ink };
+    let s = egui::Stroke::new(1.8, ink);
+    let c = rect.center();
+    let u = rect.width() / 2.0;
+    let pt = |x: f32, y: f32| egui::pos2(c.x + x * u, c.y + y * u);
+    match tool {
+        Tool::Raise => {
+            p.add(egui::Shape::closed_line(vec![pt(-0.7, 0.45), pt(-0.15, -0.35), pt(0.2, 0.05), pt(0.45, -0.2), pt(0.75, 0.45)], s));
+            p.line_segment([pt(0.0, -0.75), pt(0.0, -0.45)], s);
+            p.line_segment([pt(-0.15, -0.6), pt(0.0, -0.78)], s);
+            p.line_segment([pt(0.15, -0.6), pt(0.0, -0.78)], s);
+        }
+        Tool::Lower => {
+            p.add(egui::Shape::closed_line(vec![pt(-0.7, -0.1), pt(-0.3, 0.35), pt(0.1, 0.0), pt(0.4, 0.4), pt(0.75, -0.1)], s));
+            p.line_segment([pt(0.0, -0.75), pt(0.0, -0.4)], s);
+            p.line_segment([pt(-0.15, -0.55), pt(0.0, -0.38)], s);
+            p.line_segment([pt(0.15, -0.55), pt(0.0, -0.38)], s);
+        }
+        Tool::Smooth => {
+            let pts: Vec<_> = (0..=20).map(|i| { let x = -0.75 + 1.5 * i as f32 / 20.0; pt(x, (x * 6.0).sin() * 0.25) }).collect();
+            p.add(egui::Shape::line(pts, s));
+            let pts: Vec<_> = (0..=20).map(|i| { let x = -0.75 + 1.5 * i as f32 / 20.0; pt(x, 0.5 + (x * 6.0).sin() * 0.06) }).collect();
+            p.add(egui::Shape::line(pts, s));
+        }
+        Tool::Flatten => {
+            p.add(egui::Shape::line(vec![pt(-0.75, 0.3), pt(-0.35, -0.3), pt(0.35, -0.3), pt(0.75, 0.3)], s));
+            p.line_segment([pt(-0.45, -0.3), pt(0.45, -0.3)], egui::Stroke::new(3.0, ink));
+        }
+        Tool::Ridge => {
+            p.add(egui::Shape::line(vec![pt(-0.8, 0.5), pt(-0.45, -0.3), pt(-0.2, 0.1), pt(0.05, -0.6), pt(0.3, 0.0), pt(0.55, -0.35), pt(0.8, 0.5)], s));
+            p.add(egui::Shape::line(vec![pt(-0.45, -0.3), pt(-0.55, -0.05)], egui::Stroke::new(1.0, ink)));
+            p.add(egui::Shape::line(vec![pt(0.05, -0.6), pt(-0.1, -0.2)], egui::Stroke::new(1.0, ink)));
+        }
+        Tool::Coast => {
+            let pts: Vec<_> = (0..=24).map(|i| { let t = i as f32 / 24.0; pt(-0.75 + 1.5 * t, -0.1 + (t * 12.0).sin() * 0.16 + (t * 5.0).cos() * 0.12) }).collect();
+            p.add(egui::Shape::line(pts, s));
+            for (x, y) in [(-0.4, 0.45), (0.1, 0.5), (0.5, 0.4)] {
+                p.circle_filled(pt(x, y), 2.0, blue);
+            }
+            let pts: Vec<_> = (0..=10).map(|i| { let t = i as f32 / 10.0; pt(-0.7 + 1.4 * t, 0.7 + (t * 9.0).sin() * 0.06) }).collect();
+            p.add(egui::Shape::line(pts, egui::Stroke::new(1.0, blue)));
+        }
+        Tool::Moisture => {
+            let drop: Vec<_> = (0..=24).map(|i| {
+                let a = i as f32 / 24.0 * std::f32::consts::TAU;
+                let r = 0.42 * (1.0 - 0.35 * a.cos().max(0.0));
+                pt(a.sin() * r, 0.15 - a.cos() * r * 1.3)
+            }).collect();
+            p.add(egui::Shape::closed_line(drop, egui::Stroke::new(1.8, blue)));
+        }
+        Tool::WaterEdit => {
+            p.add(egui::Shape::line(vec![pt(-0.7, 0.6), pt(-0.3, 0.1), pt(0.1, 0.2), pt(0.6, -0.6)], egui::Stroke::new(1.8, blue)));
+            for (x, y) in [(-0.3, 0.1), (0.1, 0.2)] {
+                p.rect_filled(egui::Rect::from_center_size(pt(x, y), egui::vec2(6.0, 6.0)), 1.0, ink);
+            }
+        }
+        Tool::Pan => {
+            for (dx, dy) in [(0.0f32, -1.0f32), (0.0, 1.0), (-1.0, 0.0), (1.0, 0.0)] {
+                p.line_segment([pt(dx * 0.2, dy * 0.2), pt(dx * 0.7, dy * 0.7)], s);
+                let tip = pt(dx * 0.75, dy * 0.75);
+                let (px, py) = (-dy, dx);
+                p.add(egui::Shape::convex_polygon(vec![tip, pt(dx * 0.5 + px * 0.18, dy * 0.5 + py * 0.18), pt(dx * 0.5 - px * 0.18, dy * 0.5 - py * 0.18)], ink, egui::Stroke::NONE));
+            }
+        }
+    }
+    resp
 }
 
 fn brush_sliders(ui: &mut egui::Ui, b: &mut isoline_core::brush::BrushSettings, show_amount: bool, amount_label: &str, amount_max: f32) {
@@ -254,15 +485,18 @@ pub fn draw(root: &mut egui::Ui, st: &mut UiState, c: UiContext) -> Vec<UiAction
         });
     });
 
-    egui::Panel::left("tools").default_size(250.0).show(root, |ui| {
+    egui::Panel::left("tools").default_size(262.0).show(root, |ui| {
         egui::ScrollArea::vertical().show(ui, |ui| {
+            ui.add_space(4.0);
             ui.heading("Tools");
-            ui.horizontal_wrapped(|ui| {
-                for t in Tool::ALL {
+            egui::Grid::new("tool_grid").spacing(egui::vec2(6.0, 6.0)).show(ui, |ui| {
+                for (i, t) in Tool::ALL.iter().enumerate() {
                     let enabled = !t.needs_baked_water() || c.doc.baked.is_some();
-                    let r = ui.add_enabled(enabled, egui::Button::selectable(c.tools.tool == t, t.label())).on_hover_text(format!("Hotkey: {}", t.hotkey()));
-                    if r.clicked() {
-                        actions.push(UiAction::SelectTool(t));
+                    if tool_button(ui, *t, c.tools.tool == *t, enabled).clicked() {
+                        actions.push(UiAction::SelectTool(*t));
+                    }
+                    if i % 4 == 3 {
+                        ui.end_row();
                     }
                 }
             });
@@ -378,12 +612,69 @@ pub fn draw(root: &mut egui::Ui, st: &mut UiState, c: UiContext) -> Vec<UiAction
         });
     });
 
-    egui::Panel::right("map").default_size(280.0).show(root, |ui| {
+    egui::Panel::right("map").default_size(300.0).show(root, |ui| {
         egui::ScrollArea::vertical().show(ui, |ui| {
+            ui.add_space(4.0);
+            ui.heading("Look");
+            let th = &mut c.doc.render.theme;
+            let mut style = th.style;
+            egui::ComboBox::from_label("Theme").selected_text(style.label()).show_ui(ui, |ui| {
+                for s in ThemeStyle::ALL {
+                    ui.selectable_value(&mut style, s, s.label());
+                }
+            });
+            if style != th.style {
+                *th = Theme::preset(style);
+            }
+            if th.style != ThemeStyle::Modern {
+                ui.add(egui::Slider::new(&mut th.paper_grain, 0.0..=1.0).text("Paper grain"));
+                ui.add(egui::Slider::new(&mut th.vignette, 0.0..=1.0).text("Burnt edges"));
+                ui.add(egui::Slider::new(&mut th.land_tint, 0.0..=1.0).text("Colour wash"));
+                egui::ComboBox::from_label("Relief").selected_text(th.relief.label()).show_ui(ui, |ui| {
+                    for r in ReliefStyle::ALL {
+                        ui.selectable_value(&mut th.relief, r, r.label());
+                    }
+                });
+                if th.relief != ReliefStyle::Shaded {
+                    ui.add(egui::Slider::new(&mut th.hatch_strength, 0.0..=1.0).text("Hatching"));
+                }
+                if th.relief != ReliefStyle::Hatched {
+                    ui.add(egui::Slider::new(&mut th.hillshade_strength, 0.0..=1.0).text("Shading"));
+                }
+                egui::ComboBox::from_label("Woods").selected_text(th.forest.label()).show_ui(ui, |ui| {
+                    for f in ForestStyle::ALL {
+                        ui.selectable_value(&mut th.forest, f, f.label());
+                    }
+                });
+                if th.forest != ForestStyle::None {
+                    ui.add(egui::Slider::new(&mut th.forest_scale, 3.0..=24.0).text("Tree size"));
+                    ui.add(egui::Slider::new(&mut th.forest_threshold, 0.0..=1.0).text("Tree cover"));
+                }
+                let mut rings = th.coast_rings as i32;
+                ui.add(egui::Slider::new(&mut rings, 0..=8).text("Shore rings"));
+                th.coast_rings = rings as u32;
+                if th.coast_rings > 0 {
+                    ui.add(egui::Slider::new(&mut th.ring_spacing, 2.0..=40.0).text("Ring spacing"));
+                }
+                ui.add(egui::Slider::new(&mut th.coast_line_width, 0.5..=4.0).text("Coast ink"));
+                ui.checkbox(&mut th.show_ornaments, "Compass and cartouche");
+            } else {
+                ui.add(egui::Slider::new(&mut c.doc.render.hillshade_strength, 0.0..=1.0).text("Hillshade"));
+                ui.add(egui::Slider::new(&mut c.doc.render.coast_line_width, 0.0..=4.0).text("Coast line"));
+            }
+            let rs = &mut c.doc.render;
+            ui.add(egui::Slider::new(&mut rs.sun_azimuth_deg, 0.0..=360.0).suffix("°").text("Light from"));
+            ui.add(egui::Slider::new(&mut rs.vertical_exaggeration, 0.1..=8.0).logarithmic(true).text("Relief strength"));
+            ui.checkbox(&mut rs.show_contours, "Contour lines");
+            if rs.show_contours {
+                ui.add(egui::Slider::new(&mut rs.contour_interval, 10.0..=1000.0).logarithmic(true).suffix(" m").text("Interval"));
+            }
+            ui.separator();
+
             ui.heading("Sea level");
             let (lo, hi) = (c.doc.stats.min.min(-1.0), c.doc.stats.max.max(1.0));
             let mut sea = c.doc.sea_level;
-            let r = ui.add(egui::Slider::new(&mut sea, lo..=hi).suffix(" m").text("Sea level"));
+            let r = ui.add(egui::Slider::new(&mut sea, lo..=hi).suffix(" m").text(""));
             if r.drag_started() {
                 st.sea_drag_start = Some(c.doc.sea_level);
             }
@@ -398,30 +689,15 @@ pub fn draw(root: &mut egui::Ui, st: &mut UiState, c: UiContext) -> Vec<UiAction
                     actions.push(UiAction::SeaLevelCommit { from, to: c.doc.sea_level });
                 }
             }
-            ui.label(format!("Land: {:.1}%", c.doc.stats.land_fraction * 100.0));
+            ui.small(format!("Land {:.0}% of the map", c.doc.stats.land_fraction * 100.0));
             ui.separator();
 
-            ui.heading("View");
-            let mut vm = c.view_mode;
-            egui::ComboBox::from_id_salt("view_mode").selected_text(vm.label()).show_ui(ui, |ui| {
-                for m in ViewMode::ALL {
-                    ui.selectable_value(&mut vm, m, m.label());
-                }
-            });
-            if vm != c.view_mode {
-                actions.push(UiAction::ViewMode(vm));
-            }
-            let mut sw = c.show_water;
-            if ui.checkbox(&mut sw, "Rivers and lakes").changed() {
-                actions.push(UiAction::ShowWater(sw));
-            }
-            ui.separator();
-
-            egui::CollapsingHeader::new("Water").default_open(true).show(ui, |ui| {
+            ui.heading("Rivers & lakes");
+            {
                 let wp = &mut c.doc.params.water;
                 let mut changed = false;
                 let mut mode = wp.mode;
-                egui::ComboBox::from_label("Recompute").selected_text(mode.label()).show_ui(ui, |ui| {
+                egui::ComboBox::from_label("Update").selected_text(mode.label()).show_ui(ui, |ui| {
                     for m in RecomputeMode::ALL {
                         ui.selectable_value(&mut mode, m, m.label());
                     }
@@ -430,125 +706,113 @@ pub fn draw(root: &mut egui::Ui, st: &mut UiState, c: UiContext) -> Vec<UiAction
                     wp.mode = mode;
                     changed = true;
                 }
-                let mut res = wp.sim_resolution;
-                egui::ComboBox::from_label("Simulation").selected_text(format!("{res}²")).show_ui(ui, |ui| {
-                    ui.selectable_value(&mut res, 2048, "2048²");
-                    ui.selectable_value(&mut res, 1024, "1024²");
-                });
-                if res != wp.sim_resolution {
-                    wp.sim_resolution = res;
+                let hy = &mut wp.hydrology;
+                let mut thr = hy.river_threshold_frac * 1e4;
+                if ui.add(egui::Slider::new(&mut thr, 0.1..=50.0).logarithmic(true).text("Fewer ↔ more rivers")).drag_stopped() {
                     changed = true;
                 }
-                ui.checkbox(&mut wp.auto_downgrade, "Drop to 1024² if a run exceeds 1 s");
+                hy.river_threshold_frac = 50.1e-4 - thr * 1e-4 + 0.1e-4;
+                changed |= ui.add(egui::Slider::new(&mut hy.river_width_scale, 0.2..=5.0).text("River width")).drag_stopped();
+                changed |= ui.checkbox(&mut hy.lakes_enabled, "Lakes").changed();
                 ui.horizontal(|ui| {
-                    if ui.button("Recompute water").clicked() {
+                    if ui.button("Recompute").on_hover_text("Ctrl+R").clicked() {
                         actions.push(UiAction::RecomputeWater);
                     }
                     if c.doc.baked.is_none() {
-                        if ui.add_enabled(c.doc.derived.is_some(), egui::Button::new("Bake water")).on_hover_text("Turn rivers and lakes into editable geometry and moisture into a paintable field").clicked() {
+                        if ui.add_enabled(c.doc.derived.is_some(), egui::Button::new("Bake")).on_hover_text("Freeze rivers and lakes as editable geometry and make moisture paintable").clicked() {
                             actions.push(UiAction::BakeWater);
                         }
                     } else if ui.button("Unbake").clicked() {
                         actions.push(UiAction::UnbakeWater);
                     }
+                    let mut sw = c.show_water;
+                    if ui.checkbox(&mut sw, "Show").changed() {
+                        actions.push(UiAction::ShowWater(sw));
+                    }
                 });
                 if let Some(p) = c.derived_running {
-                    ui.add(egui::ProgressBar::new(p).text("computing"));
+                    ui.add(egui::ProgressBar::new(p).text("updating"));
                 } else if let Some(d) = &c.doc.derived {
-                    let state = if c.doc.baked.is_some() {
-                        "baked".to_string()
-                    } else if c.doc.derived_stale {
-                        "out of date".to_string()
-                    } else {
-                        format!("{}×{} sim", d.timings.water.sim_width, d.timings.water.sim_height)
-                    };
-                    ui.small(format!("{} rivers, {} lakes · {:.0} ms · {state}", d.water.rivers.len(), d.water.lakes.len(), d.timings.total_ms));
+                    let state = if c.doc.baked.is_some() { "baked" } else if c.doc.derived_stale { "out of date" } else { "up to date" };
+                    ui.small(format!("{} rivers, {} lakes · {state}", d.water.rivers.len(), d.water.lakes.len()));
                 }
                 if changed {
                     actions.push(UiAction::SettingsChanged);
                 }
-            });
-
-            egui::CollapsingHeader::new("Climate").default_open(false).show(ui, |ui| {
-                let cl = &mut c.doc.params.water.climate;
-                let mut changed = false;
-                changed |= ui.checkbox(&mut cl.moisture_enabled, "Orographic moisture").changed();
-                if cl.moisture_enabled {
-                    changed |= ui.add(egui::Slider::new(&mut cl.wind_deg, 0.0..=360.0).suffix("°").text("Wind toward")).drag_stopped();
-                    changed |= ui.add(egui::Slider::new(&mut cl.orographic, 0.0..=1.0).text("Orographic strength")).drag_stopped();
-                    changed |= ui.add(egui::Slider::new(&mut cl.continentality, 0.05..=2.0).logarithmic(true).text("Continentality")).drag_stopped();
-                    changed |= ui.add(egui::Slider::new(&mut cl.boundary_moisture, 0.0..=1.0).text("Incoming moisture")).drag_stopped();
-                } else {
-                    changed |= ui.add(egui::Slider::new(&mut cl.uniform_moisture, 0.0..=1.0).text("Uniform moisture")).drag_stopped();
-                }
-                changed |= ui.add(egui::Slider::new(&mut cl.lat_north, -90.0..=90.0).suffix("°").text("Latitude north")).drag_stopped();
-                changed |= ui.add(egui::Slider::new(&mut cl.lat_south, -90.0..=90.0).suffix("°").text("Latitude south")).drag_stopped();
-                changed |= ui.add(egui::Slider::new(&mut cl.lapse_rate, 0.0..=12.0).text("Lapse °C/km")).drag_stopped();
-                changed |= ui.add(egui::Slider::new(&mut cl.temperature_offset, -20.0..=20.0).suffix(" °C").text("Temperature offset")).drag_stopped();
-                if changed {
-                    actions.push(UiAction::SettingsChanged);
-                }
-            });
-            egui::CollapsingHeader::new("Hydrology").default_open(false).show(ui, |ui| {
-                let hy = &mut c.doc.params.water.hydrology;
-                let mut changed = false;
-                changed |= ui.checkbox(&mut hy.enabled, "Rivers").changed();
-                changed |= ui.checkbox(&mut hy.lakes_enabled, "Lakes").changed();
-                let mut thr = hy.river_threshold_frac * 1e4;
-                if ui.add(egui::Slider::new(&mut thr, 0.1..=50.0).logarithmic(true).text("River threshold")).drag_stopped() {
-                    changed = true;
-                }
-                hy.river_threshold_frac = thr * 1e-4;
-                changed |= ui.add(egui::Slider::new(&mut hy.river_width_scale, 0.2..=5.0).text("River width")).drag_stopped();
-                changed |= ui.add(egui::Slider::new(&mut hy.arid_loss, 0.0..=0.05).text("Arid loss")).drag_stopped();
-                changed |= ui.add(egui::Slider::new(&mut hy.min_lake_depth, 1.0..=200.0).logarithmic(true).text("Min lake depth")).drag_stopped();
-                let mut area = hy.min_lake_area as f32;
-                if ui.add(egui::Slider::new(&mut area, 1.0..=2000.0).logarithmic(true).text("Min lake area")).drag_stopped() {
-                    changed = true;
-                }
-                hy.min_lake_area = area as u32;
-                changed |= ui.add(egui::Slider::new(&mut hy.lake_min_moisture, 0.0..=0.5).text("Lake min moisture")).drag_stopped();
-                if changed {
-                    actions.push(UiAction::SettingsChanged);
-                }
-            });
-            ui.separator();
-            ui.heading("Shading");
-            let rs = &mut c.doc.render;
-            ui.add(egui::Slider::new(&mut rs.sun_azimuth_deg, 0.0..=360.0).suffix("°").text("Sun azimuth"));
-            ui.add(egui::Slider::new(&mut rs.sun_altitude_deg, 5.0..=85.0).suffix("°").text("Sun altitude"));
-            ui.add(egui::Slider::new(&mut rs.hillshade_strength, 0.0..=1.0).text("Hillshade"));
-            ui.add(egui::Slider::new(&mut rs.vertical_exaggeration, 0.1..=8.0).logarithmic(true).text("Exaggeration"));
-            ui.add(egui::Slider::new(&mut rs.coast_line_width, 0.0..=4.0).text("Coast line"));
-            ui.checkbox(&mut rs.show_contours, "Contours");
-            if rs.show_contours {
-                ui.add(egui::Slider::new(&mut rs.contour_interval, 10.0..=1000.0).logarithmic(true).suffix(" m").text("Interval"));
             }
             ui.separator();
-            ui.heading("Field");
-            ui.label(format!("{} × {} texels", c.doc.width(), c.doc.height()));
-            ui.label(format!(
-                "{:.0} m / texel  ({:.0} × {:.0} km, display only)",
-                c.doc.meters_per_texel,
-                c.doc.width() as f32 * c.doc.meters_per_texel / 1000.0,
-                c.doc.height() as f32 * c.doc.meters_per_texel / 1000.0
-            ));
-            ui.label(format!("Elevation {:.0} … {:.0} m", c.doc.stats.min, c.doc.stats.max));
-            ui.separator();
-            ui.heading("History");
-            ui.label(format!(
-                "{} entries, {} in RAM, {} on disk",
-                c.doc.undo.len(),
-                fmt_bytes(c.doc.undo.loaded_bytes() as u64),
-                fmt_bytes(c.doc.undo.spilled_bytes() as u64)
-            ));
-            ui.horizontal(|ui| {
-                if ui.add_enabled(c.doc.undo.can_undo(), egui::Button::new("Undo")).clicked() {
-                    actions.push(UiAction::Undo);
+
+            egui::CollapsingHeader::new("Advanced").default_open(false).show(ui, |ui| {
+                ui.label(egui::RichText::new("Data views").strong());
+                let mut vm = c.view_mode;
+                egui::ComboBox::from_id_salt("view_mode").selected_text(vm.label()).show_ui(ui, |ui| {
+                    for m in ViewMode::ALL {
+                        ui.selectable_value(&mut vm, m, m.label());
+                    }
+                });
+                if vm != c.view_mode {
+                    actions.push(UiAction::ViewMode(vm));
                 }
-                if ui.add_enabled(c.doc.undo.can_redo(), egui::Button::new("Redo")).clicked() {
-                    actions.push(UiAction::Redo);
+                ui.add(egui::Slider::new(&mut c.doc.render.sun_altitude_deg, 5.0..=85.0).suffix("°").text("Sun altitude"));
+                egui::CollapsingHeader::new("Climate").default_open(false).show(ui, |ui| {
+                    let cl = &mut c.doc.params.water.climate;
+                    let mut changed = false;
+                    changed |= ui.checkbox(&mut cl.moisture_enabled, "Orographic moisture").changed();
+                    if cl.moisture_enabled {
+                        changed |= ui.add(egui::Slider::new(&mut cl.wind_deg, 0.0..=360.0).suffix("°").text("Wind toward")).drag_stopped();
+                        changed |= ui.add(egui::Slider::new(&mut cl.orographic, 0.0..=1.0).text("Orographic strength")).drag_stopped();
+                        changed |= ui.add(egui::Slider::new(&mut cl.continentality, 0.05..=2.0).logarithmic(true).text("Continentality")).drag_stopped();
+                        changed |= ui.add(egui::Slider::new(&mut cl.boundary_moisture, 0.0..=1.0).text("Incoming moisture")).drag_stopped();
+                    } else {
+                        changed |= ui.add(egui::Slider::new(&mut cl.uniform_moisture, 0.0..=1.0).text("Uniform moisture")).drag_stopped();
+                    }
+                    changed |= ui.add(egui::Slider::new(&mut cl.lat_north, -90.0..=90.0).suffix("°").text("Latitude north")).drag_stopped();
+                    changed |= ui.add(egui::Slider::new(&mut cl.lat_south, -90.0..=90.0).suffix("°").text("Latitude south")).drag_stopped();
+                    changed |= ui.add(egui::Slider::new(&mut cl.lapse_rate, 0.0..=12.0).text("Lapse °C/km")).drag_stopped();
+                    changed |= ui.add(egui::Slider::new(&mut cl.temperature_offset, -20.0..=20.0).suffix(" °C").text("Temperature offset")).drag_stopped();
+                    if changed {
+                        actions.push(UiAction::SettingsChanged);
+                    }
+                });
+                egui::CollapsingHeader::new("Hydrology").default_open(false).show(ui, |ui| {
+                    let wp = &mut c.doc.params.water;
+                    let mut changed = false;
+                    let mut res = wp.sim_resolution;
+                    egui::ComboBox::from_label("Simulation").selected_text(format!("{res}²")).show_ui(ui, |ui| {
+                        ui.selectable_value(&mut res, 2048, "2048²");
+                        ui.selectable_value(&mut res, 1024, "1024²");
+                    });
+                    if res != wp.sim_resolution {
+                        wp.sim_resolution = res;
+                        changed = true;
+                    }
+                    ui.checkbox(&mut wp.auto_downgrade, "Drop to 1024² if a run exceeds 1 s");
+                    let hy = &mut wp.hydrology;
+                    changed |= ui.checkbox(&mut hy.enabled, "Rivers").changed();
+                    changed |= ui.add(egui::Slider::new(&mut hy.arid_loss, 0.0..=0.05).text("Arid loss")).drag_stopped();
+                    changed |= ui.add(egui::Slider::new(&mut hy.min_lake_depth, 1.0..=200.0).logarithmic(true).text("Min lake depth")).drag_stopped();
+                    let mut area = hy.min_lake_area as f32;
+                    if ui.add(egui::Slider::new(&mut area, 1.0..=2000.0).logarithmic(true).text("Min lake area")).drag_stopped() {
+                        changed = true;
+                    }
+                    hy.min_lake_area = area as u32;
+                    changed |= ui.add(egui::Slider::new(&mut hy.lake_min_moisture, 0.0..=0.5).text("Lake min moisture")).drag_stopped();
+                    if changed {
+                        actions.push(UiAction::SettingsChanged);
+                    }
+                });
+                if ui.button("Biome matrix…").clicked() {
+                    st.show_biome_matrix = true;
                 }
+                ui.separator();
+                ui.label(format!("{} × {} texels · {:.0} m/texel (display only)", c.doc.width(), c.doc.height(), c.doc.meters_per_texel));
+                ui.label(format!("Elevation {:.0} … {:.0} m", c.doc.stats.min, c.doc.stats.max));
+                ui.label(format!(
+                    "History: {} entries, {} in RAM, {} on disk",
+                    c.doc.undo.len(),
+                    fmt_bytes(c.doc.undo.loaded_bytes() as u64),
+                    fmt_bytes(c.doc.undo.spilled_bytes() as u64)
+                ));
             });
         });
     });

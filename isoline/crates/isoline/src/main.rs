@@ -17,6 +17,7 @@ fn usage() {
     eprintln!("  --size   field resolution for the initial map (default 2048)");
     eprintln!("  --bench  run the headless GPU benchmark at N×N (default 2048) and exit");
     eprintln!("  --demo   paint a scripted stroke sequence after the map loads (for testing)");
+    eprintln!("  --theme  ink | illuminated | modern");
     eprintln!("  --screenshot <file.png>  save a frame once the map is ready, then exit");
 }
 
@@ -32,6 +33,7 @@ fn main() {
             "--open" => opts.open = args.next().map(PathBuf::from),
             "--size" => opts.size = args.next().and_then(|s| s.parse().ok()).unwrap_or(2048),
             "--demo" => opts.demo = true,
+            "--theme" => opts.theme = args.next(),
             "--screenshot" => opts.screenshot = args.next().map(PathBuf::from),
             "--bench" => {
                 bench = Some(args.next().and_then(|s| s.parse().ok()).unwrap_or(2048));

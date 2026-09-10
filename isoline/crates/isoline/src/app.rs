@@ -19,6 +19,7 @@ use isoline_core::field::ScalarField;
 use isoline_core::procedural::{self, CoastPreset};
 use isoline_core::project::{self, ProjectData, ViewState};
 use isoline_core::terrain;
+use isoline_core::theme::{ForestStyle, ReliefStyle, Theme, ThemeStyle};
 use isoline_core::tiles::PixelRect;
 use isoline_core::undo::GeometrySnapshot;
 use isoline_core::water::RecomputeMode;
@@ -44,11 +45,12 @@ pub struct StartupOptions {
     pub size: u32,
     pub demo: bool,
     pub screenshot: Option<PathBuf>,
+    pub theme: Option<String>,
 }
 
 impl Default for StartupOptions {
     fn default() -> Self {
-        Self { open: None, size: 2048, demo: false, screenshot: None }
+        Self { open: None, size: 2048, demo: false, screenshot: None, theme: None }
     }
 }
 
@@ -56,6 +58,7 @@ impl Default for StartupOptions {
 struct UploadedDerived {
     water_cov: ScalarField,
     biome: ScalarField,
+    forest: ScalarField,
     moisture: Option<ScalarField>,
     temperature: ScalarField,
 }
@@ -66,6 +69,7 @@ struct UploadedDerived {
 struct DerivedTextures {
     water: GpuField,
     biome: GpuField,
+    forest: GpuField,
     moisture: GpuField,
     temperature: GpuField,
     uploaded: Option<UploadedDerived>,
@@ -77,6 +81,7 @@ impl DerivedTextures {
         Self {
             water: GpuField::new_labelled(device, w, h, "water"),
             biome: GpuField::new_labelled(device, w, h, "biome"),
+            forest: GpuField::new_labelled(device, w, h, "forest"),
             moisture: GpuField::new_labelled(device, 64, 64, "moisture"),
             temperature: GpuField::new_labelled(device, 64, 64, "temperature"),
             uploaded: None,
@@ -85,11 +90,11 @@ impl DerivedTextures {
     }
 
     fn views(&self) -> DerivedViews<'_> {
-        DerivedViews { water: &self.water.view, moisture: &self.moisture.view, temperature: &self.temperature.view, biome: &self.biome.view }
+        DerivedViews { water: &self.water.view, moisture: &self.moisture.view, temperature: &self.temperature.view, biome: &self.biome.view, forest: &self.forest.view }
     }
 
     fn device_bytes(&self) -> u64 {
-        self.water.device_bytes + self.moisture.device_bytes + self.temperature.device_bytes + self.biome.device_bytes
+        self.water.device_bytes + self.moisture.device_bytes + self.temperature.device_bytes + self.biome.device_bytes + self.forest.device_bytes
     }
 }
 
@@ -154,6 +159,7 @@ struct AppState {
     needs_fit: bool,
     demo: bool,
     demo_stage: u32,
+    startup_theme: Option<ThemeStyle>,
     screenshot: Option<PathBuf>,
     frames_since_install: u32,
     surface_copyable: bool,
@@ -228,7 +234,8 @@ impl AppState {
         surface.configure(&gpu.device, &config);
 
         let egui_ctx = egui::Context::default();
-        egui_ctx.set_visuals(egui::Visuals::dark());
+        ui::install_fonts(&egui_ctx);
+        ui::apply_style(&egui_ctx);
         let egui_state = egui_winit::State::new(
             egui_ctx.clone(),
             egui::ViewportId::ROOT,
@@ -270,7 +277,7 @@ impl AppState {
             derived_job: None,
             derived_rerun: false,
             over_budget_runs: 0,
-            view_mode: ViewMode::BiomeShaded,
+            view_mode: ViewMode::Map,
             show_water: true,
             brush,
             map,
@@ -290,6 +297,12 @@ impl AppState {
             needs_fit: true,
             demo: opts.demo,
             demo_stage: 0,
+            startup_theme: opts.theme.as_deref().and_then(|t| match t {
+                "ink" | "parchment" => Some(ThemeStyle::ParchmentInk),
+                "illuminated" => Some(ThemeStyle::Illuminated),
+                "modern" => Some(ThemeStyle::Modern),
+                _ => None,
+            }),
             screenshot: opts.screenshot.clone(),
             frames_since_install: u32::MAX,
             surface_copyable,
@@ -339,6 +352,9 @@ impl AppState {
         }
         self.derived_rerun = false;
         self.doc = doc;
+        if let Some(t) = self.startup_theme {
+            self.doc.render.theme = Theme::preset(t);
+        }
         self.field = GpuField::new(&self.gpu.device, self.doc.width(), self.doc.height());
         self.field.upload_all(&self.gpu.queue, &self.doc.elevation);
         self.derived_tex = DerivedTextures::new(&self.gpu.device, self.doc.width(), self.doc.height());
@@ -479,6 +495,7 @@ impl AppState {
         n += self.derived_tex.water.upload_diff(q, old.map(|o| &o.water_cov), &d.water_cov);
         let biome_f = ScalarField::from_vec(d.water_cov.width(), d.water_cov.height(), d.biome.iter().map(|b| *b as f32).collect());
         n += self.derived_tex.biome.upload_diff(q, old.map(|o| &o.biome), &biome_f);
+        n += self.derived_tex.forest.upload_diff(q, old.map(|o| &o.forest), &d.forest);
         let mut rebind = false;
         if (self.derived_tex.temperature.width(), self.derived_tex.temperature.height()) != (d.temperature.width(), d.temperature.height()) {
             self.derived_tex.temperature = GpuField::new_labelled(&self.gpu.device, d.temperature.width(), d.temperature.height(), "temperature");
@@ -503,7 +520,7 @@ impl AppState {
         if rebind {
             self.map.bind(&self.gpu.device, &self.field, self.derived_tex.views());
         }
-        self.derived_tex.uploaded = Some(UploadedDerived { water_cov: d.water_cov.clone(), biome: biome_f, moisture: moisture_uploaded, temperature: d.temperature.clone() });
+        self.derived_tex.uploaded = Some(UploadedDerived { water_cov: d.water_cov.clone(), biome: biome_f, forest: d.forest.clone(), moisture: moisture_uploaded, temperature: d.temperature.clone() });
         self.derived_tex.last_upload_tiles = n;
         self.cpu.sections.insert("derived upload", t.elapsed().as_secs_f32() * 1000.0);
     }
@@ -1307,7 +1324,6 @@ impl AppState {
         self.redo();
         self.tools.tool = Tool::Coast;
         self.ui.status = format!("demo: {} undo entries", self.doc.undo.len());
-        self.ui.show_profiler = true;
         let dir = std::env::temp_dir().join("isoline-demo.isoline");
         self.doc.name = "isoline-demo".into();
         self.save_to(dir);
@@ -1370,6 +1386,16 @@ impl AppState {
             egui::pos2(s.x, s.y)
         };
         let mut ov = Overlay::default();
+        let a = to([0.0, 0.0]);
+        let b = to([self.doc.width() as f32, self.doc.height() as f32]);
+        ov.map_rect = egui::Rect::from_two_pos(a, b);
+        ov.title = self.doc.name.clone();
+        ov.show_ornaments = self.doc.render.theme.show_ornaments && self.doc.render.theme.style != ThemeStyle::Modern && self.view_mode == ViewMode::Map;
+        ov.sun_azimuth_deg = self.doc.render.sun_azimuth_deg;
+        let ink = self.doc.render.theme.ink;
+        let paper = self.doc.render.theme.paper;
+        ov.ink = egui::Color32::from_rgb((ink[0] * 255.0) as u8, (ink[1] * 255.0) as u8, (ink[2] * 255.0) as u8);
+        ov.paper = egui::Color32::from_rgb((paper[0] * 255.0) as u8, (paper[1] * 255.0) as u8, (paper[2] * 255.0) as u8);
         if self.tools.tool.is_procedural() && !self.tools.path.is_empty() {
             ov.path = self.tools.path.iter().map(|p| to(*p)).collect();
             ov.path_is_coast = self.tools.tool == Tool::Coast;
@@ -1539,6 +1565,7 @@ impl AppState {
         }
         let fw = self.doc.width() as f32;
         let fh = self.doc.height() as f32;
+        let th: &Theme = &self.doc.render.theme;
         let view = ViewUniform {
             screen_size: ss.to_array(),
             field_size: [fw, fh],
@@ -1547,9 +1574,9 @@ impl AppState {
             sea_level: self.doc.sea_level,
             sun_dir: [az.sin() * alt.cos(), -az.cos() * alt.cos(), alt.sin()],
             exaggeration: self.doc.render.vertical_exaggeration,
-            shade_strength: self.doc.render.hillshade_strength,
+            shade_strength: if th.style == ThemeStyle::Modern { self.doc.render.hillshade_strength } else { th.hillshade_strength },
             contour_interval: self.doc.render.contour_interval,
-            coast_width: self.doc.render.coast_line_width,
+            coast_width: if self.doc.render.theme.style == ThemeStyle::Modern { self.doc.render.coast_line_width } else { self.doc.render.theme.coast_line_width },
             flags,
             cursor: cursor_field.unwrap_or(Vec2::ZERO).to_array(),
             cursor_radius: self.tools.radius(),
@@ -1557,15 +1584,35 @@ impl AppState {
             elev_min: self.doc.stats.min,
             elev_max: self.doc.stats.max,
             time: self.start.elapsed().as_secs_f32(),
-            _pad: 0.0,
             view_mode: self.view_mode as u32,
-            _pad2: 0.0,
             temp_min,
             temp_max,
+            _pad_a: [0.0; 2],
             moist_scale: [self.derived_tex.moisture.width() as f32 / fw, self.derived_tex.moisture.height() as f32 / fh],
             temp_scale: [self.derived_tex.temperature.width() as f32 / fw, self.derived_tex.temperature.height() as f32 / fh],
+            paper: th.paper,
+            theme_style: th.style as u32,
+            paper_dark: th.paper_dark,
+            relief_style: th.relief as u32,
+            ink: th.ink,
+            forest_style: th.forest as u32,
+            sea_fill: th.sea_fill,
+            coast_rings: th.coast_rings,
+            sea_ink: th.sea_ink,
+            land_tint: th.land_tint,
+            river_ink: th.river_ink,
+            paper_grain: th.paper_grain,
+            forest_fill: th.forest_fill,
+            vignette: th.vignette,
+            ring_spacing: th.ring_spacing,
+            hatch_strength: th.hatch_strength,
+            hatch_spacing: th.hatch_spacing,
+            forest_scale: th.forest_scale,
+            forest_threshold: th.forest_threshold,
+            _pad_b: [0.0; 7],
             palette,
         };
+        let _ = (ReliefStyle::Shaded, ForestStyle::None);
         self.map.render(&self.gpu.queue, &mut encoder, &target, &view, &mut self.profiler);
 
         // egui on top.

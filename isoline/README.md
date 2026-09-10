@@ -7,9 +7,40 @@ climate, biomes, forests, settlements) is *derived* from those fields, live.
 
 The coastline is literally the isoline `elevation == seaLevel`, hence the name.
 
+![Parchment & ink theme](docs/theme-ink.png)
+
+## Look and feel pass (after Milestone 3)
+
+Feedback after Milestone 3 was that the app read as a simulation dashboard
+rather than a map editor. This pass brings the theme system forward from
+Milestone 8 and reworks the chrome around map making.
+
+- **Themes** (`isoline-core::theme`): every visual layer reads palette,
+  line weights, hatching, paper grain, sea style and forest style from a
+  `Theme` saved with the project. Three ship: *Parchment & ink* (default:
+  paper grain and burnt edges, ink coastline with distance-spaced shore
+  rings, engraving-style hatched relief gated by slope, scribbled tree
+  clumps from the forest-density field, ink rivers, paper-coloured lakes
+  with ink outlines), *Illuminated* (the same with a colour wash from the
+  biomes, green woods, pale green sea), and *Modern* (the earlier coloured
+  cartography). Every theme value is a slider in the Look panel.
+- **Ornaments**: a compass rose and a title cartouche drawn as vector
+  overlays in an embedded serif (Liberation Serif, SIL OFL), toggleable.
+- **Chrome**: a warm map-room palette, serif headings, a tool palette with
+  drawn icons, and a right panel ordered by what a map maker touches:
+  Look, Sea level, Rivers & lakes. Climate, hydrology, data views and
+  field statistics are collapsed under Advanced. The profiler stays on F3.
+- `--theme ink|illuminated|modern` selects the startup theme.
+
+![Illuminated theme](docs/theme-illuminated.png)
+
+Still ahead on the look: hand-drawn mountain and hill symbols placed on
+ridges (Milestone 4 assets), calligraphic labels on curved paths
+(Milestone 5), sea wave patterns and decorative borders (Milestone 8).
+
 ![Milestone 3](docs/milestone3.png)
 
-## Status: Milestone 3 — procedural coastline and ridge brushes
+## Milestone 3 — procedural coastline and ridge brushes
 
 Both are *stroke-level* brushes: drag a control line, release, and the range
 or shoreline is generated over the affected rect on all cores and written
@@ -250,6 +281,7 @@ cargo run --release -- --size 8192      # bigger field
 cargo run --release -- --open My.isoline
 cargo run --release -- --bench 4096     # headless benchmark, no window needed
 cargo run --release -- --demo --screenshot out.png   # scripted strokes, save, capture, exit
+cargo run --release -- --theme illuminated           # start with a given theme
 cargo test                              # core unit tests
 ```
 

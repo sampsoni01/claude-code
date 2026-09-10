@@ -32,6 +32,7 @@ pub mod procedural;
 pub mod project;
 pub mod stats;
 pub mod terrain;
+pub mod theme;
 pub mod tiles;
 pub mod undo;
 pub mod water;

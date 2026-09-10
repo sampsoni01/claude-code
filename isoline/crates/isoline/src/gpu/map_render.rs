@@ -12,7 +12,8 @@ pub const FLAG_HAS_DERIVED: u32 = 16;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ViewMode {
-    BiomeShaded = 0,
+    /// The themed map.
+    Map = 0,
     Hypsometric = 1,
     BiomeFlat = 2,
     Moisture = 3,
@@ -21,7 +22,7 @@ pub enum ViewMode {
 
 impl ViewMode {
     pub const ALL: [ViewMode; 5] = [
-        ViewMode::BiomeShaded,
+        ViewMode::Map,
         ViewMode::Hypsometric,
         ViewMode::BiomeFlat,
         ViewMode::Moisture,
@@ -29,7 +30,7 @@ impl ViewMode {
     ];
     pub fn label(self) -> &'static str {
         match self {
-            ViewMode::BiomeShaded => "Terrain (biomes + relief)",
+            ViewMode::Map => "Map",
             ViewMode::Hypsometric => "Elevation tint",
             ViewMode::BiomeFlat => "Biomes",
             ViewMode::Moisture => "Moisture",
@@ -58,14 +59,35 @@ pub struct ViewUniform {
     pub elev_min: f32,
     pub elev_max: f32,
     pub time: f32,
-    pub _pad: f32,
     pub view_mode: u32,
-    pub _pad2: f32,
     pub temp_min: f32,
     pub temp_max: f32,
+    pub _pad_a: [f32; 2],
     /// Moisture / temperature texture size divided by field size.
     pub moist_scale: [f32; 2],
     pub temp_scale: [f32; 2],
+    // Theme block (vec3 + scalar pairs keep 16-byte alignment).
+    pub paper: [f32; 3],
+    pub theme_style: u32,
+    pub paper_dark: [f32; 3],
+    pub relief_style: u32,
+    pub ink: [f32; 3],
+    pub forest_style: u32,
+    pub sea_fill: [f32; 3],
+    pub coast_rings: u32,
+    pub sea_ink: [f32; 3],
+    pub land_tint: f32,
+    pub river_ink: [f32; 3],
+    pub paper_grain: f32,
+    pub forest_fill: [f32; 3],
+    pub vignette: f32,
+    pub ring_spacing: f32,
+    pub hatch_strength: f32,
+    pub hatch_spacing: f32,
+    pub forest_scale: f32,
+    pub forest_threshold: f32,
+    /// WGSL pads to the next 16-byte boundary before the vec3 and the array.
+    pub _pad_b: [f32; 7],
     pub palette: [[f32; 4]; 16],
 }
 
@@ -95,6 +117,7 @@ pub struct DerivedViews<'a> {
     pub moisture: &'a wgpu::TextureView,
     pub temperature: &'a wgpu::TextureView,
     pub biome: &'a wgpu::TextureView,
+    pub forest: &'a wgpu::TextureView,
 }
 
 impl MapRenderer {
@@ -122,6 +145,7 @@ impl MapRenderer {
                 tex_entry(3),
                 tex_entry(4),
                 tex_entry(5),
+                tex_entry(6),
             ],
         });
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -177,6 +201,7 @@ impl MapRenderer {
                 wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::TextureView(derived.moisture) },
                 wgpu::BindGroupEntry { binding: 4, resource: wgpu::BindingResource::TextureView(derived.temperature) },
                 wgpu::BindGroupEntry { binding: 5, resource: wgpu::BindingResource::TextureView(derived.biome) },
+                wgpu::BindGroupEntry { binding: 6, resource: wgpu::BindingResource::TextureView(derived.forest) },
             ],
         }));
     }

@@ -15,6 +15,7 @@
 use crate::derived::DerivedParams;
 use crate::field::ScalarField;
 use crate::hydrology::River;
+use crate::theme::Theme;
 use crate::water::LakePolygon;
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
@@ -51,6 +52,8 @@ pub struct RenderSettings {
     pub contour_interval: f32,
     pub show_contours: bool,
     pub coast_line_width: f32,
+    #[serde(default)]
+    pub theme: Theme,
 }
 
 impl Default for RenderSettings {
@@ -63,6 +66,7 @@ impl Default for RenderSettings {
             contour_interval: 250.0,
             show_contours: false,
             coast_line_width: 1.4,
+            theme: Theme::default(),
         }
     }
 }
