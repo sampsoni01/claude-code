@@ -4,7 +4,8 @@ use crate::camera::Camera;
 use crate::document::{Document, FieldKind};
 use crate::gpu::brush::{BrushPass, MAX_DABS_PER_FRAME};
 use crate::gpu::field::GpuField;
-use crate::gpu::map_render::{DerivedViews, MapRenderer, ViewMode, ViewUniform, FLAG_CONTOURS, FLAG_CURSOR, FLAG_HAS_DERIVED, FLAG_HYPSO, FLAG_WATER};
+use crate::export::{ExportJob, ExportSettings, Reference};
+use crate::gpu::map_render::{DerivedViews, MapRenderer, ViewMode, ViewUniform, FLAG_CONTOURS, FLAG_CURSOR, FLAG_HAS_DERIVED, FLAG_HYPSO, FLAG_TRANSPARENT, FLAG_WATER};
 use crate::gpu::profiler::{CpuStats, GpuProfiler};
 use crate::gpu::sprites::{Atlas, SpriteInstance, SpritePass};
 use crate::library::Library;
@@ -58,11 +59,13 @@ pub struct StartupOptions {
     pub theme: Option<String>,
     pub zoom: Option<f32>,
     pub center: Option<(f32, f32)>,
+    pub export: Option<PathBuf>,
+    pub export_scale: f32,
 }
 
 impl Default for StartupOptions {
     fn default() -> Self {
-        Self { open: None, size: 2048, demo: false, screenshot: None, theme: None, zoom: None, center: None }
+        Self { open: None, size: 2048, demo: false, screenshot: None, theme: None, zoom: None, center: None, export: None, export_scale: 2.0 }
     }
 }
 
@@ -242,6 +245,11 @@ struct AppState {
     startup_theme: Option<ThemeStyle>,
     startup_view: (Option<f32>, Option<(f32, f32)>),
     screenshot: Option<PathBuf>,
+    /// Headless export requested from the command line (path, scale).
+    startup_export: Option<(PathBuf, f32)>,
+    export: Option<ExportJob>,
+    /// Quit once the command-line export has been written.
+    exit_after_export: bool,
     frames_since_install: u32,
     surface_copyable: bool,
 }
@@ -419,6 +427,9 @@ impl AppState {
             }),
             startup_view: (opts.zoom, opts.center),
             screenshot: opts.screenshot.clone(),
+            startup_export: opts.export.clone().map(|p| (p, opts.export_scale)),
+            export: None,
+            exit_after_export: false,
             frames_since_install: u32::MAX,
             surface_copyable,
         };
@@ -2332,6 +2343,13 @@ impl AppState {
                 UiAction::ClearRealms => self.clear_realms(),
                 UiAction::DeleteSelectedBorder => self.delete_selected_border(),
                 UiAction::PropagateRegionNames(id) => self.propagate_region_names(id),
+                UiAction::ExportImage(settings) => {
+                    let name = crate::export::default_name(&self.doc.name, &settings);
+                    let filter = if settings.jpeg { ("JPEG image", &["jpg", "jpeg"][..]) } else { ("PNG image", &["png"][..]) };
+                    if let Some(path) = rfd::FileDialog::new().set_title("Export image").add_filter(filter.0, filter.1).set_file_name(name).save_file() {
+                        self.start_export(settings, path);
+                    }
+                }
                 UiAction::SettlementParamsChanged => self.regenerate_selected_settlement(false),
                 UiAction::RerollSettlement => self.regenerate_selected_settlement(true),
                 UiAction::RerollDistrict(d) => self.reroll_district(d),
@@ -2707,12 +2725,263 @@ impl AppState {
         Ok(())
     }
 
+    /// The map pass uniform for a view of `ss` pixels whose top-left pixel
+    /// is field point `origin` at `scale` pixels per texel.
+    fn view_uniform(&self, ss: Vec2, origin: Vec2, scale: f32, flags: u32, cursor_field: Option<Vec2>) -> ViewUniform {
+        let az = self.doc.render.sun_azimuth_deg.to_radians();
+        let alt = self.doc.render.sun_altitude_deg.to_radians();
+        let mut flags = flags;
+        if self.derived_tex.uploaded.is_some() {
+            flags |= FLAG_HAS_DERIVED;
+        }
+        let (temp_min, temp_max) = match &self.doc.derived {
+            Some(d) => {
+                let (tlo, thi) = d.temperature.min_max();
+                (tlo, thi.max(tlo + 1.0))
+            }
+            None => (-20.0, 30.0),
+        };
+        let mut palette = [[0f32; 4]; 16];
+        for (i, b) in Biome::ALL.iter().enumerate() {
+            let c = b.color();
+            palette[i] = [c[0], c[1], c[2], 1.0];
+        }
+        let fw = self.doc.width() as f32;
+        let fh = self.doc.height() as f32;
+        let th: &Theme = &self.doc.render.theme;
+        let mut region_palette = [[0.0f32; 4]; 32];
+        for r in &self.doc.regions {
+            let c = REGION_PALETTE[r.color as usize % REGION_PALETTE.len()];
+            region_palette[(r.id % 32) as usize] = [c[0], c[1], c[2], 1.0];
+        }
+        let _ = (ReliefStyle::Shaded, ForestStyle::None);
+        ViewUniform {
+            screen_size: ss.to_array(),
+            field_size: [fw, fh],
+            origin: origin.to_array(),
+            scale,
+            sea_level: self.doc.sea_level,
+            sun_dir: [az.sin() * alt.cos(), -az.cos() * alt.cos(), alt.sin()],
+            exaggeration: self.doc.render.vertical_exaggeration,
+            shade_strength: if th.style == ThemeStyle::Modern { self.doc.render.hillshade_strength } else { th.hillshade_strength },
+            contour_interval: self.doc.render.contour_interval,
+            coast_width: if th.style == ThemeStyle::Modern { self.doc.render.coast_line_width } else { th.coast_line_width },
+            flags,
+            cursor: cursor_field.unwrap_or(Vec2::ZERO).to_array(),
+            cursor_radius: self.tools.radius(),
+            meters_per_texel: self.doc.meters_per_texel,
+            elev_min: self.doc.stats.min,
+            elev_max: self.doc.stats.max,
+            time: self.start.elapsed().as_secs_f32(),
+            view_mode: self.view_mode as u32,
+            temp_min,
+            temp_max,
+            _pad_a: [0.0; 2],
+            moist_scale: [self.derived_tex.moisture.width() as f32 / fw, self.derived_tex.moisture.height() as f32 / fh],
+            temp_scale: [self.derived_tex.temperature.width() as f32 / fw, self.derived_tex.temperature.height() as f32 / fh],
+            paper: th.paper,
+            theme_style: th.style as u32,
+            paper_dark: th.paper_dark,
+            relief_style: th.relief as u32,
+            ink: th.ink,
+            forest_style: th.forest as u32,
+            sea_fill: th.sea_fill,
+            coast_rings: th.coast_rings,
+            sea_ink: th.sea_ink,
+            land_tint: th.land_tint,
+            river_ink: th.river_ink,
+            paper_grain: th.paper_grain,
+            forest_fill: th.forest_fill,
+            vignette: th.vignette,
+            ring_spacing: th.ring_spacing,
+            hatch_strength: th.hatch_strength,
+            hatch_spacing: th.hatch_spacing,
+            forest_scale: th.forest_scale,
+            forest_threshold: th.forest_threshold,
+            region_fill: if self.doc.regions.is_empty() { 0.0 } else if th.style == ThemeStyle::Modern { 0.2 } else { 0.16 },
+            region_scale: [self.derived_tex.regions.width() as f32 / fw, self.derived_tex.regions.height() as f32 / fh],
+            _pad_b: [0.0; 4],
+            palette,
+            region_palette,
+        }
+    }
+
+    // ---- export ------------------------------------------------------------------
+
+    /// Lay out labels and overlays for the whole sheet at the export scale
+    /// and start a band-by-band export that the frame loop advances.
+    fn start_export(&mut self, settings: ExportSettings, path: PathBuf) {
+        if self.export.is_some() {
+            self.ui.status = "An export is already running".into();
+            return;
+        }
+        let scale = settings.scale.max(0.05);
+        let fw = self.doc.width() as f32;
+        let fh = self.doc.height() as f32;
+        let width = ((fw + 2.0 * settings.bleed) * scale).round().max(1.0);
+        let height = ((fh + 2.0 * settings.bleed) * scale).round().max(1.0);
+        let ss = Vec2::new(width, height);
+        let cam = Camera::new(Vec2::new(fw * 0.5, fh * 0.5), scale);
+        // Labels, ornaments and town detail are laid out in points as they
+        // appear on screen at the reference zoom; the pixel ratio then
+        // carries the whole overlay up to the export resolution.
+        let screen_ppp = self.egui_ctx.pixels_per_point();
+        let ref_zoom = match settings.reference {
+            Reference::Fit => Camera::fit(Vec2::new(fw, fh), self.screen_size()).zoom,
+            Reference::Current => self.camera.zoom,
+        } / screen_ppp;
+        let ppp = (scale / ref_zoom.max(0.01)).max(0.01);
+        let ctx = egui::Context::default();
+        ui::install_fonts(&ctx);
+        ctx.set_pixels_per_point(ppp);
+        let mut renderer = egui_wgpu::Renderer::new(&self.gpu.device, self.config.format, egui_wgpu::RendererOptions { msaa_samples: 1, ..Default::default() });
+        // Fonts only exist after a first pass.
+        let raw = egui::RawInput { screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(width / ppp, height / ppp))), ..Default::default() };
+        let warm = ctx.run_ui(raw.clone(), |_| {});
+        for (id, delta) in &warm.textures_delta.set {
+            renderer.update_texture(&self.gpu.device, &self.gpu.queue, *id, delta);
+        }
+        let mut engine = LabelEngine::default();
+        {
+            let lib = &self.library;
+            let placements = &self.doc.placements;
+            let symbol_half = |e: &Entity| -> f32 {
+                match &e.geometry {
+                    EntityRef::Placement { id, .. } => placements.iter().find(|p| p.id == *id).and_then(|p| lib.get(&p.asset).map(|a| p.size / a.aspect.max(0.1) * 0.5)).unwrap_or(0.0),
+                    _ => 0.0,
+                }
+            };
+            if self.view_mode == ViewMode::Map {
+                engine.layout(&ctx, &self.doc.entities, &self.doc.render.theme, &cam, ss, Vec2::new(fw, fh), ppp, symbol_half, None);
+            }
+        }
+        let ov = self.build_overlay_for(&cam, ss, ppp, true);
+        let full = ctx.run_ui(raw, |ui| {
+            let c = ui.ctx().clone();
+            ui::draw_overlay(&c, &ov);
+            let painter = c.layer_painter(egui::LayerId::background());
+            engine.draw(&painter, ov.paper, None);
+        });
+        for (id, delta) in &full.textures_delta.set {
+            renderer.update_texture(&self.gpu.device, &self.gpu.queue, *id, delta);
+        }
+        // Town icons follow the reference zoom, not the screen's.
+        self.town_icons_visible = ref_zoom < TOWN_ICON_ZOOM;
+        self.rebuild_instances();
+        match ExportJob::new(&self.gpu.device, self.config.format, settings, path, self.doc.width(), self.doc.height(), self.gpu.max_field_dim(), full.shapes, ctx, renderer, ppp) {
+            Ok(job) => {
+                self.ui.status = format!("Exporting {}×{}…", job.width, job.height);
+                self.export = Some(job);
+            }
+            Err(e) => self.ui.error = Some(format!("Export failed: {e:#}")),
+        }
+    }
+
+    /// Render and write one band of the running export.
+    fn export_step(&mut self) {
+        let Some(mut job) = self.export.take() else { return };
+        let layer = job.layer();
+        let transparent = layer.transparent(&job.settings);
+        let rows = job.band_rows();
+        let scale = job.settings.scale.max(0.05);
+        let mut flags = FLAG_HYPSO;
+        if self.doc.render.show_contours {
+            flags |= FLAG_CONTOURS;
+        }
+        if self.show_water {
+            flags |= FLAG_WATER;
+        }
+        if transparent {
+            flags |= FLAG_TRANSPARENT;
+        }
+        let result: Result<bool> = (|| {
+            for (x, w) in job.tiles() {
+                let origin = job.tile_origin(x);
+                let ss = Vec2::new(w as f32, rows as f32);
+                let mut enc = self.gpu.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("export tile") });
+                if layer.draws_terrain() {
+                    let view = self.view_uniform(ss, origin, scale, flags, None);
+                    self.map.render(&self.gpu.queue, &mut enc, &job.tile_view, &view, &mut self.profiler);
+                } else {
+                    let pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
+                        label: Some("export clear"),
+                        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                            view: &job.tile_view,
+                            depth_slice: None,
+                            resolve_target: None,
+                            ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT), store: wgpu::StoreOp::Store },
+                        })],
+                        depth_stencil_attachment: None,
+                        timestamp_writes: None,
+                        occlusion_query_set: None,
+                        multiview_mask: None,
+                    });
+                    drop(pass);
+                }
+                if layer.draws_symbols() && self.view_mode == ViewMode::Map {
+                    self.sprites.render(&self.gpu.queue, &mut enc, &job.tile_view, [job.tile_w as f32, job.band_h as f32], origin.to_array(), scale, self.doc.symbols.shadow);
+                }
+                if layer.draws_overlay() {
+                    let shapes = job.tile_shapes(x, w);
+                    let jobs = job.ctx.tessellate(shapes, job.ppp);
+                    let screen = egui_wgpu::ScreenDescriptor { size_in_pixels: [job.tile_w, job.band_h], pixels_per_point: job.ppp };
+                    job.renderer.update_buffers(&self.gpu.device, &self.gpu.queue, &mut enc, &jobs, &screen);
+                    let pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
+                        label: Some("export overlay"),
+                        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                            view: &job.tile_view,
+                            depth_slice: None,
+                            resolve_target: None,
+                            ops: wgpu::Operations { load: wgpu::LoadOp::Load, store: wgpu::StoreOp::Store },
+                        })],
+                        depth_stencil_attachment: None,
+                        timestamp_writes: None,
+                        occlusion_query_set: None,
+                        multiview_mask: None,
+                    });
+                    let mut pass = pass.forget_lifetime();
+                    job.renderer.render(&mut pass, &jobs, &screen);
+                }
+                self.gpu.queue.submit([enc.finish()]);
+                job.read_tile(&self.gpu.device, &self.gpu.queue, x, w, transparent)?;
+            }
+            job.finish_band()
+        })();
+        match result {
+            Ok(true) => {
+                let ms = job.started.elapsed().as_secs_f32() * 1000.0;
+                let paths = job.written_paths();
+                self.cpu.sections.insert("export", ms);
+                self.ui.status = crate::export::describe(&paths[0], job.width, job.height, ms);
+                log::info!("{}", self.ui.status);
+                self.instances_dirty = true;
+                self.export = None;
+            }
+            Ok(false) => {
+                self.ui.status = format!("Exporting… {:.0}%", job.progress() * 100.0);
+                self.export = Some(job);
+            }
+            Err(e) => {
+                self.ui.error = Some(format!("Export failed: {e:#}"));
+                self.instances_dirty = true;
+                self.export = None;
+            }
+        }
+        self.window.request_redraw();
+    }
+
     // ---- frame -----------------------------------------------------------------
 
     fn build_overlay(&self, ppp: f32) -> Overlay {
-        let ss = self.screen_size();
+        self.build_overlay_for(&self.camera, self.screen_size(), ppp, false)
+    }
+
+    /// Everything drawn over the map in screen points for a given camera.
+    /// `export` leaves out editing chrome: brush paths, handles, selection
+    /// and capitals.
+    fn build_overlay_for(&self, camera: &Camera, ss: Vec2, ppp: f32, export: bool) -> Overlay {
         let to = |p: [f32; 2]| {
-            let s = self.camera.field_to_screen(Vec2::from(p), ss) / ppp;
+            let s = camera.field_to_screen(Vec2::from(p), ss) / ppp;
             egui::pos2(s.x, s.y)
         };
         let mut ov = Overlay::default();
@@ -2726,38 +2995,39 @@ impl AppState {
         let paper = self.doc.render.theme.paper;
         ov.ink = egui::Color32::from_rgb((ink[0] * 255.0) as u8, (ink[1] * 255.0) as u8, (ink[2] * 255.0) as u8);
         ov.paper = egui::Color32::from_rgb((paper[0] * 255.0) as u8, (paper[1] * 255.0) as u8, (paper[2] * 255.0) as u8);
-        if (self.tools.tool.is_procedural() || self.tools.tool == Tool::Border) && !self.tools.path.is_empty() {
+        if !export && (self.tools.tool.is_procedural() || self.tools.tool == Tool::Border) && !self.tools.path.is_empty() {
             ov.path = self.tools.path.iter().map(|p| to(*p)).collect();
             ov.path_is_coast = self.tools.tool == Tool::Coast;
         }
         if self.view_mode == ViewMode::Map {
-            let editing = matches!(self.tools.tool, Tool::Border | Tool::Territory);
+            let editing = !export && matches!(self.tools.tool, Tool::Border | Tool::Territory);
             let modern = self.doc.render.theme.style == ThemeStyle::Modern;
             for b in &self.doc.borders {
                 // Grown arcs along the coast are the coastline itself.
                 if b.points.len() < 2 || (b.kind == BorderKind::Grown && (b.left == 0 || b.right == 0)) {
                     continue;
                 }
-                let selected = self.selected_border == Some(b.id);
-                let region_sel = self.selected_region.is_some() && (Some(b.left) == self.selected_region || Some(b.right) == self.selected_region);
+                let selected = !export && self.selected_border == Some(b.id);
+                let region_sel = !export && self.selected_region.is_some() && (Some(b.left) == self.selected_region || Some(b.right) == self.selected_region);
                 ov.borders.push(ui::BorderDraw {
                     points: b.points.iter().map(|p| to(*p)).collect(),
                     style: b.style,
                     selected: selected || region_sel,
-                    handles: editing && (selected || self.camera.zoom > 1.5),
+                    handles: editing && (selected || camera.zoom > 1.5),
                     color: if modern { egui::Color32::from_rgb(96, 52, 120) } else { egui::Color32::from_rgb(112, 38, 32) },
                 });
             }
             // Towns: symbol below TOWN_ICON_ZOOM, streets above; a short crossfade.
-            let z = self.camera.zoom;
+            // Judged in points per texel so HiDPI screens and exports match.
+            let z = camera.zoom / ppp;
             if z >= TOWN_ICON_ZOOM * 0.8 {
                 let alpha = ((z - TOWN_ICON_ZOOM * 0.8) / (TOWN_ICON_ZOOM * 0.4)).clamp(0.0, 1.0);
                 let detail = z >= 2.8;
-                let town_tool = self.tools.tool == Tool::Settlement;
+                let town_tool = !export && self.tools.tool == Tool::Settlement;
                 let view = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(ss.x / ppp, ss.y / ppp)).expand(40.0);
                 for st in &self.doc.settlements {
                     let c = to(st.layout.center);
-                    let rp = st.layout.radius * z / ppp;
+                    let rp = st.layout.radius * z;
                     if !view.intersects(egui::Rect::from_center_size(c, egui::vec2(rp * 3.4, rp * 3.4))) {
                         continue;
                     }
@@ -2775,12 +3045,12 @@ impl AppState {
                         buildings: l.buildings.iter().map(|b| (pts(&b.quad), b.district, selected && self.selected_building == Some(b.id))).collect(),
                         walls: l.walls.iter().map(|w| (pts(&w.points), pts(&w.towers), pts(&w.gates))).collect(),
                         plaza: l.plaza.as_ref().map(|p| pts(&p.points)),
-                        keep: l.keep.map(|(p, r)| (to(p), r * z / ppp)),
+                        keep: l.keep.map(|(p, r)| (to(p), r * z)),
                         docks: l.docks.iter().map(|d| [to(d[0]), to(d[1])]).collect(),
                         bridges: l.bridges.iter().map(|d| [to(d[0]), to(d[1])]).collect(),
                         fields: l.fields.iter().map(|f| pts(f)).collect(),
                         cemetery: l.cemetery.map(|q| pts(&q)),
-                        scale: z / ppp,
+                        scale: z,
                     });
                 }
             }
@@ -2792,14 +3062,14 @@ impl AppState {
                 }
             }
         }
-        if self.tools.tool == Tool::Place {
+        if !export && self.tools.tool == Tool::Place {
             if let Some(id) = self.selected_placement {
                 if let Some(p) = self.doc.placements.iter().find(|p| p.id == id) {
                     ov.selected = Some(to(p.pos));
                 }
             }
         }
-        if self.tools.tool == Tool::WaterEdit {
+        if !export && self.tools.tool == Tool::WaterEdit {
             if let Some(b) = &self.doc.baked {
                 ov.rivers = b.rivers.iter().map(|r| r.points.iter().map(|p| to(*p)).collect()).collect();
                 ov.lakes = b.lakes.iter().map(|l| l.polygon.points.iter().map(|p| to(*p)).collect()).collect();
@@ -2820,8 +3090,11 @@ impl AppState {
         if self.library.poll() {
             self.reload_library();
         }
-        let icons = self.camera.zoom < TOWN_ICON_ZOOM;
-        if icons != self.town_icons_visible {
+        if self.export.is_some() {
+            self.export_step();
+        }
+        let icons = self.camera.zoom / self.egui_ctx.pixels_per_point() < TOWN_ICON_ZOOM;
+        if self.export.is_none() && icons != self.town_icons_visible {
             self.town_icons_visible = icons;
             self.instances_dirty = true;
         }
@@ -2946,6 +3219,7 @@ impl AppState {
         let ppp = self.egui_ctx.pixels_per_point();
         let cursor_field = self.input.cursor.map(|p| self.camera.screen_to_field(p, self.screen_size()));
         let job = [
+            self.export.as_ref().map(|e| ("Exporting".to_string(), e.progress())),
             self.gen_job.as_ref().map(|j| (j.name.clone(), j.progress01())),
             self.load_job.as_ref().map(|j| (j.name.clone(), 0.5)),
             self.save_job.as_ref().map(|j| (j.name.clone(), 0.5)),
@@ -3072,8 +3346,6 @@ impl AppState {
 
         let ss = self.screen_size();
         let origin = self.camera.screen_to_field(Vec2::ZERO, ss);
-        let az = self.doc.render.sun_azimuth_deg.to_radians();
-        let alt = self.doc.render.sun_altitude_deg.to_radians();
         let mut flags = FLAG_HYPSO;
         if self.doc.render.show_contours {
             flags |= FLAG_CONTOURS;
@@ -3081,83 +3353,12 @@ impl AppState {
         if self.show_water {
             flags |= FLAG_WATER;
         }
-        if self.derived_tex.uploaded.is_some() {
-            flags |= FLAG_HAS_DERIVED;
-        }
         let egui_over = self.egui_ctx.is_pointer_over_egui();
         let show_cursor = (self.tools.tool.is_dab_brush() || self.tools.tool.is_procedural()) && self.input.cursor.is_some() && !egui_over && !self.input.panning;
         if show_cursor {
             flags |= FLAG_CURSOR;
         }
-        let (temp_min, temp_max) = match &self.doc.derived {
-            Some(d) => {
-                let (tlo, thi) = d.temperature.min_max();
-                (tlo, thi.max(tlo + 1.0))
-            }
-            None => (-20.0, 30.0),
-        };
-        let mut palette = [[0f32; 4]; 16];
-        for (i, b) in Biome::ALL.iter().enumerate() {
-            let c = b.color();
-            palette[i] = [c[0], c[1], c[2], 1.0];
-        }
-        let fw = self.doc.width() as f32;
-        let fh = self.doc.height() as f32;
-        let th: &Theme = &self.doc.render.theme;
-        let mut region_palette = [[0.0f32; 4]; 32];
-        for r in &self.doc.regions {
-            let c = REGION_PALETTE[r.color as usize % REGION_PALETTE.len()];
-            region_palette[(r.id % 32) as usize] = [c[0], c[1], c[2], 1.0];
-        }
-        let view = ViewUniform {
-            screen_size: ss.to_array(),
-            field_size: [fw, fh],
-            origin: origin.to_array(),
-            scale: self.camera.zoom,
-            sea_level: self.doc.sea_level,
-            sun_dir: [az.sin() * alt.cos(), -az.cos() * alt.cos(), alt.sin()],
-            exaggeration: self.doc.render.vertical_exaggeration,
-            shade_strength: if th.style == ThemeStyle::Modern { self.doc.render.hillshade_strength } else { th.hillshade_strength },
-            contour_interval: self.doc.render.contour_interval,
-            coast_width: if self.doc.render.theme.style == ThemeStyle::Modern { self.doc.render.coast_line_width } else { self.doc.render.theme.coast_line_width },
-            flags,
-            cursor: cursor_field.unwrap_or(Vec2::ZERO).to_array(),
-            cursor_radius: self.tools.radius(),
-            meters_per_texel: self.doc.meters_per_texel,
-            elev_min: self.doc.stats.min,
-            elev_max: self.doc.stats.max,
-            time: self.start.elapsed().as_secs_f32(),
-            view_mode: self.view_mode as u32,
-            temp_min,
-            temp_max,
-            _pad_a: [0.0; 2],
-            moist_scale: [self.derived_tex.moisture.width() as f32 / fw, self.derived_tex.moisture.height() as f32 / fh],
-            temp_scale: [self.derived_tex.temperature.width() as f32 / fw, self.derived_tex.temperature.height() as f32 / fh],
-            paper: th.paper,
-            theme_style: th.style as u32,
-            paper_dark: th.paper_dark,
-            relief_style: th.relief as u32,
-            ink: th.ink,
-            forest_style: th.forest as u32,
-            sea_fill: th.sea_fill,
-            coast_rings: th.coast_rings,
-            sea_ink: th.sea_ink,
-            land_tint: th.land_tint,
-            river_ink: th.river_ink,
-            paper_grain: th.paper_grain,
-            forest_fill: th.forest_fill,
-            vignette: th.vignette,
-            ring_spacing: th.ring_spacing,
-            hatch_strength: th.hatch_strength,
-            hatch_spacing: th.hatch_spacing,
-            forest_scale: th.forest_scale,
-            forest_threshold: th.forest_threshold,
-            region_fill: if self.doc.regions.is_empty() { 0.0 } else if th.style == ThemeStyle::Modern { 0.2 } else { 0.16 },
-            region_scale: [self.derived_tex.regions.width() as f32 / fw, self.derived_tex.regions.height() as f32 / fh],
-            _pad_b: [0.0; 4],
-            palette,
-            region_palette,
-        };
+        let view = self.view_uniform(ss, origin, self.camera.zoom, flags, cursor_field);
         let _ = (ReliefStyle::Shaded, ForestStyle::None);
         self.map.render(&self.gpu.queue, &mut encoder, &target, &view, &mut self.profiler);
         if self.view_mode == ViewMode::Map {
@@ -3203,6 +3404,29 @@ impl AppState {
         self.derived_tex.moisture.after_submit();
         self.profiler.after_submit();
         self.window.pre_present_notify();
+        let ready = self.frames_since_install >= 20
+            && self.gen_job.is_none()
+            && self.load_job.is_none()
+            && self.derived_job.is_none()
+            && self.symbol_job.is_none()
+            && !self.doc.symbols_stale
+            && !self.doc.derived_stale
+            && self.doc.derived.is_some()
+            && (!self.demo || self.demo_stage >= 6)
+            && self.territory_job.is_none()
+            && self.save_job.is_none();
+        if ready && self.export.is_none() {
+            if let Some((path, scale)) = self.startup_export.take() {
+                let separate_layers = std::env::var("ISOLINE_EXPORT_LAYERS").is_ok();
+                let transparent = std::env::var("ISOLINE_EXPORT_TRANSPARENT").is_ok();
+                let jpeg = path.extension().map(|e| e.eq_ignore_ascii_case("jpg") || e.eq_ignore_ascii_case("jpeg")).unwrap_or(false);
+                self.start_export(ExportSettings { scale, separate_layers, transparent, jpeg, ..Default::default() }, path);
+                self.exit_after_export = true;
+                self.window.request_redraw();
+            } else if self.exit_after_export && self.screenshot.is_none() {
+                event_loop.exit();
+            }
+        }
         let take_shot = self.screenshot.is_some()
             && self.frames_since_install >= 20
             && self.gen_job.is_none()

@@ -74,6 +74,9 @@ impl LabelEngine {
             return;
         }
         let zoom = camera.zoom;
+        // Class zoom ranges are judged in points per texel, so a HiDPI
+        // screen and a high-resolution export both behave like the view.
+        let vis_zoom = zoom / ppp.max(0.01);
         // Priority: pinned, then importance, then kind weight.
         let mut order: Vec<&Entity> = entities.iter().filter(|e| !e.label.hidden && !e.name.trim().is_empty()).collect();
         let kind_weight = |k: EntityKind| match k {
@@ -91,7 +94,7 @@ impl LabelEngine {
         let mut occupied: Vec<egui::Rect> = Vec::new();
         for e in order {
             let class = theme.labels.for_kind(e.kind);
-            if zoom < class.min_zoom || zoom > class.max_zoom {
+            if vis_zoom < class.min_zoom || vis_zoom > class.max_zoom {
                 continue;
             }
             let size_px = (class.size * (0.6 + 0.8 * e.importance) * e.label.size_mult.max(0.2)).clamp(6.0, 96.0);

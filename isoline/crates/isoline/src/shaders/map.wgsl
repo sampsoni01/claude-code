@@ -59,6 +59,7 @@ const FLAG_CURSOR: u32 = 2u;
 const FLAG_HYPSO: u32 = 4u;
 const FLAG_WATER: u32 = 8u;
 const FLAG_HAS_DERIVED: u32 = 16u;
+const FLAG_TRANSPARENT: u32 = 32u;
 
 const MODE_MAP: u32 = 0u;
 const MODE_HYPSO: u32 = 1u;
@@ -302,6 +303,9 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
 
     if fp.x < 0.0 || fp.y < 0.0 || fp.x >= view.field_size.x || fp.y >= view.field_size.y {
         // Outside the sheet: a dark desk with a soft shadow under the map edge.
+        if (view.flags & FLAG_TRANSPARENT) != 0u {
+            return vec4<f32>(0.0);
+        }
         let d = max(max(-fp.x, fp.x - view.field_size.x), max(-fp.y, fp.y - view.field_size.y)) * view.scale;
         let s = 1.0 - 0.35 * (1.0 - smoothstep(0.0, 18.0, d));
         return vec4<f32>(desk * s, 1.0);

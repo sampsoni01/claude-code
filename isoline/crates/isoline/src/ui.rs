@@ -16,6 +16,7 @@ use isoline_core::brush::Falloff;
 use isoline_core::procedural::{CoastPreset, LandSide};
 use isoline_core::project::Manifest;
 use isoline_core::terrain::{TerrainParams, TerrainPreset};
+use crate::export::{ExportSettings, Reference};
 use isoline_core::borders::{BorderKind, BorderStyle};
 use isoline_core::settlement::{District, GrowthModel, SettlementKind};
 use isoline_core::theme::{Theme, ThemeStyle};
@@ -383,6 +384,8 @@ pub enum UiAction {
     DeleteBuilding,
     SetBuildingDistrict(District),
     SelectSettlement(Option<u64>),
+    /// Pick a file and start a raster export with these settings.
+    ExportImage(ExportSettings),
 }
 
 #[derive(Default)]
@@ -401,6 +404,8 @@ pub struct UiState {
     pub asset_favorites_only: bool,
     pub show_packs: bool,
     pub show_advanced: bool,
+    pub show_export: bool,
+    pub export: ExportSettings,
     /// Snapshot taken when an inspector edit starts, committed on release.
     pub entity_edit_before: Option<Vec<Entity>>,
 }
@@ -503,7 +508,7 @@ fn draw_ornaments(painter: &egui::Painter, ov: &Overlay) {
     }
 }
 
-fn draw_overlay(ctx: &egui::Context, ov: &Overlay) {
+pub fn draw_overlay(ctx: &egui::Context, ov: &Overlay) {
     let painter = ctx.layer_painter(egui::LayerId::background());
     if ov.show_ornaments {
         draw_ornaments(&painter, ov);
@@ -749,6 +754,10 @@ pub fn draw(root: &mut egui::Ui, st: &mut UiState, c: UiContext) -> Vec<UiAction
                     ui.close();
                 }
                 ui.separator();
+                if ui.button("Export image…").clicked() {
+                    st.show_export = true;
+                    ui.close();
+                }
                 if ui.button("Export gazetteer (CSV)…").clicked() {
                     actions.push(UiAction::ExportGazetteer { json: false });
                     ui.close();
@@ -1646,6 +1655,59 @@ pub fn draw(root: &mut egui::Ui, st: &mut UiState, c: UiContext) -> Vec<UiAction
         }
         if !open {
             st.show_new = false;
+        }
+    }
+
+    if st.show_export {
+        let mut open = true;
+        let mut go = false;
+        egui::Window::new("Export image").open(&mut open).collapsible(false).resizable(false).show(ctx, |ui| {
+            let e = &mut st.export;
+            let fw = c.doc.width() as f32;
+            let fh = c.doc.height() as f32;
+            ui.add(egui::Slider::new(&mut e.scale, 0.25..=8.0).logarithmic(true).text("Pixels per texel"));
+            let w = ((fw + 2.0 * e.bleed) * e.scale).round() as u32;
+            let h = ((fh + 2.0 * e.bleed) * e.scale).round() as u32;
+            ui.label(format!("{w} × {h} pixels · {:.1} × {:.1} in at {} dpi", w as f32 / e.dpi.max(1) as f32, h as f32 / e.dpi.max(1) as f32, e.dpi));
+            ui.horizontal(|ui| {
+                ui.selectable_value(&mut e.jpeg, false, "PNG");
+                ui.selectable_value(&mut e.jpeg, true, "JPEG");
+                let mut dpi = e.dpi as i32;
+                ui.add(egui::DragValue::new(&mut dpi).range(36..=1200).suffix(" dpi"));
+                e.dpi = dpi.max(36) as u32;
+            });
+            if e.jpeg {
+                let mut q = e.quality as i32;
+                ui.add(egui::Slider::new(&mut q, 30..=100).text("Quality"));
+                e.quality = q as u8;
+            } else {
+                ui.checkbox(&mut e.transparent, "Transparent outside the sheet");
+            }
+            ui.add(egui::Slider::new(&mut e.bleed, 0.0..=200.0).text("Bleed (texels)")).on_hover_text("Extra margin around the sheet for print trimming");
+            ui.checkbox(&mut e.separate_layers, "Separate layers").on_hover_text("Terrain, symbols and labels/borders/towns as three files");
+            ui.horizontal(|ui| {
+                ui.label("Labels and detail as in the");
+                ui.selectable_value(&mut e.reference, Reference::Fit, "fitted view");
+                ui.selectable_value(&mut e.reference, Reference::Current, "current view");
+            });
+            if w as u64 * h as u64 > 400_000_000 {
+                ui.colored_label(egui::Color32::from_rgb(230, 170, 80), "Very large: the export streams to disk but will take a while.");
+            }
+            ui.horizontal(|ui| {
+                if ui.button("Export…").clicked() {
+                    go = true;
+                }
+                if ui.button("Cancel").clicked() {
+                    st.show_export = false;
+                }
+            });
+        });
+        if go {
+            actions.push(UiAction::ExportImage(st.export.clone()));
+            st.show_export = false;
+        }
+        if !open {
+            st.show_export = false;
         }
     }
 

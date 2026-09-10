@@ -9,6 +9,7 @@ pub const FLAG_CURSOR: u32 = 2;
 pub const FLAG_HYPSO: u32 = 4;
 pub const FLAG_WATER: u32 = 8;
 pub const FLAG_HAS_DERIVED: u32 = 16;
+pub const FLAG_TRANSPARENT: u32 = 32;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ViewMode {

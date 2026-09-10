@@ -5,6 +5,7 @@ mod autoname;
 mod bench;
 mod camera;
 mod document;
+mod export;
 mod gpu;
 mod jobs;
 mod labels;
@@ -22,6 +23,7 @@ fn usage() {
     eprintln!("  --demo   paint a scripted stroke sequence after the map loads (for testing)");
     eprintln!("  --theme  ink | illuminated | modern");
     eprintln!("  --screenshot <file.png>  save a frame once the map is ready, then exit");
+    eprintln!("  --export <file.png|jpg> [--export-scale N]  export the sheet at N px per texel once ready, then exit");
 }
 
 fn main() {
@@ -44,6 +46,8 @@ fn main() {
                 opts.center = x.zip(y);
             }
             "--screenshot" => opts.screenshot = args.next().map(PathBuf::from),
+            "--export" => opts.export = args.next().map(PathBuf::from),
+            "--export-scale" => opts.export_scale = args.next().and_then(|s| s.parse().ok()).unwrap_or(2.0),
             "--bench" => {
                 bench = Some(args.next().and_then(|s| s.parse().ok()).unwrap_or(2048));
             }
