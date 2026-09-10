@@ -55,3 +55,30 @@ jobs:
         with:
           name: ${{ matrix.archive }}
           path: ${{ matrix.archive }}
+
+  release:
+    name: Publish downloads
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Publish or refresh the "latest" release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ls -la dist
+          gh release delete isoline-latest --yes --cleanup-tag --repo "$GITHUB_REPOSITORY" || true
+          gh release create isoline-latest dist/*.zip \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "Isoline map maker (latest build)" \
+            --notes "Desktop builds of the Isoline fantasy map maker.
+
+          Download the zip for your system, unzip it, and run the \`isoline\` program inside. Keep the \`assets\` folder next to it.
+
+          The program is not code-signed. Windows shows a blue \"Windows protected your PC\" box: click More info, then Run anyway. macOS says it cannot verify the developer: right-click the program, choose Open, then Open again."
