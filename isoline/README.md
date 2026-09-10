@@ -30,14 +30,16 @@ downstream reads them.
   cemetery. Every building's placement is hashed per district seed, street
   and lot; *re-roll district* regenerates one district and merges only its
   buildings back, so the rest of the town is untouched.
-- **Zoom-linked display**: below 80% zoom a town is its symbol (village,
-  town or city); across 64–96% it crossfades into the layout drawn as
-  simplified filled blocks, walls and main streets; above 140% full detail
-  with ink strokes, towers, gates, pier posts and cemetery crosses.
+- **Zoom-linked display**: below 160% zoom a town is its symbol (village,
+  town or city); across 128–192% it crossfades into the layout drawn as
+  simplified filled blocks, walls and main streets; above 280% full detail
+  with ink strokes, towers, gates, pier posts and cemetery crosses. A city
+  is 56 texels across at its radius on a 2048² map (about 5% of the sheet),
+  a town 32, a village 14, so even a capital sits inside its biome.
 - **Towns tool** (`S`): click open land to found a town with the panel's
   kind, model and size (density, irregularity, walls, inner ring and seed
   under *More…*); click a town to select it, and changing a setting
-  rebuilds it with its seed. Above 140% zoom drag street and wall vertices;
+  rebuilds it with its seed. Above 240% zoom drag street and wall vertices;
   click a building to select it, drag to move it, Delete to remove it, or
   change its district; *Paint district* drags a district over buildings;
   *Re-roll* takes a new seed; *Re-roll district* redoes one district.

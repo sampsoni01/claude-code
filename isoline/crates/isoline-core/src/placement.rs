@@ -440,17 +440,10 @@ pub fn place_forest(t: &Terrain<'_>, forest: &ScalarField, temperature: Option<&
                 if t.is_water(pt) || t.slope(pt) > 60.0 || avoid.collides(pt, 4.0) || in_clearing(clearings, pt, 6.0) {
                     continue;
                 }
-                let temp = temperature.map(|tf| tf.sample(pt[0] * tf.width() as f32 / w, pt[1] * tf.height() as f32 / h)).unwrap_or(12.0);
-                let conifer_zone = temp < 6.0 || (temp < 11.0 && rng.f32() < 0.5);
-                let pool = if temp > 22.0 && !sets.palms.is_empty() && rng.f32() < 0.6 {
-                    &sets.palms
-                } else if conifer_zone && !sets.conifers.is_empty() {
-                    &sets.conifers
-                } else if !sets.broadleaf.is_empty() {
-                    &sets.broadleaf
-                } else {
-                    &sets.conifers
-                };
+                // Every automatic tree is an evergreen; other species stay
+                // in the library for hand placement only.
+                let _ = temperature;
+                let pool = if !sets.conifers.is_empty() { &sets.conifers } else { &sets.broadleaf };
                 let (asset, base) = rng.pick(pool).clone();
                 let size = base * p.size * rng.range(0.8, 1.2);
                 let r = size * 0.28 * (1.0 - 0.4 * d);

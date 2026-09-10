@@ -1169,7 +1169,7 @@ pub fn draw(root: &mut egui::Ui, st: &mut UiState, c: UiContext) -> Vec<UiAction
                 }
                 Tool::Settlement => {
                     ui.heading("Towns");
-                    ui.small("Click open land to found a town. Click a town to select it. Zoom in past 140% to drag streets and walls; click a building to move or delete it.");
+                    ui.small("Click open land to found a town. Click a town to select it. Zoom in past 280% to drag streets and walls; click a building to move or delete it.");
                     let sp = &mut c.tools.settlement;
                     let has_sel = c.selected_settlement.is_some();
                     let mut ch = false;

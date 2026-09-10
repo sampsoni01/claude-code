@@ -57,9 +57,9 @@ impl SettlementKind {
     /// Base radius in project texels.
     pub fn radius(self) -> f32 {
         match self {
-            SettlementKind::Village => 34.0,
-            SettlementKind::Town => 80.0,
-            SettlementKind::City => 150.0,
+            SettlementKind::Village => 14.0,
+            SettlementKind::Town => 32.0,
+            SettlementKind::City => 56.0,
         }
     }
     pub fn importance(self) -> f32 {
@@ -426,7 +426,7 @@ pub fn generate(site: &Site<'_>, at: P2, p: &SettlementParams) -> Layout {
         }
     };
     let wander = 0.08 + 0.5 * p.irregularity;
-    let step = (radius / 7.0).max(4.0);
+    let step = (radius / 7.0).max(2.5);
 
     // 2. Primary roads.
     let mut roads: Vec<Road> = Vec::new();
@@ -531,7 +531,7 @@ pub fn generate(site: &Site<'_>, at: P2, p: &SettlementParams) -> Layout {
         GrowthModel::Grid => {
             let d = base_dir;
             let q = perp(d);
-            let spacing = (radius / 4.0).max(9.0);
+            let spacing = (radius / 4.0).max(5.0);
             let k = (radius / spacing) as i32;
             for (axis, other) in [(d, q), (q, d)] {
                 for i in -k..=k {
@@ -611,16 +611,16 @@ pub fn generate(site: &Site<'_>, at: P2, p: &SettlementParams) -> Layout {
     // 4/5. Lots and buildings along every street.
     let keep_at = highest_point(site, center, radius * 0.7, max_slope);
     let plaza_r = radius * 0.13;
-    let dock_reach = 14.0f32.max(radius * 0.12);
+    let dock_reach = 6.0f32.max(radius * 0.12);
     let mut hash: Vec<(P2, f32)> = Vec::new();
     let collides = |hash: &[(P2, f32)], c: P2, r: f32| hash.iter().any(|(q, qr)| dist(*q, c) < r + qr);
     let mut buildings = Vec::new();
     let mut next_id = 1u32;
     let road_snapshot = layout.roads.clone();
     for (ri, road) in road_snapshot.iter().enumerate() {
-        let half_w = if road.primary { 2.6 } else { 1.7 };
+        let half_w = if road.primary { 1.4 } else { 0.9 };
         let mut along = 0.0;
-        let spacing_base = 3.0 + 6.0 * (1.0 - p.density);
+        let spacing_base = 1.8 + 3.6 * (1.0 - p.density);
         for w in road.points.windows(2) {
             let seg_len = dist(w[0], w[1]);
             let dir = norm(sub(w[1], w[0]));
@@ -646,9 +646,9 @@ pub fn generate(site: &Site<'_>, at: P2, p: &SettlementParams) -> Layout {
                         continue;
                     }
                     let scale_k = match p.kind {
-                        SettlementKind::Village => 0.85,
-                        SettlementKind::Town => 1.0,
-                        SettlementKind::City => 1.1,
+                        SettlementKind::Village => 0.55,
+                        SettlementKind::Town => 0.62,
+                        SettlementKind::City => 0.7,
                     };
                     let jitter = irr * p.irregularity;
                     let bw = bw * scale_k * (1.0 + h.range(-jitter, jitter));
@@ -709,7 +709,7 @@ pub fn generate(site: &Site<'_>, at: P2, p: &SettlementParams) -> Layout {
                 continue;
             }
             let hull = convex_hull(core);
-            let offset = 5.0 + 2.0 * (1.0 - k as f32);
+            let offset = 2.5 + 1.0 * (1.0 - k as f32);
             let hc = hull.iter().fold([0.0, 0.0], |a, q| [a[0] + q[0] / hull.len() as f32, a[1] + q[1] / hull.len() as f32]);
             let pushed: Vec<P2> = hull.iter().map(|q| add(*q, mul(norm(sub(*q, hc)), offset))).collect();
             let mut ring_pts = chaikin(&pushed, true);
@@ -724,7 +724,7 @@ pub fn generate(site: &Site<'_>, at: P2, p: &SettlementParams) -> Layout {
             }
             let mut towers = Vec::new();
             let mut acc = 0.0;
-            let tower_every = (radius * 0.28).max(12.0);
+            let tower_every = (radius * 0.28).max(6.0);
             for i in 0..ring_pts.len() {
                 let a = ring_pts[i];
                 let b = ring_pts[(i + 1) % ring_pts.len()];
@@ -758,7 +758,7 @@ pub fn generate(site: &Site<'_>, at: P2, p: &SettlementParams) -> Layout {
                 if !poly.contains(c) && !matches!(b.district, District::Docks) {
                     b.district = District::Slums;
                 } else if let Some(g) = gate {
-                    if dist(c, g) < radius * 0.14 && b.district == District::Residential {
+                    if dist(c, g) < radius * 0.16 && b.district == District::Residential {
                         b.district = District::Garrison;
                     }
                 }
@@ -776,7 +776,7 @@ pub fn generate(site: &Site<'_>, at: P2, p: &SettlementParams) -> Layout {
     layout.plaza = Some(Polygon { points: plaza });
     if p.kind != SettlementKind::Village {
         if let Some(k) = keep_at {
-            layout.keep = Some((k, (radius * 0.07).max(5.0)));
+            layout.keep = Some((k, (radius * 0.07).max(2.5)));
             buildings.retain(|b| dist(b.centre(), k) > radius * 0.09);
         }
     }
@@ -805,9 +805,9 @@ pub fn generate(site: &Site<'_>, at: P2, p: &SettlementParams) -> Layout {
                 }
                 if let Some(shore) = found {
                     // Only a real water body takes a pier, not a brook.
-                    let wide = site.is_water(add(shore, mul(to_water, 5.0))) && site.is_water(add(shore, mul(to_water, 10.0)));
+                    let wide = site.is_water(add(shore, mul(to_water, 3.0))) && site.is_water(add(shore, mul(to_water, 6.0)));
                     if wide {
-                        let end = add(shore, mul(to_water, (radius * 0.09).max(6.0)));
+                        let end = add(shore, mul(to_water, (radius * 0.09).max(3.0)));
                         layout.docks.push([shore, end]);
                     }
                 }
@@ -821,8 +821,8 @@ pub fn generate(site: &Site<'_>, at: P2, p: &SettlementParams) -> Layout {
     };
     let cc = add(center, mul(away, radius * 0.95));
     if site.buildable(cc, max_slope) {
-        let w = (radius * 0.16).max(6.0);
-        let h = (radius * 0.11).max(4.0);
+        let w = (radius * 0.16).max(3.0);
+        let h = (radius * 0.11).max(2.0);
         let dx = perp(away);
         layout.cemetery = Some([add(add(cc, mul(dx, w)), mul(away, h)), add(sub(cc, mul(dx, w)), mul(away, h)), sub(sub(cc, mul(dx, w)), mul(away, h)), sub(add(cc, mul(dx, w)), mul(away, h))]);
         buildings.retain(|b| dist(b.centre(), cc) > w.max(h) + 2.0);
@@ -1011,7 +1011,7 @@ mod tests {
         let p = SettlementParams { seed: 7, kind: SettlementKind::Town, ..Default::default() };
         let l = generate(&site, [110.0, 128.0], &p);
         assert!(l.roads.iter().filter(|r| r.primary).count() >= 3);
-        assert!(l.buildings.len() > 40, "{} buildings", l.buildings.len());
+        assert!(l.buildings.len() > 25, "{} buildings", l.buildings.len());
         assert!(!l.walls.is_empty());
         assert!(l.walls[0].towers.len() >= 3);
         assert!(!l.walls[0].gates.is_empty());
@@ -1038,7 +1038,7 @@ mod tests {
         assert_eq!(non_res(&a), non_res(b));
         assert_eq!(a.roads, b.roads);
         assert_ne!(a.buildings, b.buildings);
-        assert!(b.buildings.iter().filter(|x| x.district == District::Residential).count() > 10);
+        assert!(b.buildings.iter().filter(|x| x.district == District::Residential).count() > 5);
     }
 
     #[test]
@@ -1048,7 +1048,7 @@ mod tests {
         for m in GrowthModel::ALL {
             let p = SettlementParams { seed: 11, model: m, kind: SettlementKind::City, ..Default::default() };
             let l = generate(&site, [120.0, 120.0], &p);
-            assert!(l.buildings.len() > 30, "{m:?}: {} buildings", l.buildings.len());
+            assert!(l.buildings.len() > 20, "{m:?}: {} buildings", l.buildings.len());
         }
     }
 

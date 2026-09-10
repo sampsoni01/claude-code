@@ -233,9 +233,6 @@ for i in range(3):
     emit(f"conifer_{i+1}", "trees", ["tree", "conifer", "pine", "summer"], 40, 64, conifer(500 + i), size=22)
     emit(f"conifer_snow_{i+1}", "trees", ["tree", "conifer", "pine", "winter", "snow"], 40, 64, conifer(500 + i, fill="#e9eef0"), size=22)
 for i in range(3):
-    emit(f"broadleaf_{i+1}", "trees", ["tree", "broadleaf", "oak", "summer"], 52, 60, broadleaf(600 + i), size=24)
-    emit(f"broadleaf_autumn_{i+1}", "trees", ["tree", "broadleaf", "autumn"], 52, 60, broadleaf(600 + i, fill="#b8742e"), size=24)
-    emit(f"broadleaf_ink_{i+1}", "trees", ["tree", "broadleaf", "ink"], 52, 60, broadleaf(600 + i, fill=PAPER), size=24)
     emit(f"conifer_ink_{i+1}", "trees", ["tree", "conifer", "ink"], 40, 64, conifer(500 + i, fill=PAPER), size=22)
 rng.seed(700)
 palm = poly([(26, 60), (24, 30)], w=2.6)
@@ -250,8 +247,8 @@ for i in range(2):
     rng.seed(720 + i)
     cluster = ""
     for (dx, dy, s) in [(0, 10, 0.9), (30, 4, 1.0), (58, 12, 0.85), (16, 26, 0.95), (44, 28, 0.9)]:
-        cluster += f'<g transform="translate({dx} {dy}) scale({s})">{broadleaf(730 + i * 5 + dx)}</g>'
-    emit(f"forest_cluster_{i+1}", "trees", ["forest", "cluster", "broadleaf"], 110, 90, cluster, size=48)
+        cluster += f'<g transform="translate({dx} {dy}) scale({s})">{conifer(730 + i * 5 + dx, fill=PAPER)}</g>'
+    emit(f"forest_cluster_{i+1}", "trees", ["forest", "cluster", "conifer", "ink"], 110, 90, cluster, size=48)
 
 # ---------------------------------------------------------------- buildings
 def house(x, y, w=18, h=14, tower=False):

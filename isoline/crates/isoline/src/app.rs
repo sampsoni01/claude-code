@@ -128,7 +128,7 @@ pub fn region_color(index: u32) -> egui::Color32 {
 }
 
 /// Zoom below which towns show as their symbol only.
-const TOWN_ICON_ZOOM: f32 = 0.8;
+const TOWN_ICON_ZOOM: f32 = 1.6;
 
 enum SettleDragKind {
     Vertex(VertexRef),
@@ -1287,7 +1287,7 @@ impl AppState {
                 let Some(a) = self.library.get(qid) else { continue };
                 let Some(rect) = a.rect else { continue };
                 let (uv0, uv1) = rect.uv();
-                let size = (st.layout.radius * 0.75).max(30.0);
+                let size = (st.layout.radius * 1.1).max(24.0);
                 let h = size / rect.aspect().max(0.05);
                 let sel = self.selected_settlement == Some(st.id);
                 inst.push(SpriteInstance { pos: st.layout.center, size: [size, h], pivot: [0.5, 0.6], uv0, uv1, rot_flip: [0.0, 0.0], tint: [1.0, 1.0, if sel { 0.6 } else { 1.0 }, 1.0] });
@@ -1994,7 +1994,7 @@ impl AppState {
                         return;
                     }
                     let tol = 7.0 / zoom.max(0.05);
-                    if zoom >= 1.2 {
+                    if zoom >= 2.4 {
                         if let Some(v) = st.layout.vertex_near(fp.to_array(), tol) {
                             self.settle_drag = Some(SettleDrag { before: self.doc.settlements.clone(), settlement: id, kind: SettleDragKind::Vertex(v) });
                             self.input.stroke = true;
@@ -2749,7 +2749,7 @@ impl AppState {
             let z = self.camera.zoom;
             if z >= TOWN_ICON_ZOOM * 0.8 {
                 let alpha = ((z - TOWN_ICON_ZOOM * 0.8) / (TOWN_ICON_ZOOM * 0.4)).clamp(0.0, 1.0);
-                let detail = z >= 1.4;
+                let detail = z >= 2.8;
                 let town_tool = self.tools.tool == Tool::Settlement;
                 let view = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(ss.x / ppp, ss.y / ppp)).expand(40.0);
                 for st in &self.doc.settlements {

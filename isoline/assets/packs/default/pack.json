@@ -513,55 +513,6 @@
       "world_size": 22
     },
     {
-      "id": "broadleaf_1",
-      "name": "Broadleaf 1",
-      "file": "broadleaf_1.svg",
-      "category": "trees",
-      "tags": [
-        "tree",
-        "broadleaf",
-        "oak",
-        "summer"
-      ],
-      "pivot": [
-        0.5,
-        0.95
-      ],
-      "world_size": 24
-    },
-    {
-      "id": "broadleaf_autumn_1",
-      "name": "Broadleaf Autumn 1",
-      "file": "broadleaf_autumn_1.svg",
-      "category": "trees",
-      "tags": [
-        "tree",
-        "broadleaf",
-        "autumn"
-      ],
-      "pivot": [
-        0.5,
-        0.95
-      ],
-      "world_size": 24
-    },
-    {
-      "id": "broadleaf_ink_1",
-      "name": "Broadleaf Ink 1",
-      "file": "broadleaf_ink_1.svg",
-      "category": "trees",
-      "tags": [
-        "tree",
-        "broadleaf",
-        "ink"
-      ],
-      "pivot": [
-        0.5,
-        0.95
-      ],
-      "world_size": 24
-    },
-    {
       "id": "conifer_ink_1",
       "name": "Conifer Ink 1",
       "file": "conifer_ink_1.svg",
@@ -578,55 +529,6 @@
       "world_size": 22
     },
     {
-      "id": "broadleaf_2",
-      "name": "Broadleaf 2",
-      "file": "broadleaf_2.svg",
-      "category": "trees",
-      "tags": [
-        "tree",
-        "broadleaf",
-        "oak",
-        "summer"
-      ],
-      "pivot": [
-        0.5,
-        0.95
-      ],
-      "world_size": 24
-    },
-    {
-      "id": "broadleaf_autumn_2",
-      "name": "Broadleaf Autumn 2",
-      "file": "broadleaf_autumn_2.svg",
-      "category": "trees",
-      "tags": [
-        "tree",
-        "broadleaf",
-        "autumn"
-      ],
-      "pivot": [
-        0.5,
-        0.95
-      ],
-      "world_size": 24
-    },
-    {
-      "id": "broadleaf_ink_2",
-      "name": "Broadleaf Ink 2",
-      "file": "broadleaf_ink_2.svg",
-      "category": "trees",
-      "tags": [
-        "tree",
-        "broadleaf",
-        "ink"
-      ],
-      "pivot": [
-        0.5,
-        0.95
-      ],
-      "world_size": 24
-    },
-    {
       "id": "conifer_ink_2",
       "name": "Conifer Ink 2",
       "file": "conifer_ink_2.svg",
@@ -641,55 +543,6 @@
         0.95
       ],
       "world_size": 22
-    },
-    {
-      "id": "broadleaf_3",
-      "name": "Broadleaf 3",
-      "file": "broadleaf_3.svg",
-      "category": "trees",
-      "tags": [
-        "tree",
-        "broadleaf",
-        "oak",
-        "summer"
-      ],
-      "pivot": [
-        0.5,
-        0.95
-      ],
-      "world_size": 24
-    },
-    {
-      "id": "broadleaf_autumn_3",
-      "name": "Broadleaf Autumn 3",
-      "file": "broadleaf_autumn_3.svg",
-      "category": "trees",
-      "tags": [
-        "tree",
-        "broadleaf",
-        "autumn"
-      ],
-      "pivot": [
-        0.5,
-        0.95
-      ],
-      "world_size": 24
-    },
-    {
-      "id": "broadleaf_ink_3",
-      "name": "Broadleaf Ink 3",
-      "file": "broadleaf_ink_3.svg",
-      "category": "trees",
-      "tags": [
-        "tree",
-        "broadleaf",
-        "ink"
-      ],
-      "pivot": [
-        0.5,
-        0.95
-      ],
-      "world_size": 24
     },
     {
       "id": "conifer_ink_3",
@@ -747,7 +600,8 @@
       "tags": [
         "forest",
         "cluster",
-        "broadleaf"
+        "conifer",
+        "ink"
       ],
       "pivot": [
         0.5,
@@ -763,7 +617,8 @@
       "tags": [
         "forest",
         "cluster",
-        "broadleaf"
+        "conifer",
+        "ink"
       ],
       "pivot": [
         0.5,
