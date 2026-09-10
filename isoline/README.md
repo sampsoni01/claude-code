@@ -7,9 +7,62 @@ climate, biomes, forests, settlements) is *derived* from those fields, live.
 
 The coastline is literally the isoline `elevation == seaLevel`, hence the name.
 
+![Milestone 5](docs/milestone5.png)
+
+## Status: Milestone 5 — naming and labels
+
+- **Entities** (`isoline-core::entity`): id, kind (settlement, river, lake,
+  range, peak, forest, bay, cape, strait, sea, region, road, marker,
+  title), name, tags, notes, importance, style overrides, culture, and a
+  geometry snapshot (point, path, polygon, area, or a placed symbol) so a
+  label survives recomputation of the feature it came from. Saved in the
+  project's `geometry.json`; every edit is one undo entry.
+- **Name generator** (`isoline-core::names`): character n-gram models
+  trained per culture pack, with templates per kind so a root becomes
+  "River Aldwyn", "Lake Aldwyn" or "Aldwynvik". Five packs ship in
+  `assets/cultures/` (Northern, Old Tongue, Imperial, Sandsea, Elder) as
+  plain JSON word lists users can edit or add to. The map has a current
+  culture; each entity remembers the one it was named in.
+- **Name everything**: lakes by area, rivers by length, ranges by
+  clustering the mountain symbols and fitting an axis (lifted above the
+  peaks), forests by clustering tree symbols, settlements from placed
+  symbols with importance by kind, and the sea at the open-water point
+  farthest from land and from the sheet edge. Roots are not repeated on a
+  map. *Clear generated* removes what the user has not edited.
+- **Name tool** (`N`): click a river, lake, symbol, the sea or bare land to
+  name it; click a label to select it; drag to move it (pins it). The
+  inspector edits name, kind, importance, size, letter spacing, curve,
+  angle, slide-along, hidden, pinned, tags and notes, and regenerates a
+  name in the current culture.
+- **Label rendering** (`crates/isoline/src/labels.rs`): text is set glyph by
+  glyph along a baseline: the straightest stretch of a river, a bowed
+  axis for ranges, an arc across lakes, forests and seas, a line below
+  point symbols. Halo and drop shadow, uppercase and letter spacing per
+  class, size by importance. Baselines shorter than their text extend
+  along the end tangents; area labels stay inside the sheet.
+- **Declutter**: every frame, labels are placed in priority order (pinned,
+  then importance × kind weight) and a label whose glyph boxes hit an
+  earlier one is hidden. Classes have zoom ranges, so peaks and markers
+  appear only when zoomed in.
+- **Typography window**: size, spacing, halo, italic, bold, caps, curved
+  and minimum zoom per class, saved with the theme.
+- **Gazetteer export**: File → Export gazetteer as CSV or JSON with id,
+  kind, name, position, importance, tags, notes and culture.
+
+### Deferred within Milestone 5
+
+- Bays, capes and straits are not detected automatically; the Name tool
+  creates a bay label on a click over water.
+- Propagating a region's name to the features inside it waits for regions
+  (Milestone 6).
+- Per-label style overrides (colour, font) are stored but only typography
+  classes are rendered.
+- Declutter is greedy by priority; it does not try alternative positions
+  for a point label before hiding it.
+
 ![Milestone 4](docs/milestone4.png)
 
-## Status: Milestone 4 — assets
+## Milestone 4 — assets
 
 - **Default library** (`assets/packs/default`, 63 symbols, CC0): mountains
   and snow peaks, ranges, hills, conifers and broadleaf trees in summer,

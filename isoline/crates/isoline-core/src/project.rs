@@ -13,6 +13,7 @@
 //! on a synchronous read of the whole file.
 
 use crate::derived::DerivedParams;
+use crate::entity::Entity;
 use crate::field::ScalarField;
 use crate::hydrology::River;
 use crate::placement::{ForestParams, MountainParams, Placement};
@@ -89,6 +90,9 @@ pub struct Manifest {
     pub derived: DerivedParams,
     #[serde(default)]
     pub symbols: SymbolParams,
+    /// Culture pack id used for generated names.
+    #[serde(default = "default_culture")]
+    pub culture: String,
     pub saved_at_unix: u64,
     pub saved_at: String,
 }
@@ -108,6 +112,7 @@ impl Manifest {
             render: RenderSettings::default(),
             derived: DerivedParams::default(),
             symbols: SymbolParams::default(),
+            culture: default_culture(),
             saved_at_unix: 0,
             saved_at: String::new(),
         }
@@ -126,6 +131,10 @@ pub struct SymbolParams {
 
 fn default_shadow() -> f32 {
     0.25
+}
+
+fn default_culture() -> String {
+    "northern".into()
 }
 
 impl Default for SymbolParams {
@@ -156,6 +165,9 @@ pub struct Geometry {
     /// Manual symbol placements.
     #[serde(default)]
     pub placements: Vec<Placement>,
+    /// Named entities and their labels.
+    #[serde(default)]
+    pub entities: Vec<Entity>,
 }
 
 fn now_unix() -> u64 {

@@ -6,6 +6,9 @@ use crate::gpu::field::ReadbackStats;
 use crate::gpu::map_render::ViewMode;
 use crate::gpu::profiler::CpuStats;
 use crate::library::Library;
+use crate::labels::LabelEngine;
+use isoline_core::entity::{Entity, EntityKind};
+use isoline_core::names::Culture;
 use crate::tools::{MoistureMode, Tool, ToolState};
 use isoline_core::theme::ForestStyle as FS;
 use glam::Vec2;
@@ -183,6 +186,14 @@ pub enum UiAction {
     RemovePackDir(PathBuf),
     SymbolsChanged,
     DeleteSelectedPlacement,
+    NameEverything,
+    ClearAutoNames,
+    ExportGazetteer { json: bool },
+    /// The inspector changed an entity in place; `before` is the list before the edit.
+    EntityEdit { before: Vec<Entity> },
+    EntityGenerateName(u64),
+    DeleteEntity(u64),
+    SelectEntity(Option<u64>),
 }
 
 #[derive(Default)]
@@ -200,6 +211,9 @@ pub struct UiState {
     pub asset_category: Option<String>,
     pub asset_favorites_only: bool,
     pub show_packs: bool,
+    pub show_typography: bool,
+    /// Snapshot taken when an inspector edit starts, committed on release.
+    pub entity_edit_before: Option<Vec<Entity>>,
 }
 
 pub struct UiContext<'a> {
@@ -233,6 +247,9 @@ pub struct UiContext<'a> {
     pub symbols_running: bool,
     pub selected_placement: Option<u64>,
     pub sprite_count: u32,
+    pub labels: &'a LabelEngine,
+    pub cultures: &'a [Culture],
+    pub selected_entity: Option<u64>,
 }
 
 fn fmt_bytes(b: u64) -> String {
@@ -403,6 +420,10 @@ fn tool_button(ui: &mut egui::Ui, tool: Tool, selected: bool, enabled: bool) -> 
             }
             p.circle_stroke(c, u * 0.8, egui::Stroke::new(1.0, ink.gamma_multiply(0.5)));
         }
+        Tool::Name => {
+            p.text(c, egui::Align2::CENTER_CENTER, "Aa", serif_italic(u * 1.1), ink);
+            p.line_segment([pt(-0.6, 0.55), pt(0.6, 0.55)], egui::Stroke::new(1.2, ink));
+        }
         Tool::Pan => {
             for (dx, dy) in [(0.0f32, -1.0f32), (0.0, 1.0), (-1.0, 0.0), (1.0, 0.0)] {
                 p.line_segment([pt(dx * 0.2, dy * 0.2), pt(dx * 0.7, dy * 0.7)], s);
@@ -440,6 +461,10 @@ pub fn draw(root: &mut egui::Ui, st: &mut UiState, c: UiContext) -> Vec<UiAction
     let ctx = root.ctx().clone();
     let ctx = &ctx;
     draw_overlay(ctx, &c.overlay);
+    {
+        let painter = ctx.layer_painter(egui::LayerId::background());
+        c.labels.draw(&painter, c.overlay.paper, c.selected_entity);
+    }
 
     egui::Panel::top("menu").show(root, |ui| {
         egui::MenuBar::new().ui(ui, |ui| {
@@ -459,6 +484,15 @@ pub fn draw(root: &mut egui::Ui, st: &mut UiState, c: UiContext) -> Vec<UiAction
                 }
                 if ui.button("Save As…").clicked() {
                     actions.push(UiAction::SaveAs);
+                    ui.close();
+                }
+                ui.separator();
+                if ui.button("Export gazetteer (CSV)…").clicked() {
+                    actions.push(UiAction::ExportGazetteer { json: false });
+                    ui.close();
+                }
+                if ui.button("Export gazetteer (JSON)…").clicked() {
+                    actions.push(UiAction::ExportGazetteer { json: true });
                     ui.close();
                 }
                 ui.separator();
@@ -664,6 +698,119 @@ pub fn draw(root: &mut egui::Ui, st: &mut UiState, c: UiContext) -> Vec<UiAction
                     ui.checkbox(&mut sc.erase, "Erase mode");
                     ui.label(format!("{} symbols selected", c.tools.selected_assets.len()));
                 }
+                Tool::Name => {
+                    ui.heading("Name & label");
+                    ui.small("Click a river, lake, symbol or the sea to name it; click a label to select, drag to move.");
+                    ui.horizontal(|ui| {
+                        if ui.button("Name everything").on_hover_text("Generate names for lakes, rivers, ranges, forests, settlements and the sea").clicked() {
+                            actions.push(UiAction::NameEverything);
+                        }
+                        if ui.button("Clear generated").clicked() {
+                            actions.push(UiAction::ClearAutoNames);
+                        }
+                    });
+                    ui.separator();
+                    match c.selected_entity.and_then(|id| c.doc.entities.iter().position(|e| e.id == id)) {
+                        Some(idx) => {
+                            let snapshot = c.doc.entities.clone();
+                            let e = &mut c.doc.entities[idx];
+                            let id = e.id;
+                            let mut changed = false;
+                            let mut released = false;
+                            ui.label(egui::RichText::new(&e.name).font(serif_italic(18.0)));
+                            let r = ui.text_edit_singleline(&mut e.name);
+                            changed |= r.changed();
+                            released |= r.lost_focus();
+                            ui.horizontal(|ui| {
+                                if ui.button("Generate").clicked() {
+                                    actions.push(UiAction::EntityGenerateName(id));
+                                }
+                                let mut kind = e.kind;
+                                egui::ComboBox::from_id_salt("ent_kind").selected_text(kind.label()).show_ui(ui, |ui| {
+                                    for k in EntityKind::ALL {
+                                        ui.selectable_value(&mut kind, k, k.label());
+                                    }
+                                });
+                                if kind != e.kind {
+                                    e.kind = kind;
+                                    changed = true;
+                                    released = true;
+                                }
+                            });
+                            let r = ui.add(egui::Slider::new(&mut e.importance, 0.0..=1.0).text("Importance"));
+                            changed |= r.changed();
+                            released |= r.drag_stopped();
+                            let r = ui.add(egui::Slider::new(&mut e.label.size_mult, 0.4..=3.0).text("Label size"));
+                            changed |= r.changed();
+                            released |= r.drag_stopped();
+                            let r = ui.add(egui::Slider::new(&mut e.label.letter_spacing, -2.0..=12.0).text("Letter spacing"));
+                            changed |= r.changed();
+                            released |= r.drag_stopped();
+                            let r = ui.add(egui::Slider::new(&mut e.label.curvature, -1.0..=1.0).text("Curve"));
+                            changed |= r.changed();
+                            released |= r.drag_stopped();
+                            let mut deg = e.label.angle.to_degrees();
+                            let r = ui.add(egui::Slider::new(&mut deg, -90.0..=90.0).suffix("°").text("Angle"));
+                            if r.changed() {
+                                e.label.angle = deg.to_radians();
+                                changed = true;
+                            }
+                            released |= r.drag_stopped();
+                            let r = ui.add(egui::Slider::new(&mut e.label.shift, -0.5..=0.5).text("Slide along"));
+                            changed |= r.changed();
+                            released |= r.drag_stopped();
+                            let r = ui.checkbox(&mut e.label.hidden, "Hide label");
+                            changed |= r.changed();
+                            released |= r.changed();
+                            let r = ui.checkbox(&mut e.label.pinned, "Pinned (never decluttered)");
+                            changed |= r.changed();
+                            released |= r.changed();
+                            if ui.button("Reset label position").clicked() {
+                                e.label.offset = [0.0; 2];
+                                e.label.shift = 0.0;
+                                e.label.angle = 0.0;
+                                e.label.pinned = false;
+                                changed = true;
+                                released = true;
+                            }
+                            let mut tags = e.tags.join(", ");
+                            let r = ui.add(egui::TextEdit::singleline(&mut tags).hint_text("tags, comma separated"));
+                            if r.changed() {
+                                e.tags = tags.split(',').map(|t| t.trim().to_string()).filter(|t| !t.is_empty()).collect();
+                                changed = true;
+                            }
+                            released |= r.lost_focus();
+                            ui.label("Notes");
+                            let r = ui.add(egui::TextEdit::multiline(&mut e.notes).desired_rows(4).desired_width(f32::INFINITY));
+                            changed |= r.changed();
+                            released |= r.lost_focus();
+                            if changed {
+                                e.auto = false;
+                                if st.entity_edit_before.is_none() {
+                                    st.entity_edit_before = Some(snapshot);
+                                }
+                            }
+                            if released {
+                                if let Some(before) = st.entity_edit_before.take() {
+                                    actions.push(UiAction::EntityEdit { before });
+                                }
+                            }
+                            if ui.button("Delete name").clicked() {
+                                actions.push(UiAction::DeleteEntity(id));
+                            }
+                        }
+                        None => {
+                            ui.label(format!("{} named features · {} labels hidden by declutter", c.doc.entities.len(), c.labels.hidden_by_declutter));
+                            egui::ScrollArea::vertical().max_height(300.0).show(ui, |ui| {
+                                for e in &c.doc.entities {
+                                    if ui.selectable_label(false, format!("{} · {}", e.name, e.kind.label())).clicked() {
+                                        actions.push(UiAction::SelectEntity(Some(e.id)));
+                                    }
+                                }
+                            });
+                        }
+                    }
+                }
                 Tool::Pan => {
                     ui.label("Drag to pan. Wheel to zoom.");
                 }
@@ -740,6 +887,24 @@ pub fn draw(root: &mut egui::Ui, st: &mut UiState, c: UiContext) -> Vec<UiAction
                 }
                 ui.add(egui::Slider::new(&mut th.coast_line_width, 0.5..=4.0).text("Coast ink"));
                 ui.checkbox(&mut th.show_ornaments, "Compass and cartouche");
+                ui.checkbox(&mut th.show_labels, "Labels");
+                ui.horizontal(|ui| {
+                    let current = c.cultures.iter().find(|k| k.id == c.doc.culture).map(|k| k.pack.name.clone()).unwrap_or_else(|| c.doc.culture.clone());
+                    egui::ComboBox::from_id_salt("culture").selected_text(current).show_ui(ui, |ui| {
+                        for k in c.cultures {
+                            ui.selectable_value(&mut c.doc.culture, k.id.clone(), &k.pack.name).on_hover_text(&k.pack.description);
+                        }
+                    });
+                    ui.label("Names");
+                });
+                ui.horizontal(|ui| {
+                    if ui.button("Name everything").clicked() {
+                        actions.push(UiAction::NameEverything);
+                    }
+                    if ui.button("Typography…").clicked() {
+                        st.show_typography = true;
+                    }
+                });
             } else {
                 ui.add(egui::Slider::new(&mut c.doc.render.hillshade_strength, 0.0..=1.0).text("Hillshade"));
                 ui.add(egui::Slider::new(&mut c.doc.render.coast_line_width, 0.0..=4.0).text("Coast line"));
@@ -1176,6 +1341,50 @@ pub fn draw(root: &mut egui::Ui, st: &mut UiState, c: UiContext) -> Vec<UiAction
         if !open {
             st.show_new = false;
         }
+    }
+
+    if st.show_typography {
+        let mut open = true;
+        egui::Window::new("Label typography").open(&mut open).default_pos((280.0, 60.0)).show(ctx, |ui| {
+            let lc = &mut c.doc.render.theme.labels;
+            egui::Grid::new("typo").striped(true).show(ui, |ui| {
+                ui.strong("Class");
+                ui.strong("Size");
+                ui.strong("Spacing");
+                ui.strong("Halo");
+                ui.strong("Italic");
+                ui.strong("Bold");
+                ui.strong("CAPS");
+                ui.strong("Curved");
+                ui.strong("Min zoom");
+                ui.end_row();
+                for (name, cls) in [
+                    ("Settlement", &mut lc.settlement),
+                    ("River", &mut lc.river),
+                    ("Lake", &mut lc.lake),
+                    ("Range", &mut lc.range),
+                    ("Peak", &mut lc.peak),
+                    ("Forest", &mut lc.forest),
+                    ("Sea", &mut lc.sea),
+                    ("Region", &mut lc.region),
+                    ("Bay", &mut lc.bay),
+                    ("Marker", &mut lc.marker),
+                ] {
+                    ui.label(name);
+                    ui.add(egui::DragValue::new(&mut cls.size).range(6.0..=64.0).speed(0.5));
+                    ui.add(egui::DragValue::new(&mut cls.letter_spacing).range(-2.0..=20.0).speed(0.2));
+                    ui.add(egui::DragValue::new(&mut cls.halo).range(0.0..=6.0).speed(0.1));
+                    ui.checkbox(&mut cls.italic, "");
+                    ui.checkbox(&mut cls.bold, "");
+                    ui.checkbox(&mut cls.uppercase, "");
+                    ui.checkbox(&mut cls.curved, "");
+                    ui.add(egui::DragValue::new(&mut cls.min_zoom).range(0.0..=8.0).speed(0.02));
+                    ui.end_row();
+                }
+            });
+            ui.small("Sizes are screen pixels at importance 0.5; importance scales them 0.6×–1.4×.");
+        });
+        st.show_typography = open;
     }
 
     if st.show_biome_matrix {

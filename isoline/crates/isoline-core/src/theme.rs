@@ -68,6 +68,106 @@ impl ForestStyle {
     }
 }
 
+/// Typography for one class of label.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct LabelClass {
+    /// Screen pixels at importance 0.5.
+    pub size: f32,
+    pub italic: bool,
+    pub bold: bool,
+    pub uppercase: bool,
+    /// Extra spacing between letters, in screen pixels.
+    pub letter_spacing: f32,
+    pub color: [f32; 3],
+    /// Halo width in screen pixels (0 = none).
+    pub halo: f32,
+    pub shadow: bool,
+    /// Visible when the map zoom (screen px per texel) is within this range.
+    pub min_zoom: f32,
+    pub max_zoom: f32,
+    pub curved: bool,
+}
+
+impl LabelClass {
+    fn new(size: f32, italic: bool, bold: bool, uppercase: bool, letter_spacing: f32, curved: bool, min_zoom: f32) -> Self {
+        Self { size, italic, bold, uppercase, letter_spacing, color: [0.22, 0.15, 0.09], halo: 2.0, shadow: false, min_zoom, max_zoom: 100.0, curved }
+    }
+}
+
+/// Label classes by entity kind.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct LabelClasses {
+    pub settlement: LabelClass,
+    pub river: LabelClass,
+    pub lake: LabelClass,
+    pub range: LabelClass,
+    pub peak: LabelClass,
+    pub forest: LabelClass,
+    pub sea: LabelClass,
+    pub region: LabelClass,
+    pub marker: LabelClass,
+    pub bay: LabelClass,
+    pub title: LabelClass,
+}
+
+impl Default for LabelClasses {
+    fn default() -> Self {
+        Self {
+            settlement: LabelClass::new(14.0, false, false, false, 0.5, false, 0.0),
+            river: LabelClass::new(12.0, true, false, false, 1.0, true, 0.15),
+            lake: LabelClass::new(12.0, true, false, false, 0.8, true, 0.12),
+            range: LabelClass::new(15.0, false, false, true, 3.5, true, 0.0),
+            peak: LabelClass::new(10.0, true, false, false, 0.3, false, 0.6),
+            forest: LabelClass::new(13.0, true, false, false, 1.5, true, 0.2),
+            sea: LabelClass::new(22.0, true, false, true, 6.0, true, 0.0),
+            region: LabelClass::new(20.0, false, true, true, 5.0, true, 0.0),
+            marker: LabelClass::new(11.0, false, false, false, 0.3, false, 0.5),
+            bay: LabelClass::new(12.0, true, false, false, 1.2, true, 0.25),
+            title: LabelClass::new(30.0, true, true, false, 1.0, false, 0.0),
+        }
+    }
+}
+
+impl LabelClasses {
+    pub fn for_kind(&self, kind: crate::entity::EntityKind) -> &LabelClass {
+        use crate::entity::EntityKind as K;
+        match kind {
+            K::Settlement => &self.settlement,
+            K::River => &self.river,
+            K::Lake => &self.lake,
+            K::Range => &self.range,
+            K::Peak | K::Cape => &self.peak,
+            K::Forest => &self.forest,
+            K::Sea => &self.sea,
+            K::Region => &self.region,
+            K::Marker | K::Road => &self.marker,
+            K::Bay | K::Strait => &self.bay,
+            K::Title => &self.title,
+        }
+    }
+    pub fn for_kind_mut(&mut self, kind: crate::entity::EntityKind) -> &mut LabelClass {
+        use crate::entity::EntityKind as K;
+        match kind {
+            K::Settlement => &mut self.settlement,
+            K::River => &mut self.river,
+            K::Lake => &mut self.lake,
+            K::Range => &mut self.range,
+            K::Peak | K::Cape => &mut self.peak,
+            K::Forest => &mut self.forest,
+            K::Sea => &mut self.sea,
+            K::Region => &mut self.region,
+            K::Marker | K::Road => &mut self.marker,
+            K::Bay | K::Strait => &mut self.bay,
+            K::Title => &mut self.title,
+        }
+    }
+    pub fn recolor(&mut self, ink: [f32; 3]) {
+        for c in [&mut self.settlement, &mut self.river, &mut self.lake, &mut self.range, &mut self.peak, &mut self.forest, &mut self.sea, &mut self.region, &mut self.marker, &mut self.bay, &mut self.title] {
+            c.color = ink;
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Theme {
     pub name: String,
@@ -98,6 +198,14 @@ pub struct Theme {
     pub forest_scale: f32,
     pub forest_threshold: f32,
     pub show_ornaments: bool,
+    #[serde(default)]
+    pub labels: LabelClasses,
+    #[serde(default = "default_true")]
+    pub show_labels: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 impl Theme {
@@ -126,6 +234,8 @@ impl Theme {
             forest_scale: 12.0,
             forest_threshold: 0.3,
             show_ornaments: true,
+            labels: LabelClasses::default(),
+            show_labels: true,
         }
     }
 
@@ -154,6 +264,12 @@ impl Theme {
             forest_scale: 12.0,
             forest_threshold: 0.3,
             show_ornaments: true,
+            labels: {
+                let mut l = LabelClasses::default();
+                l.recolor([0.30, 0.20, 0.10]);
+                l
+            },
+            show_labels: true,
         }
     }
 
@@ -182,6 +298,12 @@ impl Theme {
             forest_scale: 7.0,
             forest_threshold: 0.35,
             show_ornaments: false,
+            labels: {
+                let mut l = LabelClasses::default();
+                l.recolor([0.12, 0.12, 0.14]);
+                l
+            },
+            show_labels: true,
         }
     }
 

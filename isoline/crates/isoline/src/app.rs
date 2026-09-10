@@ -8,6 +8,10 @@ use crate::gpu::map_render::{DerivedViews, MapRenderer, ViewMode, ViewUniform, F
 use crate::gpu::profiler::{CpuStats, GpuProfiler};
 use crate::gpu::sprites::{Atlas, SpriteInstance, SpritePass};
 use crate::library::Library;
+use crate::labels::LabelEngine;
+use crate::autoname::{self, AutoNameInput, AutoNameParams};
+use isoline_core::entity::{Entity, EntityKind, EntityRef};
+use isoline_core::names::{self, Culture, NameRng};
 use crate::gpu::Gpu;
 use crate::jobs::Job;
 use crate::tools::{Tool, ToolState};
@@ -152,6 +156,11 @@ struct AppState {
     instance_key: (usize, usize),
     selected_placement: Option<u64>,
     place_drag: Option<Vec<Placement>>,
+    labels: LabelEngine,
+    cultures: Vec<Culture>,
+    selected_entity: Option<u64>,
+    label_drag: Option<(Vec<Entity>, Vec2, [f32; 2])>,
+    name_rng: NameRng,
     scatter_before: Option<Vec<Placement>>,
     scatter_hash: Option<SpatialHash>,
     scatter_rng: Rng,
@@ -311,6 +320,11 @@ impl AppState {
             instance_key: (usize::MAX, usize::MAX),
             selected_placement: None,
             place_drag: None,
+            labels: LabelEngine::default(),
+            cultures: names::load_cultures(&names::builtin_culture_dirs()),
+            selected_entity: None,
+            label_drag: None,
+            name_rng: NameRng::new(1234),
             scatter_before: None,
             scatter_hash: None,
             scatter_rng: Rng::new(99),
@@ -401,6 +415,8 @@ impl AppState {
         }
         self.library.set_project_dir(self.doc.path.clone());
         self.selected_placement = None;
+        self.selected_entity = None;
+        self.label_drag = None;
         self.instances_dirty = true;
         self.field = GpuField::new(&self.gpu.device, self.doc.width(), self.doc.height());
         self.field.upload_all(&self.gpu.queue, &self.doc.elevation);
@@ -779,6 +795,10 @@ impl AppState {
             self.place_press(pos_screen, fp);
             return;
         }
+        if tool == Tool::Name {
+            self.name_press(pos_screen, fp);
+            return;
+        }
         if tool == Tool::Scatter {
             self.scatter_before = Some(self.doc.placements.clone());
             self.scatter_hash = Some(self.build_scatter_hash());
@@ -831,6 +851,16 @@ impl AppState {
             self.water_edit_drag(fp);
             return;
         }
+        if let Some((_, start, base)) = &self.label_drag {
+            let delta = (fp - *start).to_array();
+            if let Some(id) = self.selected_entity {
+                if let Some(e) = self.doc.entity_mut(id) {
+                    e.label.offset = [base[0] + delta[0], base[1] + delta[1]];
+                    e.label.pinned = true;
+                }
+            }
+            return;
+        }
         if self.place_drag.is_some() {
             if let Some(id) = self.selected_placement {
                 if let Some(p) = self.doc.placements.iter_mut().find(|p| p.id == id) {
@@ -859,6 +889,11 @@ impl AppState {
         if let Some(before) = self.place_drag.take() {
             self.input.stroke = false;
             self.doc.commit_placements("Move symbol", before);
+            return;
+        }
+        if let Some((before, _, _)) = self.label_drag.take() {
+            self.input.stroke = false;
+            self.doc.commit_entities("Move label", before);
             return;
         }
         if let Some(before) = self.scatter_before.take() {
@@ -1165,6 +1200,143 @@ impl AppState {
         }
     }
 
+    // ---- naming ----------------------------------------------------------------
+
+    fn culture(&self) -> Option<&Culture> {
+        self.cultures.iter().find(|c| c.id == self.doc.culture).or(self.cultures.first())
+    }
+
+    fn generated_name(&mut self, kind: EntityKind) -> String {
+        let Some(c) = self.culture() else { return "Nameless".into() };
+        let c = c.clone();
+        c.name_for(kind.name_key(), &mut self.name_rng)
+    }
+
+    /// Click with the Name tool: pick a label, or name the feature under the cursor.
+    fn name_press(&mut self, screen: Vec2, fp: Vec2) {
+        let ppp = self.egui_ctx.pixels_per_point();
+        if let Some(id) = self.labels.hit(egui::pos2(screen.x / ppp, screen.y / ppp)) {
+            self.selected_entity = Some(id);
+            let base = self.doc.entity(id).map(|e| e.label.offset).unwrap_or([0.0; 2]);
+            self.label_drag = Some((self.doc.entities.clone(), fp, base));
+            self.input.stroke = true;
+            return;
+        }
+        // A placed symbol?
+        if let Some(pid) = self.placement_under(screen) {
+            if let Some(e) = self.doc.entities.iter().find(|e| matches!(e.geometry, EntityRef::Placement { id, .. } if id == pid)) {
+                self.selected_entity = Some(e.id);
+                return;
+            }
+            let pos = self.doc.placements.iter().find(|p| p.id == pid).map(|p| p.pos).unwrap_or(fp.to_array());
+            let tags = self.doc.placements.iter().find(|p| p.id == pid).and_then(|p| self.library.get(&p.asset)).map(|a| a.def.tags.clone()).unwrap_or_default();
+            let kind = if tags.iter().any(|t| t == "settlement" || t == "castle") { EntityKind::Settlement } else { EntityKind::Marker };
+            self.create_entity(kind, EntityRef::Placement { id: pid, pos });
+            return;
+        }
+        // A lake or river under the cursor?
+        if let Some(d) = &self.doc.derived {
+            for l in &d.water.lakes {
+                if l.polygon.contains(fp.to_array()) {
+                    let c = EntityRef::Polygon(l.polygon.clone()).anchor();
+                    if let Some(e) = self.doc.entities.iter().find(|e| e.kind == EntityKind::Lake && isoline_core::geometry::len(isoline_core::geometry::sub(e.geometry.anchor(), c)) < 10.0) {
+                        self.selected_entity = Some(e.id);
+                    } else {
+                        let poly = l.polygon.clone();
+                        self.create_entity(EntityKind::Lake, EntityRef::Polygon(poly));
+                    }
+                    return;
+                }
+            }
+            let tol = 6.0 / self.camera.zoom.max(0.05);
+            let mut best: Option<(f32, usize)> = None;
+            for (i, r) in d.water.rivers.iter().enumerate() {
+                for w in r.points.windows(2) {
+                    let (d2, _) = isoline_core::geometry::seg_dist2(fp.to_array(), w[0], w[1]);
+                    if d2 < tol * tol && best.map(|b| d2 < b.0).unwrap_or(true) {
+                        best = Some((d2, i));
+                    }
+                }
+            }
+            if let Some((_, i)) = best {
+                let pts = d.water.rivers[i].points.clone();
+                let mid = pts[pts.len() / 2];
+                if let Some(e) = self.doc.entities.iter().find(|e| e.kind == EntityKind::River && matches!(&e.geometry, EntityRef::Path(p) if p.len() == pts.len() && p[p.len() / 2] == mid)) {
+                    self.selected_entity = Some(e.id);
+                } else {
+                    self.create_entity(EntityKind::River, EntityRef::Path(pts));
+                }
+                return;
+            }
+        }
+        // Otherwise a marker on the spot (sea → bay/sea style name on water).
+        let on_water = self.doc.elevation.sample(fp.x, fp.y) <= self.doc.sea_level;
+        let kind = if on_water { EntityKind::Bay } else { EntityKind::Marker };
+        self.create_entity(kind, EntityRef::Point(fp.to_array()));
+    }
+
+    fn create_entity(&mut self, kind: EntityKind, geometry: EntityRef) {
+        let before = self.doc.entities.clone();
+        let name = self.generated_name(kind);
+        let id = self.doc.next_entity_id;
+        self.doc.next_entity_id += 1;
+        let mut e = Entity::new(id, kind, name, geometry);
+        e.culture = self.doc.culture.clone();
+        self.doc.entities.push(e);
+        self.doc.commit_entities("Name feature", before);
+        self.selected_entity = Some(id);
+    }
+
+    fn name_everything(&mut self) {
+        let Some(d) = self.doc.derived.as_ref() else {
+            self.ui.status = "Wait for rivers and biomes before naming".into();
+            return;
+        };
+        let Some(c) = self.culture().cloned() else { return };
+        let settlement_tags: Vec<(u64, Vec<String>)> = self
+            .doc
+            .placements
+            .iter()
+            .filter_map(|p| self.library.get(&p.asset).map(|a| (p.id, a.def.tags.clone())))
+            .filter(|(_, t)| t.iter().any(|g| g == "settlement" || g == "castle" || g == "marker"))
+            .collect();
+        let input = AutoNameInput {
+            elevation: &self.doc.elevation,
+            sea_level: self.doc.sea_level,
+            derived: d,
+            placements: &self.doc.placements,
+            auto_symbols: &self.doc.auto_symbols,
+            settlement_tags,
+            existing: &self.doc.entities,
+        };
+        let mut next = self.doc.next_entity_id;
+        let params = AutoNameParams { seed: self.name_rng.below(1 << 30) as u64, ..Default::default() };
+        let new = autoname::name_everything(&input, &c, &params, &mut next);
+        let n = new.len();
+        let before = self.doc.entities.clone();
+        self.doc.entities.extend(new);
+        self.doc.next_entity_id = next + 1;
+        self.doc.commit_entities("Name everything", before);
+        self.ui.status = format!("Named {n} features in the {} tongue", c.pack.name);
+    }
+
+    fn clear_auto_names(&mut self) {
+        let before = self.doc.entities.clone();
+        self.doc.entities.retain(|e| !e.auto);
+        self.doc.commit_entities("Clear generated names", before);
+        self.selected_entity = None;
+    }
+
+    fn export_gazetteer(&mut self, json: bool) {
+        let ext = if json { "json" } else { "csv" };
+        let Some(path) = rfd::FileDialog::new().set_title("Export gazetteer").set_file_name(format!("{}-gazetteer.{ext}", self.doc.name)).save_file() else { return };
+        let text = if json { isoline_core::entity::gazetteer_json(&self.doc.entities) } else { isoline_core::entity::gazetteer_csv(&self.doc.entities) };
+        match std::fs::write(&path, text) {
+            Ok(()) => self.ui.status = format!("Gazetteer written to {}", path.display()),
+            Err(e) => self.ui.error = Some(format!("Export failed: {e}")),
+        }
+    }
+
     // ---- water editing -------------------------------------------------------
 
     fn water_edit_press(&mut self, pos_screen: Vec2) {
@@ -1386,6 +1558,29 @@ impl AppState {
                 UiAction::RemovePackDir(dir) => self.library.unregister_pack_dir(&dir),
                 UiAction::SymbolsChanged => self.doc.symbols_changed(),
                 UiAction::DeleteSelectedPlacement => self.delete_selected_placement(),
+                UiAction::NameEverything => self.name_everything(),
+                UiAction::ClearAutoNames => self.clear_auto_names(),
+                UiAction::ExportGazetteer { json } => self.export_gazetteer(json),
+                UiAction::EntityEdit { before } => self.doc.commit_entities("Edit name", before),
+                UiAction::EntityGenerateName(id) => {
+                    let before = self.doc.entities.clone();
+                    let kind = self.doc.entity(id).map(|e| e.kind).unwrap_or(EntityKind::Marker);
+                    let name = self.generated_name(kind);
+                    let culture = self.doc.culture.clone();
+                    if let Some(e) = self.doc.entity_mut(id) {
+                        e.name = name;
+                        e.culture = culture;
+                        e.auto = false;
+                    }
+                    self.doc.commit_entities("Generate name", before);
+                }
+                UiAction::DeleteEntity(id) => {
+                    let before = self.doc.entities.clone();
+                    self.doc.entities.retain(|e| e.id != id);
+                    self.doc.commit_entities("Delete name", before);
+                    self.selected_entity = None;
+                }
+                UiAction::SelectEntity(id) => self.selected_entity = id,
             }
         }
     }
@@ -1577,6 +1772,7 @@ impl AppState {
             KeyCode::Digit8 => self.tools.tool = Tool::Scatter,
             KeyCode::Digit9 => self.tools.tool = Tool::Moisture,
             KeyCode::Digit0 => self.tools.tool = Tool::WaterEdit,
+            KeyCode::KeyN if !ctrl => self.tools.tool = Tool::Name,
             KeyCode::BracketLeft => self.scale_radius(1.0 / 1.2),
             KeyCode::BracketRight => self.scale_radius(1.2),
             KeyCode::Delete | KeyCode::Backspace => {
@@ -1584,6 +1780,10 @@ impl AppState {
                     self.delete_selected_water();
                 } else if self.tools.tool == Tool::Place {
                     self.delete_selected_placement();
+                } else if self.tools.tool == Tool::Name {
+                    if let Some(id) = self.selected_entity {
+                        self.handle_actions(vec![UiAction::DeleteEntity(id)], event_loop);
+                    }
                 }
             }
             KeyCode::Escape => {
@@ -1822,6 +2022,12 @@ impl AppState {
                     enc.set_depth(png::BitDepth::Eight);
                     enc.write_header().unwrap().write_image_data(&bm.rgba).unwrap();
                     self.import_files(vec![png_path]);
+                } else if self.demo_stage == 4 && self.symbol_job.is_none() && !self.doc.symbols_stale {
+                    self.demo_stage = 5;
+                    self.name_everything();
+                    self.tools.tool = Tool::Name;
+                    let dir = std::env::temp_dir().join("isoline-demo.isoline");
+                    self.save_to(dir);
                 } else if self.demo_stage == 3 && (self.library.get("project/isoline_demo_import").is_some() || self.frames_since_install > 400) {
                     self.demo_stage = 4;
                     let w = self.doc.width() as f32;
@@ -1850,6 +2056,25 @@ impl AppState {
         .into_iter()
         .flatten()
         .next();
+        {
+            let t = Instant::now();
+            let ss = self.screen_size();
+            let lib = &self.library;
+            let placements = &self.doc.placements;
+            let symbol_half = |e: &Entity| -> f32 {
+                match &e.geometry {
+                    EntityRef::Placement { id, .. } => placements.iter().find(|p| p.id == *id).and_then(|p| lib.get(&p.asset).map(|a| p.size / a.aspect.max(0.1) * 0.5)).unwrap_or(0.0),
+                    _ => 0.0,
+                }
+            };
+            if self.view_mode == ViewMode::Map {
+                let fs = Vec2::new(self.doc.width() as f32, self.doc.height() as f32);
+                self.labels.layout(&self.egui_ctx, &self.doc.entities, &self.doc.render.theme, &self.camera, ss, fs, ppp, symbol_half, self.selected_entity);
+            } else {
+                self.labels.placed.clear();
+            }
+            self.cpu.sections.insert("labels layout", t.elapsed().as_secs_f32() * 1000.0);
+        }
         let overlay = self.build_overlay(ppp);
         let mut actions = Vec::new();
         let t_ui = Instant::now();
@@ -1887,6 +2112,9 @@ impl AppState {
                 symbols_running: self.symbol_job.is_some(),
                 selected_placement: self.selected_placement,
                 sprite_count: self.sprites.last_instances,
+                labels: &self.labels,
+                cultures: &self.cultures,
+                selected_entity: self.selected_entity,
             });
             ctx.run_ui(raw, |root| {
                 if let Some(uc) = uc.take() {
@@ -2072,7 +2300,7 @@ impl AppState {
             && !self.doc.symbols_stale
             && !self.doc.derived_stale
             && self.doc.derived.is_some()
-            && (!self.demo || self.demo_stage >= 4)
+            && (!self.demo || self.demo_stage >= 5)
             && self.save_job.is_none();
         if take_shot {
             let path = self.screenshot.take().unwrap();

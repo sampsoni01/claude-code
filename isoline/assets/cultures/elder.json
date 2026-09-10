@@ -1,0 +1,104 @@
+{
+ "name": "Elder",
+ "description": "Old forests and starlight: liquid consonants, -iel, -ondë, -lóth.",
+ "corpus": [
+  "Aeliniel",
+  "Belthoriel",
+  "Calenlóth",
+  "Dorenmir",
+  "Eldaviel",
+  "Falathir",
+  "Galendor",
+  "Hithlirian",
+  "Ilmariel",
+  "Lindoriel",
+  "Mithraen",
+  "Nimlothir",
+  "Orolindë",
+  "Peliandor",
+  "Rhovaniel",
+  "Silmaeth",
+  "Thalasiel",
+  "Undolindë",
+  "Valandir",
+  "Yavaniel",
+  "Amrothiel",
+  "Brethiliel",
+  "Celondir",
+  "Duilinael",
+  "Elenmir",
+  "Fanuilos",
+  "Glorenlas",
+  "Halathir",
+  "Ithildor",
+  "Laurelindë",
+  "Melindriel",
+  "Nenuial",
+  "Orthaliel",
+  "Rivendorë",
+  "Serendil",
+  "Tauriel",
+  "Uinendil",
+  "Vanyalindë",
+  "Alqualir",
+  "Bruilanthir",
+  "Cirdoriel",
+  "Edhelmir",
+  "Fëalindë",
+  "Glaerendil",
+  "Hithaeglir",
+  "Losteriel",
+  "Mirloth",
+  "Nendoriel",
+  "Ossiriel",
+  "Silivrendil",
+  "Taurelas",
+  "Varindor"
+ ],
+ "generics": {
+  "river": [
+   "{root}",
+   "River {root}",
+   "{root}duin"
+  ],
+  "lake": [
+   "Lake {root}",
+   "Nen {root}",
+   "{root}mere"
+  ],
+  "range": [
+   "The {root} Mountains",
+   "Ered {root}"
+  ],
+  "peak": [
+   "Amon {root}",
+   "Mount {root}"
+  ],
+  "forest": [
+   "{root}",
+   "Taur {root}",
+   "The {root} Wood"
+  ],
+  "settlement": [
+   "{root}",
+   "{root}ost",
+   "Caras {root}"
+  ],
+  "sea": [
+   "Belegaer {root}",
+   "The {root} Sea"
+  ],
+  "bay": [
+   "{root} Bay",
+   "Bar {root}"
+  ],
+  "region": [
+   "{root}",
+   "The Realm of {root}"
+  ],
+  "title": [
+   "{root}",
+   "The Lands of {root}"
+  ]
+ }
+}

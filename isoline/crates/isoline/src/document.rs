@@ -2,6 +2,7 @@
 
 use anyhow::Result;
 use isoline_core::derived::{BakedWater, Derived, DerivedParams};
+use isoline_core::entity::Entity;
 use isoline_core::field::ScalarField;
 use isoline_core::graph::{DepGraph, Edge, NodeId, Reach};
 use isoline_core::placement::Placement;
@@ -93,6 +94,9 @@ pub struct Document {
     pub symbols: SymbolParams,
     pub symbols_stale: bool,
     pub next_placement_id: u64,
+    pub entities: Vec<Entity>,
+    pub next_entity_id: u64,
+    pub culture: String,
 }
 
 pub const UNDO_RAM_BUDGET: usize = 512 << 20;
@@ -163,6 +167,9 @@ impl Document {
             symbols: SymbolParams::default(),
             symbols_stale: true,
             next_placement_id: 1,
+            entities: Vec::new(),
+            next_entity_id: 1,
+            culture: "northern".into(),
         }
     }
 
@@ -185,6 +192,9 @@ impl Document {
         doc.symbols = manifest.symbols;
         doc.placements = geometry.placements.clone();
         doc.next_placement_id = doc.placements.iter().map(|p| p.id).max().unwrap_or(0) + 1;
+        doc.entities = geometry.entities.clone();
+        doc.next_entity_id = doc.entities.iter().map(|e| e.id).max().unwrap_or(0) + 1;
+        doc.culture = manifest.culture.clone();
         doc.path = path;
         if geometry.baked {
             let moisture = moisture.unwrap_or_else(|| ScalarField::new(doc.width(), doc.height(), 0.5));
@@ -201,16 +211,18 @@ impl Document {
         m.view = view;
         m.derived = self.params.clone();
         m.symbols = self.symbols.clone();
+        m.culture = self.culture.clone();
         let mut fields = vec![("elevation".to_string(), self.elevation.clone())];
         let mut geometry = match (&self.baked, &self.derived) {
             (Some(b), _) => {
                 fields.push(("moisture".into(), b.moisture.clone()));
-                Geometry { rivers: b.rivers.clone(), lakes: b.lakes.clone(), baked: true, placements: Vec::new() }
+                Geometry { rivers: b.rivers.clone(), lakes: b.lakes.clone(), baked: true, placements: Vec::new(), entities: Vec::new() }
             }
-            (None, Some(d)) => Geometry { rivers: d.water.rivers.clone(), lakes: d.water.lakes.clone(), baked: false, placements: Vec::new() },
+            (None, Some(d)) => Geometry { rivers: d.water.rivers.clone(), lakes: d.water.lakes.clone(), baked: false, placements: Vec::new(), entities: Vec::new() },
             _ => Geometry::default(),
         };
         geometry.placements = self.placements.clone();
+        geometry.entities = self.entities.clone();
         ProjectData { manifest: m, fields, geometry }
     }
 
@@ -392,6 +404,11 @@ impl Document {
                 self.modified = true;
                 None
             }
+            UndoOp::Entities { before, after } => {
+                self.entities = if forward { after.clone() } else { before.clone() };
+                self.modified = true;
+                None
+            }
             UndoOp::Bake { baked_before, moisture_before, baked_after, moisture_after } => {
                 let (g, m) = if forward { (baked_after, moisture_after) } else { (baked_before, moisture_before) };
                 self.baked = match (g, m) {
@@ -516,6 +533,22 @@ impl Document {
         let id = self.next_placement_id;
         self.next_placement_id += 1;
         id
+    }
+
+    /// Commit a change to the entity list as one undo entry.
+    pub fn commit_entities(&mut self, label: &str, before: Vec<Entity>) {
+        if before == self.entities {
+            return;
+        }
+        self.undo.push(label, UndoOp::Entities { before, after: self.entities.clone() });
+        self.modified = true;
+    }
+
+    pub fn entity(&self, id: u64) -> Option<&Entity> {
+        self.entities.iter().find(|e| e.id == id)
+    }
+    pub fn entity_mut(&mut self, id: u64) -> Option<&mut Entity> {
+        self.entities.iter_mut().find(|e| e.id == id)
     }
 
     pub fn symbols_changed(&mut self) {

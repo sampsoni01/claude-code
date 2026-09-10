@@ -1,0 +1,114 @@
+{
+ "name": "Old Tongue",
+ "description": "Green hills and mists: soft consonants, -wyn, -mere, -dun.",
+ "corpus": [
+  "Aldwyn",
+  "Brannoc",
+  "Caerlin",
+  "Dunmere",
+  "Elowen",
+  "Fenwyn",
+  "Gwendal",
+  "Hallowmere",
+  "Ithel",
+  "Kerrowen",
+  "Llanvar",
+  "Maelduin",
+  "Nantwyn",
+  "Orrin",
+  "Penhallow",
+  "Rhoswen",
+  "Sulien",
+  "Tremorran",
+  "Uthwyn",
+  "Vannoc",
+  "Wenlow",
+  "Ysolde",
+  "Brythel",
+  "Carrow",
+  "Dinas",
+  "Eirlys",
+  "Fallon",
+  "Glynmere",
+  "Hywel",
+  "Iddon",
+  "Kenwyn",
+  "Lowen",
+  "Morvoren",
+  "Nedrym",
+  "Owain",
+  "Penrose",
+  "Rhun",
+  "Seren",
+  "Tegwyn",
+  "Urien",
+  "Wynmere",
+  "Anwen",
+  "Bedwyr",
+  "Cadwal",
+  "Drustan",
+  "Elphin",
+  "Gorlois",
+  "Heledd",
+  "Idris",
+  "Loegrin",
+  "Meirion",
+  "Nerys",
+  "Onnen",
+  "Pryderi",
+  "Rhiannoc",
+  "Talwyn"
+ ],
+ "generics": {
+  "river": [
+   "River {root}",
+   "the {root}",
+   "{root} Water",
+   "Afon {root}"
+  ],
+  "lake": [
+   "Llyn {root}",
+   "{root} Mere",
+   "Lake {root}"
+  ],
+  "range": [
+   "The {root} Hills",
+   "{root} Downs",
+   "Mynydd {root}"
+  ],
+  "peak": [
+   "{root} Tor",
+   "Pen {root}",
+   "{root} Beacon"
+  ],
+  "forest": [
+   "{root} Wood",
+   "Coed {root}",
+   "The {root} Weald"
+  ],
+  "settlement": [
+   "{root}",
+   "Caer {root}",
+   "{root}dun",
+   "Llan{root}",
+   "{root}wick"
+  ],
+  "sea": [
+   "The {root} Sea",
+   "{root} Sound"
+  ],
+  "bay": [
+   "{root} Bay",
+   "{root} Haven"
+  ],
+  "region": [
+   "{root}shire",
+   "The {root} Marches",
+   "{root}land"
+  ],
+  "title": [
+   "The {root} Lands",
+   "{root} and the Western Isles"
+  ]
+ }
+}

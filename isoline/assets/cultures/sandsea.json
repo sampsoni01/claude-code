@@ -1,0 +1,110 @@
+{
+ "name": "Sandsea",
+ "description": "Dunes and oases: al-, -abad, -shan, warm vowels.",
+ "corpus": [
+  "Alqashir",
+  "Bahrizad",
+  "Dalmara",
+  "Eshkanar",
+  "Farzahid",
+  "Ghulistan",
+  "Harmazad",
+  "Ishfahar",
+  "Jalmira",
+  "Kashmarand",
+  "Lurabad",
+  "Mirzahan",
+  "Nahrashid",
+  "Orzabad",
+  "Parvishan",
+  "Qalimar",
+  "Rashmandir",
+  "Sahrizad",
+  "Tarshahan",
+  "Ummarabad",
+  "Vazirshan",
+  "Yazdimar",
+  "Zamarand",
+  "Abrishar",
+  "Baltazir",
+  "Dahrmand",
+  "Eskabad",
+  "Firuzmar",
+  "Golshahan",
+  "Hamzabad",
+  "Isfaran",
+  "Jahandir",
+  "Karmashir",
+  "Lashkar",
+  "Mahrazid",
+  "Narzabad",
+  "Oshrahan",
+  "Parsimar",
+  "Qamarand",
+  "Rahmizad",
+  "Shirvand",
+  "Tabrizar",
+  "Ulmashan",
+  "Varzabad",
+  "Zahirmand",
+  "Amirzad",
+  "Bazmahar",
+  "Darvishan",
+  "Ferzabad",
+  "Gulmira",
+  "Hazrimand",
+  "Jamshar",
+  "Kalimand",
+  "Marzahan",
+  "Nurabad",
+  "Sarmazir",
+  "Tirmahar"
+ ],
+ "generics": {
+  "river": [
+   "Wadi {root}",
+   "River {root}",
+   "the {root}"
+  ],
+  "lake": [
+   "Lake {root}",
+   "{root} Oasis",
+   "Birkat {root}"
+  ],
+  "range": [
+   "Jebel {root}",
+   "The {root} Range"
+  ],
+  "peak": [
+   "Jebel {root}",
+   "Mount {root}"
+  ],
+  "forest": [
+   "{root} Palms",
+   "The {root} Groves"
+  ],
+  "settlement": [
+   "{root}",
+   "Al-{root}",
+   "{root}abad",
+   "Qasr {root}"
+  ],
+  "sea": [
+   "Bahr {root}",
+   "The {root} Sea"
+  ],
+  "bay": [
+   "Khalij {root}",
+   "{root} Bay"
+  ],
+  "region": [
+   "{root}stan",
+   "The {root} Sands",
+   "Emirate of {root}"
+  ],
+  "title": [
+   "The Sultanate of {root}",
+   "{root} and the Sandsea"
+  ]
+ }
+}

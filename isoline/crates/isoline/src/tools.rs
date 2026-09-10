@@ -15,11 +15,12 @@ pub enum Tool {
     WaterEdit,
     Place,
     Scatter,
+    Name,
     Pan,
 }
 
 impl Tool {
-    pub const ALL: [Tool; 11] = [
+    pub const ALL: [Tool; 12] = [
         Tool::Raise,
         Tool::Lower,
         Tool::Smooth,
@@ -28,6 +29,7 @@ impl Tool {
         Tool::Coast,
         Tool::Place,
         Tool::Scatter,
+        Tool::Name,
         Tool::Moisture,
         Tool::WaterEdit,
         Tool::Pan,
@@ -45,6 +47,7 @@ impl Tool {
             Tool::WaterEdit => "Water edit",
             Tool::Place => "Place symbol",
             Tool::Scatter => "Scatter symbols",
+            Tool::Name => "Name & label",
             Tool::Pan => "Pan",
         }
     }
@@ -59,6 +62,7 @@ impl Tool {
             Tool::Coast => "6",
             Tool::Place => "7",
             Tool::Scatter => "8",
+            Tool::Name => "N",
             Tool::Moisture => "9 (baked water only)",
             Tool::WaterEdit => "0 (baked water only)",
             Tool::Pan => "Space",
@@ -192,7 +196,7 @@ impl ToolState {
             Tool::Ridge => self.ridge.width,
             Tool::Coast => self.coast.band,
             Tool::Scatter => self.scatter.radius,
-            Tool::Place => 0.0,
+            Tool::Place | Tool::Name => 0.0,
             _ => self.brush.radius,
         }
     }

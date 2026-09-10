@@ -1,11 +1,13 @@
 //! Isoline — a field-based fantasy map maker.
 
 mod app;
+mod autoname;
 mod bench;
 mod camera;
 mod document;
 mod gpu;
 mod jobs;
+mod labels;
 mod library;
 mod tools;
 mod ui;

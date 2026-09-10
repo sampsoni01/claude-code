@@ -1,0 +1,112 @@
+{
+ "name": "Imperial",
+ "description": "Roads and provinces: Latin endings, -ium, -ora, -antis.",
+ "corpus": [
+  "Aurelium",
+  "Bravantis",
+  "Calderora",
+  "Dorantium",
+  "Eboracis",
+  "Faventia",
+  "Galloria",
+  "Hesperium",
+  "Ilvarra",
+  "Junctora",
+  "Lavantis",
+  "Meridium",
+  "Novaria",
+  "Ostravium",
+  "Palanthis",
+  "Quirora",
+  "Ravantium",
+  "Selvoria",
+  "Tarantis",
+  "Ulmaria",
+  "Valdoria",
+  "Xantium",
+  "Aquilora",
+  "Bellantis",
+  "Corvantium",
+  "Durantia",
+  "Elvorium",
+  "Ferrantis",
+  "Gravoria",
+  "Halcyum",
+  "Ivantia",
+  "Lucentis",
+  "Marvorium",
+  "Nertia",
+  "Orvantis",
+  "Pellucia",
+  "Rostravium",
+  "Salvantia",
+  "Tervorium",
+  "Umbria",
+  "Vestantis",
+  "Zephyria",
+  "Altoria",
+  "Brumantis",
+  "Cassium",
+  "Delvora",
+  "Estrantia",
+  "Florium",
+  "Gemantis",
+  "Hortoria",
+  "Ligantium",
+  "Montrova",
+  "Nivantis",
+  "Optaria",
+  "Portium",
+  "Rubrantis",
+  "Sextoria",
+  "Tullium",
+  "Vindoria"
+ ],
+ "generics": {
+  "river": [
+   "River {root}",
+   "the {root}",
+   "{root} Flumen"
+  ],
+  "lake": [
+   "Lake {root}",
+   "Lacus {root}"
+  ],
+  "range": [
+   "The {root} Mountains",
+   "Montes {root}",
+   "{root} Alps"
+  ],
+  "peak": [
+   "Mount {root}",
+   "{root} Peak"
+  ],
+  "forest": [
+   "{root} Forest",
+   "Silva {root}"
+  ],
+  "settlement": [
+   "{root}",
+   "{root} Nova",
+   "Porta {root}",
+   "Castra {root}"
+  ],
+  "sea": [
+   "Mare {root}",
+   "The {root} Sea"
+  ],
+  "bay": [
+   "{root} Bay",
+   "Sinus {root}"
+  ],
+  "region": [
+   "Provincia {root}",
+   "{root}",
+   "The {root} Province"
+  ],
+  "title": [
+   "The Empire of {root}",
+   "{root} and its Provinces"
+  ]
+ }
+}

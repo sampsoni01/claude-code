@@ -5,6 +5,7 @@
 
 use crate::field::{ScalarField, TILE_TEXELS};
 use crate::hydrology::River;
+use crate::entity::Entity;
 use crate::placement::Placement;
 use crate::water::LakePolygon;
 use std::collections::VecDeque;
@@ -54,6 +55,8 @@ pub enum UndoOp {
     },
     /// Manual symbol placements (whole list, small).
     Placements { before: Vec<Placement>, after: Vec<Placement> },
+    /// Named entities (whole list).
+    Entities { before: Vec<Entity>, after: Vec<Entity> },
 }
 
 impl UndoOp {
@@ -63,6 +66,7 @@ impl UndoOp {
             UndoOp::SeaLevel { .. } => 8,
             UndoOp::Geometry { before, after } => before.bytes() + after.bytes(),
             UndoOp::Placements { before, after } => (before.len() + after.len()) * 64,
+            UndoOp::Entities { before, after } => (before.len() + after.len()) * 256,
             UndoOp::Bake { baked_before, moisture_before, baked_after, moisture_after } => {
                 baked_before.as_ref().map(|g| g.bytes()).unwrap_or(0)
                     + baked_after.as_ref().map(|g| g.bytes()).unwrap_or(0)

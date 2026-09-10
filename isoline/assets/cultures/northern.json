@@ -1,0 +1,115 @@
+{
+ "name": "Northern",
+ "description": "Cold coasts and fjords: hard consonants, -vik, -fell, -dal.",
+ "corpus": [
+  "Askvik",
+  "Bjornfell",
+  "Dalgard",
+  "Eskvarr",
+  "Frostheim",
+  "Grimstad",
+  "Halvor",
+  "Isbrek",
+  "Jarnvik",
+  "Kaldfell",
+  "Lindholm",
+  "Morkvarr",
+  "Nordhavn",
+  "Ostgard",
+  "Ravnsdal",
+  "Skarvik",
+  "Thorbrand",
+  "Ulvstad",
+  "Vargheim",
+  "Ygdras",
+  "Brennholt",
+  "Ekkvarr",
+  "Fjellmark",
+  "Gullvik",
+  "Hjortdal",
+  "Kvistheim",
+  "Lysgard",
+  "Mjolnvik",
+  "Narvfell",
+  "Rimstad",
+  "Solvarr",
+  "Stormholm",
+  "Tindfell",
+  "Ulfheim",
+  "Vindgard",
+  "Yrjavik",
+  "Alvdal",
+  "Bruvik",
+  "Drakfell",
+  "Einarheim",
+  "Fenholm",
+  "Gravmark",
+  "Hakonvik",
+  "Ismark",
+  "Jotunfell",
+  "Kjellstad",
+  "Lodvarr",
+  "Myrkholm",
+  "Nattdal",
+  "Orkvik",
+  "Ragnfell",
+  "Snorrgard",
+  "Tyrvik",
+  "Valdheim",
+  "Vetrmark"
+ ],
+ "generics": {
+  "river": [
+   "{root} River",
+   "River {root}",
+   "{root}elv",
+   "{root}strom"
+  ],
+  "lake": [
+   "Lake {root}",
+   "{root}vatn",
+   "{root} Mere"
+  ],
+  "range": [
+   "The {root} Fells",
+   "{root}fjell",
+   "{root} Heights"
+  ],
+  "peak": [
+   "Mount {root}",
+   "{root}tind",
+   "{root} Horn"
+  ],
+  "forest": [
+   "{root}skog",
+   "The {root} Wood",
+   "{root} Forest"
+  ],
+  "settlement": [
+   "{root}",
+   "{root}vik",
+   "{root}stad",
+   "{root}heim",
+   "{root}gard"
+  ],
+  "sea": [
+   "The {root} Sea",
+   "{root} Deep",
+   "Sea of {root}"
+  ],
+  "bay": [
+   "{root} Fjord",
+   "{root} Bay"
+  ],
+  "region": [
+   "{root}land",
+   "The {root} Marches",
+   "{root}mark"
+  ],
+  "title": [
+   "{root}land",
+   "The Realm of {root}",
+   "{root} and the Northern Fells"
+  ]
+ }
+}
