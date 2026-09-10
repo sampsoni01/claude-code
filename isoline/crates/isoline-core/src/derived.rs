@@ -1,132 +1,141 @@
-//! The derived-system chain: elevation (+ sea level, climate and hydrology
-//! settings) → moisture → temperature → fill/flow/lakes/rivers → biomes →
-//! forest density. Runs on a snapshot of the elevation field, on a background
-//! thread, and returns a complete [`Derived`] set that the app swaps in.
+//! The derived chain: water (moisture + hydrology at simulation resolution)
+//! → temperature → biomes → forest density. Runs on a snapshot of the
+//! elevation field on a background thread; the app swaps the result in.
+//!
+//! When the water is *baked*, moisture and hydrology are skipped and the
+//! chain reads the baked geometry and moisture field instead.
 
 use crate::biome::{self, BiomeMatrix};
-use crate::climate::{self, ClimateParams};
+use crate::climate;
 use crate::field::ScalarField;
-use crate::hydrology::{self, HydrologyParams, Lake, River};
-use rayon::prelude::*;
+use crate::water::{self, WaterOutput, WaterParams, WaterTimings};
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::time::Instant;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Default)]
 pub struct DerivedParams {
-    pub hydrology: HydrologyParams,
-    pub climate: ClimateParams,
+    pub water: WaterParams,
     pub biomes: BiomeMatrix,
+}
+
+/// User-owned water after "Bake water": geometry that recomputation no
+/// longer touches, and a paintable moisture field at project resolution.
+#[derive(Clone, Debug)]
+pub struct BakedWater {
+    pub rivers: Vec<crate::hydrology::River>,
+    pub lakes: Vec<water::LakePolygon>,
+    pub moisture: ScalarField,
 }
 
 #[derive(Clone, Debug, Default)]
 pub struct DerivedTimings {
-    pub moisture_ms: f32,
+    pub water: WaterTimings,
+    pub water_raster_ms: f32,
     pub temperature_ms: f32,
-    pub fill_ms: f32,
-    pub flow_ms: f32,
-    pub lakes_ms: f32,
-    pub rivers_ms: f32,
-    pub water_ms: f32,
     pub biome_ms: f32,
     pub total_ms: f32,
 }
 
-/// Everything derived from the elevation field.
 #[derive(Clone, Debug)]
 pub struct Derived {
-    /// Precipitation, 0..1.
-    pub moisture: ScalarField,
-    /// °C.
+    /// Rivers, lakes and moisture — the only water data downstream may read.
+    pub water: WaterOutput,
+    /// Water coverage 0..1 at project resolution, for rendering.
+    pub water_cov: ScalarField,
+    /// °C at the simulation resolution of the moisture field.
     pub temperature: ScalarField,
-    /// Depression-filled surface.
-    pub filled: ScalarField,
-    /// Precipitation-weighted flow accumulation.
-    pub flow: ScalarField,
-    /// Water coverage 0..1 from lakes and rivers (sea excluded).
-    pub water: ScalarField,
-    /// Biome id per texel (see [`crate::biome::Biome`]).
+    /// Biome id per texel at project resolution.
     pub biome: Vec<u8>,
-    /// Tree cover 0..1 before user painting.
+    /// Tree cover 0..1 at project resolution.
     pub forest: ScalarField,
-    pub lake_ids: Vec<u32>,
-    pub lakes: Vec<Lake>,
-    pub rivers: Vec<River>,
-    pub river_threshold: f32,
     pub timings: DerivedTimings,
-    /// Set when the computation was cancelled part-way (results are partial).
     pub cancelled: bool,
+    pub baked: bool,
+}
+
+impl Derived {
+    /// Bytes held by this result on the CPU.
+    pub fn cpu_bytes(&self) -> u64 {
+        let moist = self.water.moisture.as_ref().map(|m| m.byte_len()).unwrap_or(0);
+        let geom: usize = self.water.rivers.iter().map(|r| r.points.len() * 12).sum::<usize>()
+            + self.water.lakes.iter().map(|l| l.polygon.points.len() * 8).sum::<usize>();
+        (moist + geom + self.water_cov.byte_len() + self.temperature.byte_len() + self.biome.len() + self.forest.byte_len()) as u64
+    }
 }
 
 fn ms(t: Instant) -> f32 {
     t.elapsed().as_secs_f32() * 1000.0
 }
 
-pub fn compute(elev: &ScalarField, sea_level: f32, p: &DerivedParams, cancel: &AtomicBool, progress: &AtomicU32) -> Derived {
+pub fn compute(
+    elev: &ScalarField,
+    sea_level: f32,
+    p: &DerivedParams,
+    baked: Option<&BakedWater>,
+    cancel: &AtomicBool,
+    progress: &AtomicU32,
+) -> Derived {
     let t_all = Instant::now();
-    let n = elev.data().len();
     let mut timings = DerivedTimings::default();
     let set = |v: u32| progress.store(v, Ordering::Relaxed);
 
-    let t = Instant::now();
-    let moisture = climate::moisture(elev, sea_level, &p.climate, cancel);
-    timings.moisture_ms = ms(t);
-    set(150);
-    let t = Instant::now();
-    let temperature = climate::temperature(elev, sea_level, &p.climate);
-    timings.temperature_ms = ms(t);
-    set(200);
+    let (water_out, moisture_for_biomes) = match baked {
+        Some(b) => {
+            let out = WaterOutput { rivers: b.rivers.clone(), lakes: b.lakes.clone(), moisture: None };
+            set(300);
+            (out, b.moisture.clone())
+        }
+        None => {
+            let (out, tm) = water::compute(elev, sea_level, &p.water, cancel);
+            timings.water = tm;
+            set(700);
+            let m = out.moisture.clone().unwrap_or_else(|| ScalarField::new(16, 16, 0.5));
+            (out, m)
+        }
+    };
+    if cancel.load(Ordering::Relaxed) {
+        return Derived {
+            water: water_out,
+            water_cov: ScalarField::new(1, 1, 0.0),
+            temperature: ScalarField::new(1, 1, 0.0),
+            biome: Vec::new(),
+            forest: ScalarField::new(1, 1, 0.0),
+            timings,
+            cancelled: true,
+            baked: baked.is_some(),
+        };
+    }
 
     let t = Instant::now();
-    let filled = hydrology::fill_depressions(elev, sea_level, cancel);
-    timings.fill_ms = ms(t);
-    set(550);
-
-    let t = Instant::now();
-    let dirs = hydrology::flow_directions(&filled, sea_level);
-    // Runoff weight is precipitation; arid ground loses flow.
-    let m = moisture.data();
-    let loss: Vec<f32> = m.par_iter().map(|&mv| p.hydrology.arid_loss * (1.0 - mv).powi(2)).collect();
-    let flow = hydrology::flow_accumulation(&filled, &dirs, m, &loss);
-    timings.flow_ms = ms(t);
-    set(750);
-
-    let t = Instant::now();
-    let (lake_ids, lakes) = hydrology::find_lakes(elev, &filled, Some(moisture.data()), &p.hydrology);
-    timings.lakes_ms = ms(t);
+    let water_cov = water::rasterize(&water_out, elev, sea_level);
+    timings.water_raster_ms = ms(t);
     set(800);
 
+    // Temperature at the simulation resolution (biomes sample it bilinearly).
     let t = Instant::now();
-    let net = hydrology::trace_rivers(&filled, &dirs, &flow, &lake_ids, sea_level, &p.hydrology);
-    timings.rivers_ms = ms(t);
+    let (sw, sh) = water::sim_size(elev.width(), elev.height(), p.water.sim_resolution.max(256));
+    let elev_sim = elev.downsample(sw, sh);
+    let temperature = climate::temperature(&elev_sim, sea_level, &p.water.climate);
+    timings.temperature_ms = ms(t);
     set(870);
 
     let t = Instant::now();
-    let water = hydrology::rasterize_water(elev, &dirs, &lake_ids, &net, sea_level, &p.hydrology);
-    timings.water_ms = ms(t);
-    set(930);
-
-    let t = Instant::now();
-    let (biome, forest) = biome::classify(elev, sea_level, &moisture, &temperature, &lake_ids, &p.biomes);
+    let lake_mask = water::lake_mask(&water_out, elev.width(), elev.height());
+    let (biome, forest) = biome::classify(elev, sea_level, &moisture_for_biomes, &temperature, &lake_mask, &p.biomes);
     timings.biome_ms = ms(t);
     set(1000);
     timings.total_ms = ms(t_all);
-    let _ = n;
 
     Derived {
-        moisture,
+        water: water_out,
+        water_cov,
         temperature,
-        filled,
-        flow: ScalarField::from_vec(elev.width(), elev.height(), flow),
-        water,
         biome,
         forest,
-        lake_ids,
-        lakes,
-        rivers: net.rivers,
-        river_threshold: net.threshold,
         timings,
         cancelled: cancel.load(Ordering::Relaxed),
+        baked: baked.is_some(),
     }
 }
 
@@ -138,13 +147,19 @@ mod tests {
     #[test]
     fn chain_runs_on_generated_terrain() {
         let e = generate(256, 256, &TerrainParams::default(), &AtomicU32::new(0), &AtomicBool::new(false));
-        let d = compute(&e, 0.0, &DerivedParams::default(), &AtomicBool::new(false), &AtomicU32::new(0));
+        let d = compute(&e, 0.0, &DerivedParams::default(), None, &AtomicBool::new(false), &AtomicU32::new(0));
         assert!(!d.cancelled);
-        assert!(!d.rivers.is_empty(), "a continent should have rivers");
-        assert!(d.water.data().iter().any(|v| *v > 0.5));
+        assert!(!d.water.rivers.is_empty(), "a continent should have rivers");
+        assert!(d.water_cov.data().iter().any(|v| *v > 0.5));
         let land = e.data().iter().filter(|v| **v > 0.0).count();
         let ocean = d.biome.iter().filter(|b| **b == 0).count();
         assert_eq!(ocean, e.data().len() - land);
         assert!(d.biome.iter().any(|b| *b != 0 && *b != 1));
+        // Baked path reuses geometry and skips hydrology.
+        let baked = BakedWater { rivers: d.water.rivers.clone(), lakes: d.water.lakes.clone(), moisture: d.water.moisture.clone().unwrap().resample(256, 256) };
+        let d2 = compute(&e, 0.0, &DerivedParams::default(), Some(&baked), &AtomicBool::new(false), &AtomicU32::new(0));
+        assert!(d2.baked);
+        assert_eq!(d2.water.rivers.len(), d.water.rivers.len());
+        assert_eq!(d2.timings.water.total_ms, 0.0);
     }
 }

@@ -30,7 +30,7 @@ pub struct BrushPass {
     params_buf: wgpu::Buffer,
     dab_buf: wgpu::Buffer,
     dab_capacity: usize,
-    bind_group: Option<wgpu::BindGroup>,
+    bind_groups: std::collections::HashMap<&'static str, wgpu::BindGroup>,
     pub last_dispatches: u32,
     pub last_texels: u64,
     pub last_dabs: u32,
@@ -123,16 +123,16 @@ impl BrushPass {
             params_buf,
             dab_buf,
             dab_capacity,
-            bind_group: None,
+            bind_groups: Default::default(),
             last_dispatches: 0,
             last_texels: 0,
             last_dabs: 0,
         }
     }
 
-    /// (Re)bind to a field texture. Call when the field is replaced.
-    pub fn bind(&mut self, device: &wgpu::Device, field: &GpuField) {
-        self.bind_group = Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
+    /// (Re)bind a named paintable field. Call when the field is replaced.
+    pub fn bind(&mut self, device: &wgpu::Device, name: &'static str, field: &GpuField) {
+        let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("brush bg"),
             layout: &self.layout,
             entries: &[
@@ -148,22 +148,29 @@ impl BrushPass {
                 wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::TextureView(&field.view) },
                 wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::TextureView(&field.scratch_view) },
             ],
-        }));
+        });
+        self.bind_groups.insert(name, bg);
+    }
+
+    pub fn unbind(&mut self, name: &str) {
+        self.bind_groups.remove(name);
     }
 
     /// Encode dispatches for up to `MAX_DABS_PER_FRAME` dabs. Returns the
     /// number consumed from the front of `dabs`; the tiles written are added
     /// to `dirty`.
+    #[allow(clippy::too_many_arguments)]
     pub fn encode(
         &mut self,
         queue: &wgpu::Queue,
         encoder: &mut wgpu::CommandEncoder,
+        name: &str,
         field: &GpuField,
         dabs: &[Dab],
         dirty: &mut TileSet,
         profiler: &mut GpuProfiler,
     ) -> usize {
-        let bind_group = self.bind_group.as_ref().expect("BrushPass::bind not called");
+        let bind_group = self.bind_groups.get(name).expect("BrushPass::bind not called for this field");
         let n = dabs.len().min(self.dab_capacity);
         if n == 0 {
             self.last_dispatches = 0;

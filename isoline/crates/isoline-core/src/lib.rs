@@ -14,23 +14,27 @@
 //! * [`terrain`] — initial terrain synthesis (fBm / domain warp) for new projects.
 //! * [`project`] — the on-disk project format and autosave/recovery.
 //! * [`stats`]   — incremental per-tile field statistics.
-//! * [`hydrology`], [`climate`], [`biome`] — the Milestone 2 derived systems:
-//!   depression fill, flow, lakes, rivers, orographic moisture, temperature
-//!   and biome classification.
+//! * [`water`]   — the water system boundary: moisture + hydrology at a capped
+//!   simulation resolution, exposing rivers, lake polygons and moisture only.
+//! * [`hydrology`], [`climate`], [`biome`], [`derived`] — fill/flow/lakes/rivers
+//!   (internal), moisture and temperature, biome classification, and the chain.
 
 pub mod biome;
 pub mod brush;
 pub mod climate;
 pub mod derived;
 pub mod field;
+pub mod geometry;
 pub mod graph;
 pub mod hydrology;
 pub mod noise;
+pub mod procedural;
 pub mod project;
 pub mod stats;
 pub mod terrain;
 pub mod tiles;
 pub mod undo;
+pub mod water;
 
 pub use field::{ScalarField, TILE};
 pub use tiles::{PixelRect, TileSet};

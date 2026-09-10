@@ -4,7 +4,7 @@
 use crate::gpu::brush::BrushPass;
 use crate::gpu::field::GpuField;
 use crate::gpu::profiler::GpuProfiler;
-use crate::document::Document;
+use crate::document::{Document, FieldKind};
 use crate::gpu::Gpu;
 use anyhow::{bail, Result};
 use isoline_core::brush::{apply_dabs, Dab, Falloff};
@@ -42,12 +42,33 @@ pub fn run(size: u32) -> Result<()> {
     {
         let params = isoline_core::derived::DerivedParams::default();
         let t = Instant::now();
-        let d = isoline_core::derived::compute(&terrain, 0.0, &params, &AtomicBool::new(false), &AtomicU32::new(0));
+        let d = isoline_core::derived::compute(&terrain, 0.0, &params, None, &AtomicBool::new(false), &AtomicU32::new(0));
         let tm = &d.timings;
+        let w = &tm.water;
         println!(
-            "derived chain (CPU): {:8.1} ms  = moisture {:.0} + temp {:.0} + fill {:.0} + flow {:.0} + lakes {:.0} + rivers {:.0} + water {:.0} + biome {:.0}   ({} rivers, {} lakes)",
-            ms(t), tm.moisture_ms, tm.temperature_ms, tm.fill_ms, tm.flow_ms, tm.lakes_ms, tm.rivers_ms, tm.water_ms, tm.biome_ms, d.rivers.len(), d.lakes.len()
+            "water (sim {}×{}): {:8.1} ms = downsample {:.0} + moisture {:.0} + fill {:.0} + flow {:.0} + lakes {:.0} + rivers {:.0} + vectorise {:.0}   ({} rivers, {} lakes)",
+            w.sim_width, w.sim_height, w.total_ms, w.downsample_ms, w.moisture_ms, w.fill_ms, w.flow_ms, w.lakes_ms, w.rivers_ms, w.vector_ms,
+            d.water.rivers.len(), d.water.lakes.len()
         );
+        println!(
+            "derived chain total: {:8.1} ms  (+ water raster {:.0} + temperature {:.0} + biome {:.0}); wall {:.0} ms",
+            tm.total_ms, tm.water_raster_ms, tm.temperature_ms, tm.biome_ms, ms(t)
+        );
+        println!(
+            "water memory: sim intermediates {:.1} MiB peak; derived result kept {:.1} MiB CPU; derived textures {:.1} MiB GPU (water+biome at project res, moisture+temp at sim res)",
+            w.sim_bytes as f64 / 1048576.0,
+            d.cpu_bytes() as f64 / 1048576.0,
+            (2.0 * (size as f64 * size as f64 * 4.0) + 2.0 * (w.sim_width as f64 * w.sim_height as f64 * 4.0) * 2.0) / 1048576.0
+        );
+        // Baked path: geometry reused, hydrology skipped.
+        let baked = isoline_core::derived::BakedWater {
+            rivers: d.water.rivers.clone(),
+            lakes: d.water.lakes.clone(),
+            moisture: d.water.moisture.clone().unwrap().resample(size, size),
+        };
+        let t = Instant::now();
+        let d2 = isoline_core::derived::compute(&terrain, 0.0, &params, Some(&baked), &AtomicBool::new(false), &AtomicU32::new(0));
+        println!("derived chain with baked water: {:8.1} ms (raster {:.0} + temperature {:.0} + biome {:.0})", ms(t), d2.timings.water_raster_ms, d2.timings.temperature_ms, d2.timings.biome_ms);
     }
     let mut doc = Document::new("bench", terrain, 0.0, 100.0);
 
@@ -59,7 +80,7 @@ pub fn run(size: u32) -> Result<()> {
     println!("upload to GPU:                         {:8.1} ms", ms(t));
 
     let mut brush = BrushPass::new(&gpu.device);
-    brush.bind(&gpu.device, &field);
+    brush.bind(&gpu.device, "elevation", &field);
     let mut profiler = GpuProfiler::new(&gpu.device, &gpu.queue, gpu.has_timestamps());
     let mut reference = doc.elevation.clone();
 
@@ -88,7 +109,7 @@ pub fn run(size: u32) -> Result<()> {
         let mut derived_ms = Vec::new();
         let mut tiles_total = 0u64;
         let mut cpu_ref_ms = 0.0f32;
-        doc.begin_stroke(name);
+        doc.begin_stroke(name, FieldKind::Elevation);
         for dabs in &batches {
             let t = Instant::now();
             profiler.begin_frame();
@@ -99,10 +120,10 @@ pub fn run(size: u32) -> Result<()> {
             }
             doc.stroke_will_touch(&rect);
             let mut dirty = doc.elevation.empty_tileset();
-            let n = brush.encode(&gpu.queue, &mut enc, &field, dabs, &mut dirty, &mut profiler);
+            let n = brush.encode(&gpu.queue, &mut enc, "elevation", &field, dabs, &mut dirty, &mut profiler);
             assert_eq!(n, dabs.len());
-            doc.pending_readback.union_with(&dirty);
-            field.encode_readback(&gpu.device, &mut enc, &mut doc.pending_readback);
+            doc.pending_readback_mut(FieldKind::Elevation).union_with(&dirty);
+            field.encode_readback(&gpu.device, &mut enc, doc.pending_readback_mut(FieldKind::Elevation));
             profiler.end_frame(&mut enc);
             gpu.queue.submit([enc.finish()]);
             field.after_submit();
@@ -127,7 +148,8 @@ pub fn run(size: u32) -> Result<()> {
             profiler.poll();
         }
         doc.end_stroke();
-        field.flush(&gpu.device, &gpu.queue, &mut doc.elevation, &mut doc.pending_readback);
+        let mut pending = doc.pending_readback_mut(FieldKind::Elevation).take();
+        field.flush(&gpu.device, &gpu.queue, &mut doc.elevation, &mut pending);
         let finalized = doc.try_finalize_strokes(field.has_in_flight());
         assert_eq!(finalized, 1, "stroke should produce one undo entry");
         let avg = frame_ms.iter().sum::<f32>() / frame_ms.len() as f32;
@@ -156,14 +178,34 @@ pub fn run(size: u32) -> Result<()> {
     // reproduce the original terrain exactly.
     let t = Instant::now();
     let mut uploaded = 0usize;
-    while let Some(tiles) = doc.undo() {
-        uploaded += tiles.len();
-        field.upload_tiles(&gpu.queue, &doc.elevation, tiles.into_iter());
+    while let Some(step) = doc.undo() {
+        if let Some((_, tiles)) = step {
+            uploaded += tiles.len();
+            field.upload_tiles(&gpu.queue, &doc.elevation, tiles.into_iter());
+        }
     }
     let undo_ms = ms(t);
     println!("undo 2 strokes ({uploaded} tile uploads, {:.1} MiB history): {undo_ms:6.1} ms", doc.undo.loaded_bytes() as f64 / 1048576.0);
     if doc.elevation.data() != original.data() {
         bail!("undo did not restore the mirror exactly");
+    }
+
+    // Procedural brushes on the CPU (ridge, coast) over a long diagonal stroke.
+    {
+        let path: Vec<[f32; 2]> = (0..40).map(|i| {
+            let k = i as f32 / 39.0;
+            [size as f32 * (0.2 + 0.6 * k), size as f32 * (0.3 + 0.4 * k) + (k * 12.0).sin() * size as f32 * 0.03]
+        }).collect();
+        let mut f = original.clone();
+        let rp = isoline_core::procedural::RidgeParams { width: size as f32 / 40.0, ..Default::default() };
+        let t = Instant::now();
+        let r = isoline_core::procedural::apply_ridge(&mut f, &path, &rp);
+        println!("ridge brush ({} texel rect):     {:8.1} ms", r.area(), ms(t));
+        let mut f = original.clone();
+        let cp = isoline_core::procedural::CoastParams { band: size as f32 / 24.0, ..Default::default() }.with_preset(isoline_core::procedural::CoastPreset::Fjord);
+        let t = Instant::now();
+        let r = isoline_core::procedural::apply_coast(&mut f, &path, 0.0, &cp);
+        println!("coast brush ({} texel rect):     {:8.1} ms", r.area(), ms(t));
     }
 
     // Full-field readback throughput (what a global GPU pass would cost to mirror).

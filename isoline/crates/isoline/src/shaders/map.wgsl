@@ -23,9 +23,11 @@ struct View {
     time: f32,
     _pad: f32,
     view_mode: u32,
-    flow_max: f32,
+    _pad2: f32,
     temp_min: f32,
     temp_max: f32,
+    moist_scale: vec2<f32>,
+    temp_scale: vec2<f32>,
     palette: array<vec4<f32>, 16>,
 };
 
@@ -40,7 +42,6 @@ const MODE_HYPSO: u32 = 1u;
 const MODE_BIOME_FLAT: u32 = 2u;
 const MODE_MOISTURE: u32 = 3u;
 const MODE_TEMPERATURE: u32 = 4u;
-const MODE_FLOW: u32 = 5u;
 
 @group(0) @binding(0) var<uniform> view: View;
 @group(0) @binding(1) var elev: texture_2d<f32>;
@@ -48,7 +49,6 @@ const MODE_FLOW: u32 = 5u;
 @group(0) @binding(3) var moist_tex: texture_2d<f32>;
 @group(0) @binding(4) var temp_tex: texture_2d<f32>;
 @group(0) @binding(5) var biome_tex: texture_2d<f32>;
-@group(0) @binding(6) var flow_tex: texture_2d<f32>;
 
 struct VsOut {
     @builtin(position) pos: vec4<f32>,
@@ -85,15 +85,19 @@ fn bilinear_water(fp: vec2<f32>) -> f32 {
     return mix(mix(a, b, t.x), mix(c, d, t.x), t.y);
 }
 
-fn bilinear_of(tex: texture_2d<f32>, fp: vec2<f32>) -> f32 {
-    let f = fp - vec2<f32>(0.5);
+// Bilinear sample of a texture that may be smaller than the field.
+fn bilinear_of(tex: texture_2d<f32>, fp: vec2<f32>, scale: vec2<f32>) -> f32 {
+    let dims = vec2<i32>(textureDimensions(tex));
+    let f = fp * scale - vec2<f32>(0.5);
     let i = floor(f);
     let t = f - i;
     let p = vec2<i32>(i);
-    let a = textureLoad(tex, clampc(p), 0).r;
-    let b = textureLoad(tex, clampc(p + vec2<i32>(1, 0)), 0).r;
-    let c = textureLoad(tex, clampc(p + vec2<i32>(0, 1)), 0).r;
-    let d = textureLoad(tex, clampc(p + vec2<i32>(1, 1)), 0).r;
+    let lo = vec2<i32>(0);
+    let hi = dims - vec2<i32>(1);
+    let a = textureLoad(tex, clamp(p, lo, hi), 0).r;
+    let b = textureLoad(tex, clamp(p + vec2<i32>(1, 0), lo, hi), 0).r;
+    let c = textureLoad(tex, clamp(p + vec2<i32>(0, 1), lo, hi), 0).r;
+    let d = textureLoad(tex, clamp(p + vec2<i32>(1, 1), lo, hi), 0).r;
     return mix(mix(a, b, t.x), mix(c, d, t.x), t.y);
 }
 
@@ -195,16 +199,11 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
                 color = view.palette[b & 15u].rgb * mix(1.0, shade, 0.25);
             }
             case MODE_MOISTURE: {
-                color = ramp_moisture(bilinear_of(moist_tex, fp)) * mix(1.0, shade, 0.3);
+                color = ramp_moisture(bilinear_of(moist_tex, fp, view.moist_scale)) * mix(1.0, shade, 0.3);
             }
             case MODE_TEMPERATURE: {
-                let tt = (bilinear_of(temp_tex, fp) - view.temp_min) / max(view.temp_max - view.temp_min, 1.0);
+                let tt = (bilinear_of(temp_tex, fp, view.temp_scale) - view.temp_min) / max(view.temp_max - view.temp_min, 1.0);
                 color = ramp_temperature(clamp(tt, 0.0, 1.0)) * mix(1.0, shade, 0.3);
-            }
-            case MODE_FLOW: {
-                let f = textureLoad(flow_tex, ti, 0).r;
-                let v = log(f + 1.0) / log(view.flow_max + 1.0);
-                color = mix(vec3<f32>(0.95, 0.94, 0.90), vec3<f32>(0.05, 0.15, 0.45), clamp(v, 0.0, 1.0)) * mix(1.0, shade, 0.3);
             }
             default: {
                 if (view.flags & FLAG_HYPSO) != 0u {
@@ -236,10 +235,8 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         color = mix(shallow, deep, sqrt(t));
         // Faint bathymetric relief, fading out in deep water.
         color *= mix(1.0, shade, 0.12 * (1.0 - t));
-        if mode == MODE_FLOW && has_derived {
-            let f = textureLoad(flow_tex, ti, 0).r;
-            let v = log(f + 1.0) / log(view.flow_max + 1.0);
-            color = mix(color, vec3<f32>(0.05, 0.15, 0.45), clamp(v, 0.0, 1.0) * 0.8);
+        if mode == MODE_MOISTURE && has_derived {
+            color = mix(color, ramp_moisture(bilinear_of(moist_tex, fp, view.moist_scale)), 0.5);
         }
     }
 

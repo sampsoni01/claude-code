@@ -6,6 +6,10 @@
 //! a strictly lower neighbour and drainage is total. Lakes are where the
 //! filled surface sits above the terrain; rivers are where precipitation-
 //! weighted accumulation exceeds a threshold.
+//!
+//! Flow accumulation, flow direction and the filled surface are internals of
+//! the water system: only [`crate::water`] consumes them. Downstream systems
+//! read [`crate::water::WaterOutput`].
 
 use crate::field::ScalarField;
 use rayon::prelude::*;
@@ -35,12 +39,6 @@ pub struct HydrologyParams {
     pub min_lake_area: u32,
     /// Fraction of flow lost per texel in fully arid cells.
     pub arid_loss: f32,
-    /// Extra width on low slopes (braiding), 0..1.
-    pub braid_strength: f32,
-    /// Slope (elevation units per texel) below which braiding starts.
-    pub braid_slope: f32,
-    /// Draw distributary fans where large rivers meet the sea.
-    pub deltas: bool,
     pub lakes_enabled: bool,
     /// Lakes whose mean precipitation is below this dry up (salt flats).
     pub lake_min_moisture: f32,
@@ -56,9 +54,6 @@ impl Default for HydrologyParams {
             min_lake_depth: 12.0,
             min_lake_area: 24,
             arid_loss: 0.015,
-            braid_strength: 0.6,
-            braid_slope: 2.5,
-            deltas: true,
             lakes_enabled: true,
             lake_min_moisture: 0.12,
         }
@@ -92,7 +87,7 @@ impl Ord for HeapItem {
 /// drainage base and are left untouched; land on the map border also drains
 /// off-map. Returns the filled surface. `cancel` aborts early with a partial
 /// (but valid) surface.
-pub fn fill_depressions(elev: &ScalarField, sea_level: f32, cancel: &AtomicBool) -> ScalarField {
+pub(crate) fn fill_depressions(elev: &ScalarField, sea_level: f32, cancel: &AtomicBool) -> ScalarField {
     let (w, h) = (elev.width() as usize, elev.height() as usize);
     let n = w * h;
     let src = elev.data();
@@ -175,7 +170,7 @@ pub fn fill_depressions(elev: &ScalarField, sea_level: f32, cancel: &AtomicBool)
 
 /// Steepest-descent D8 directions on the filled surface. Sea cells and cells
 /// with no lower neighbour get `NO_FLOW`.
-pub fn flow_directions(filled: &ScalarField, sea_level: f32) -> Vec<u8> {
+pub(crate) fn flow_directions(filled: &ScalarField, sea_level: f32) -> Vec<u8> {
     let (w, h) = (filled.width() as usize, filled.height() as usize);
     let data = filled.data();
     let mut dirs = vec![NO_FLOW; w * h];
@@ -210,7 +205,7 @@ pub fn flow_directions(filled: &ScalarField, sea_level: f32) -> Vec<u8> {
 
 /// Downstream cell index for a direction, if any.
 #[inline]
-pub fn downstream(i: usize, dir: u8, w: usize, h: usize) -> Option<usize> {
+pub(crate) fn downstream(i: usize, dir: u8, w: usize, h: usize) -> Option<usize> {
     if dir >= NO_FLOW {
         return None;
     }
@@ -228,7 +223,7 @@ pub fn downstream(i: usize, dir: u8, w: usize, h: usize) -> Option<usize> {
 /// `(inflow + weight) * (1 - loss)` where `loss` is per-cell runoff loss
 /// (arid ground). Cells are processed from highest to lowest, which is a
 /// valid topological order on the epsilon-filled surface.
-pub fn flow_accumulation(filled: &ScalarField, dirs: &[u8], weight: &[f32], loss: &[f32]) -> Vec<f32> {
+pub(crate) fn flow_accumulation(filled: &ScalarField, dirs: &[u8], weight: &[f32], loss: &[f32]) -> Vec<f32> {
     let (w, h) = (filled.width() as usize, filled.height() as usize);
     let n = w * h;
     let data = filled.data();
@@ -268,7 +263,7 @@ pub struct Lake {
 
 /// Label lakes. Returns per-cell lake id (0 = none) and the lake list.
 /// `moisture` (0..1 per cell) lets arid basins dry out; pass `None` to skip.
-pub fn find_lakes(elev: &ScalarField, filled: &ScalarField, moisture: Option<&[f32]>, p: &HydrologyParams) -> (Vec<u32>, Vec<Lake>) {
+pub(crate) fn find_lakes(elev: &ScalarField, filled: &ScalarField, moisture: Option<&[f32]>, p: &HydrologyParams) -> (Vec<u32>, Vec<Lake>) {
     let (w, h) = (elev.width() as usize, elev.height() as usize);
     let n = w * h;
     let e = elev.data();
@@ -337,7 +332,7 @@ pub fn find_lakes(elev: &ScalarField, filled: &ScalarField, moisture: Option<&[f
 }
 
 /// A traced river channel from a source down to a junction, lake, sea or edge.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct River {
     pub id: u32,
     /// Vertex positions in field coordinates (texel centres).
@@ -350,15 +345,16 @@ pub struct River {
     pub joins: Option<u32>,
 }
 
-pub struct RiverNetwork {
+pub(crate) struct RiverNetwork {
     pub rivers: Vec<River>,
     /// Per-cell channel width (0 = no channel).
     pub width: Vec<f32>,
+    #[allow(dead_code)]
     pub threshold: f32,
 }
 
 /// Width in texels for a given accumulation.
-pub fn channel_width(acc: f32, threshold: f32, p: &HydrologyParams) -> f32 {
+pub(crate) fn channel_width(acc: f32, threshold: f32, p: &HydrologyParams) -> f32 {
     if acc < threshold {
         return 0.0;
     }
@@ -366,7 +362,7 @@ pub fn channel_width(acc: f32, threshold: f32, p: &HydrologyParams) -> f32 {
 }
 
 /// Trace channels where accumulation exceeds the threshold.
-pub fn trace_rivers(
+pub(crate) fn trace_rivers(
     filled: &ScalarField,
     dirs: &[u8],
     acc: &[f32],
@@ -393,22 +389,9 @@ pub fn trace_rivers(
             }
         }
     }
-    // Slope per cell for braiding.
-    let slope = |i: usize| -> f32 {
-        match downstream(i, dirs[i], w, h) {
-            Some(d) => (f[i] - f[d]).max(0.0),
-            None => 0.0,
-        }
-    };
     for i in 0..n {
         if is_channel[i] {
-            let mut wd = channel_width(acc[i], threshold, p);
-            if p.braid_strength > 0.0 {
-                let s = slope(i);
-                let flat = (1.0 - s / p.braid_slope.max(1e-3)).clamp(0.0, 1.0);
-                wd *= 1.0 + p.braid_strength * flat * flat;
-            }
-            width[i] = wd.min(p.max_river_width * 1.5);
+            width[i] = channel_width(acc[i], threshold, p);
         }
     }
     // Sources: channel cells with no channel inflow. Trace each downstream
@@ -466,108 +449,6 @@ fn trunk_flow(mut c: usize, dirs: &[u8], acc: &[f32], is_channel: &[bool], w: us
         steps += 1;
     }
     acc[c]
-}
-
-/// Rasterize water coverage (0..1) from lakes and channel widths, with
-/// distributary fans at river mouths. The result is a field the renderer
-/// thresholds at 0.5 with screen-space anti-aliasing.
-pub fn rasterize_water(
-    elev: &ScalarField,
-    dirs: &[u8],
-    lake_ids: &[u32],
-    net: &RiverNetwork,
-    sea_level: f32,
-    p: &HydrologyParams,
-) -> ScalarField {
-    let (w, h) = (elev.width() as usize, elev.height() as usize);
-    let n = w * h;
-    let e = elev.data();
-    let mut cov = vec![0f32; n];
-    for i in 0..n {
-        if lake_ids[i] != 0 {
-            cov[i] = 1.0;
-        }
-    }
-    let stamp = |cov: &mut Vec<f32>, cx: f32, cy: f32, wd: f32| {
-        if wd <= 0.0 {
-            return;
-        }
-        let r = wd * 0.5;
-        if r <= 0.5 {
-            let i = cy as usize * w + cx as usize;
-            cov[i] = cov[i].max(wd.clamp(0.0, 1.0).max(0.55));
-            return;
-        }
-        let x0 = (cx - r).floor().max(0.0) as usize;
-        let y0 = (cy - r).floor().max(0.0) as usize;
-        let x1 = ((cx + r).ceil() as usize).min(w - 1);
-        let y1 = ((cy + r).ceil() as usize).min(h - 1);
-        for y in y0..=y1 {
-            for x in x0..=x1 {
-                let dx = x as f32 + 0.5 - cx;
-                let dy = y as f32 + 0.5 - cy;
-                let d = (dx * dx + dy * dy).sqrt();
-                let c = (r - d + 0.5).clamp(0.0, 1.0);
-                if c > 0.0 {
-                    let i = y * w + x;
-                    if e[i] > sea_level {
-                        cov[i] = cov[i].max(c);
-                    }
-                }
-            }
-        }
-    };
-    for i in 0..n {
-        let wd = net.width[i];
-        if wd > 0.0 {
-            stamp(&mut cov, (i % w) as f32 + 0.5, (i / w) as f32 + 0.5, wd);
-        }
-    }
-    if p.deltas {
-        for r in &net.rivers {
-            if r.points.len() < 6 || r.joins.is_some() {
-                continue;
-            }
-            let last = r.points[r.points.len() - 1];
-            let li = last[1] as usize * w + last[0] as usize;
-            if e[li] > sea_level {
-                continue; // did not reach the sea
-            }
-            let wd = r.widths[r.widths.len() - 2];
-            if wd < 3.0 {
-                continue;
-            }
-            // Direction of the last stretch.
-            let back = r.points[r.points.len().saturating_sub(6)];
-            let dir = [last[0] - back[0], last[1] - back[1]];
-            let len = (dir[0] * dir[0] + dir[1] * dir[1]).sqrt().max(1e-3);
-            let dir = [dir[0] / len, dir[1] / len];
-            let start = r.points[r.points.len() - 3];
-            let fan_len = (wd * 5.0).min(120.0);
-            for k in -2..=2 {
-                let ang = k as f32 * 0.32;
-                let (s, c) = ang.sin_cos();
-                let d = [dir[0] * c - dir[1] * s, dir[0] * s + dir[1] * c];
-                let mut t = 0.0;
-                while t < fan_len {
-                    let px = start[0] + d[0] * t;
-                    let py = start[1] + d[1] * t;
-                    if px < 0.0 || py < 0.0 || px >= w as f32 || py >= h as f32 {
-                        break;
-                    }
-                    let i = py as usize * w + px as usize;
-                    if e[i] <= sea_level && t > wd {
-                        break;
-                    }
-                    let taper = wd * (1.0 - t / fan_len) * if k == 0 { 1.0 } else { 0.6 };
-                    stamp(&mut cov, px, py, taper.max(1.0));
-                    t += 1.0;
-                }
-            }
-        }
-    }
-    let _ = dirs;
-    ScalarField::from_vec(elev.width(), elev.height(), cov)
 }
 
 #[cfg(test)]
@@ -646,7 +527,5 @@ mod tests {
             assert_eq!(r.points.len(), r.widths.len());
             assert!(r.widths.iter().all(|w| *w > 0.0));
         }
-        let water = rasterize_water(&e, &dirs, &ids, &net, 0.0, &p);
-        assert!(water.data().iter().any(|v| *v > 0.5));
     }
 }

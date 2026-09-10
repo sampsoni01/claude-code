@@ -159,19 +159,23 @@ impl BiomeMatrix {
     }
 }
 
-/// Per-cell biome ids and the derived forest-density field.
+/// Per-cell biome ids and the derived forest-density field. `moisture` and
+/// `temperature` may be at a lower resolution than `elev`; they are sampled
+/// bilinearly.
 pub fn classify(
     elev: &ScalarField,
     sea_level: f32,
     moisture: &ScalarField,
     temperature: &ScalarField,
-    lake_ids: &[u32],
+    lake_mask: &[bool],
     matrix: &BiomeMatrix,
 ) -> (Vec<u8>, ScalarField) {
     let (w, h) = (elev.width() as usize, elev.height() as usize);
     let e = elev.data();
-    let m = moisture.data();
-    let t = temperature.data();
+    let msx = moisture.width() as f32 / w as f32;
+    let msy = moisture.height() as f32 / h as f32;
+    let tsx = temperature.width() as f32 / w as f32;
+    let tsy = temperature.height() as f32 / h as f32;
     let mut biome = vec![0u8; w * h];
     let mut density = vec![0f32; w * h];
     biome
@@ -181,9 +185,13 @@ pub fn classify(
         .for_each(|(y, (brow, drow))| {
             for x in 0..w {
                 let i = y * w + x;
+                let px = x as f32 + 0.5;
+                let py = y as f32 + 0.5;
+                let mv = moisture.sample(px * msx, py * msy);
+                let tv = temperature.sample(px * tsx, py * tsy);
                 let b = if e[i] <= sea_level {
                     Biome::Ocean
-                } else if lake_ids[i] != 0 {
+                } else if lake_mask[i] {
                     Biome::Lake
                 } else {
                     // Slope from central differences.
@@ -192,8 +200,8 @@ pub fn classify(
                     let yu = e[y.saturating_sub(1) * w + x];
                     let yd = e[(y + 1).min(h - 1) * w + x];
                     let slope = ((xr - xl).abs() + (yd - yu).abs()) * 0.5;
-                    let b = matrix.classify(t[i], m[i]);
-                    if slope > matrix.alpine_slope && t[i] < 8.0 && b != Biome::Ice {
+                    let b = matrix.classify(tv, mv);
+                    if slope > matrix.alpine_slope && tv < 8.0 && b != Biome::Ice {
                         Biome::Alpine
                     } else {
                         b
@@ -201,7 +209,7 @@ pub fn classify(
                 };
                 brow[x] = b as u8;
                 // Treeline: fade cover as temperature drops toward -4 °C.
-                let treeline = ((t[i] + 4.0) / 6.0).clamp(0.0, 1.0);
+                let treeline = ((tv + 4.0) / 6.0).clamp(0.0, 1.0);
                 drow[x] = b.forest_density() * treeline;
             }
         });

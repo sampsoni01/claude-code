@@ -2,16 +2,21 @@ Isoline headless bench
   adapter: llvmpipe (LLVM 20.1.2, 256 bits) (Vulkan, Cpu)
   field:   2048 × 2048  (16 MiB per field)
   threads: 4 rayon workers
-terrain generation (CPU, all cores):      713.9 ms
-full stats scan (CPU):                      4.3 ms  (land 30.2%)
-derived chain (CPU):    714.2 ms  = moisture 111 + temp 9 + fill 221 + flow 277 + lakes 21 + rivers 43 + water 18 + biome 13   (231 rivers, 71 lakes)
-upload to GPU:                             32.0 ms
-raise   stroke: 800 dabs r=64 in 40 frames: encode+submit+readback avg    3.31 ms, max   18.20 ms; readback wait avg   3.13 ms; derived avg  0.305 ms; 543 tiles (8.5 MiB) synced; CPU reference 3.0 ms/frame; max |GPU-CPU| = 0.00000
-         GPU timestamp for last brush dispatch: 1.868 ms
-smooth  stroke: 800 dabs r=64 in 40 frames: encode+submit+readback avg    4.71 ms, max    6.39 ms; readback wait avg   4.49 ms; derived avg  0.299 ms; 543 tiles (8.5 MiB) synced; CPU reference 4.6 ms/frame; max |GPU-CPU| = 0.00000
-         GPU timestamp for last brush dispatch: 3.649 ms
-undo 2 strokes (266 tile uploads, 8.3 MiB history):    9.5 ms
-full readback of 1024 tiles (16 MiB):         26.2 ms  (0.60 GiB/s)
+terrain generation (CPU, all cores):      794.3 ms
+full stats scan (CPU):                      6.0 ms  (land 30.2%)
+water (sim 2048×2048):    691.9 ms = downsample 13 + moisture 108 + fill 220 + flow 276 + lakes 19 + rivers 48 + vectorise 7   (231 rivers, 71 lakes)
+derived chain total:    787.7 ms  (+ water raster 11 + temperature 19 + biome 54); wall 788 ms
+water memory: sim intermediates 116.0 MiB peak; derived result kept 68.1 MiB CPU; derived textures 96.0 MiB GPU (water+biome at project res, moisture+temp at sim res)
+derived chain with baked water:    108.3 ms (raster 18 + temperature 34 + biome 50)
+upload to GPU:                             34.1 ms
+raise   stroke: 800 dabs r=64 in 40 frames: encode+submit+readback avg    3.60 ms, max   17.99 ms; readback wait avg   3.35 ms; derived avg  0.325 ms; 543 tiles (8.5 MiB) synced; CPU reference 3.2 ms/frame; max |GPU-CPU| = 0.00000
+         GPU timestamp for last brush dispatch: 2.066 ms
+smooth  stroke: 800 dabs r=64 in 40 frames: encode+submit+readback avg    5.34 ms, max   12.83 ms; readback wait avg   5.09 ms; derived avg  0.323 ms; 543 tiles (8.5 MiB) synced; CPU reference 5.1 ms/frame; max |GPU-CPU| = 0.00000
+         GPU timestamp for last brush dispatch: 4.167 ms
+undo 2 strokes (266 tile uploads, 8.3 MiB history):    8.6 ms
+ridge brush (1818260 texel rect):        113.3 ms
+coast brush (1867778 texel rect):        145.9 ms
+full readback of 1024 tiles (16 MiB):         31.6 ms  (0.50 GiB/s)
 GPU field after undo matches original terrain bit-exactly
 device bytes for field + staging: 48.0 MiB
 allocator report total: 48.6 MiB
@@ -20,16 +25,21 @@ Isoline headless bench
   adapter: llvmpipe (LLVM 20.1.2, 256 bits) (Vulkan, Cpu)
   field:   4096 × 4096  (64 MiB per field)
   threads: 4 rayon workers
-terrain generation (CPU, all cores):     2834.6 ms
-full stats scan (CPU):                     16.8 ms  (land 30.2%)
-derived chain (CPU):   3941.5 ms  = moisture 548 + temp 82 + fill 1047 + flow 1888 + lakes 71 + rivers 130 + water 57 + biome 114   (190 rivers, 112 lakes)
-upload to GPU:                            172.7 ms
-raise   stroke: 800 dabs r=128 in 40 frames: encode+submit+readback avg   16.24 ms, max  103.58 ms; readback wait avg  15.57 ms; derived avg  0.751 ms; 1511 tiles (23.6 MiB) synced; CPU reference 12.7 ms/frame; max |GPU-CPU| = 0.00000
-         GPU timestamp for last brush dispatch: 8.253 ms
-smooth  stroke: 800 dabs r=128 in 40 frames: encode+submit+readback avg   21.90 ms, max   34.91 ms; readback wait avg  21.41 ms; derived avg  0.910 ms; 1511 tiles (23.6 MiB) synced; CPU reference 19.3 ms/frame; max |GPU-CPU| = 0.00000
-         GPU timestamp for last brush dispatch: 14.284 ms
-undo 2 strokes (824 tile uploads, 25.8 MiB history):   40.6 ms
-full readback of 4096 tiles (64 MiB):         98.0 ms  (0.64 GiB/s)
+terrain generation (CPU, all cores):     3083.8 ms
+full stats scan (CPU):                     15.7 ms  (land 30.2%)
+water (sim 2048×2048):    797.2 ms = downsample 24 + moisture 115 + fill 225 + flow 357 + lakes 21 + rivers 48 + vectorise 7   (223 rivers, 71 lakes)
+derived chain total:   1097.2 ms  (+ water raster 38 + temperature 39 + biome 214); wall 1097 ms
+water memory: sim intermediates 116.0 MiB peak; derived result kept 176.1 MiB CPU; derived textures 192.0 MiB GPU (water+biome at project res, moisture+temp at sim res)
+derived chain with baked water:    337.5 ms (raster 52 + temperature 27 + biome 202)
+upload to GPU:                            125.6 ms
+raise   stroke: 800 dabs r=128 in 40 frames: encode+submit+readback avg   10.77 ms, max   71.18 ms; readback wait avg  10.31 ms; derived avg  0.404 ms; 1511 tiles (23.6 MiB) synced; CPU reference 12.2 ms/frame; max |GPU-CPU| = 0.00000
+         GPU timestamp for last brush dispatch: 8.178 ms
+smooth  stroke: 800 dabs r=128 in 40 frames: encode+submit+readback avg   15.53 ms, max   21.42 ms; readback wait avg  15.15 ms; derived avg  0.386 ms; 1511 tiles (23.6 MiB) synced; CPU reference 18.8 ms/frame; max |GPU-CPU| = 0.00000
+         GPU timestamp for last brush dispatch: 10.705 ms
+undo 2 strokes (824 tile uploads, 25.8 MiB history):   37.9 ms
+ridge brush (7273040 texel rect):        444.5 ms
+coast brush (7460040 texel rect):        591.7 ms
+full readback of 4096 tiles (64 MiB):         85.0 ms  (0.74 GiB/s)
 GPU field after undo matches original terrain bit-exactly
 device bytes for field + staging: 192.0 MiB
 allocator report total: 192.6 MiB
@@ -38,16 +48,21 @@ Isoline headless bench
   adapter: llvmpipe (LLVM 20.1.2, 256 bits) (Vulkan, Cpu)
   field:   8192 × 8192  (256 MiB per field)
   threads: 4 rayon workers
-terrain generation (CPU, all cores):    10477.7 ms
-full stats scan (CPU):                     64.8 ms  (land 30.2%)
-derived chain (CPU):  26381.5 ms  = moisture 3449 + temp 320 + fill 5480 + flow 16062 + lakes 289 + rivers 379 + water 187 + biome 197   (133 rivers, 170 lakes)
-upload to GPU:                            553.8 ms
-raise   stroke: 800 dabs r=256 in 40 frames: encode+submit+readback avg   64.21 ms, max 1299.65 ms; readback wait avg  59.24 ms; derived avg  1.061 ms; 5217 tiles (81.5 MiB) synced; CPU reference 46.7 ms/frame; max |GPU-CPU| = 0.00000
-         GPU timestamp for last brush dispatch: 26.490 ms
-smooth  stroke: 800 dabs r=256 in 40 frames: encode+submit+readback avg   55.42 ms, max   88.47 ms; readback wait avg  54.11 ms; derived avg  1.133 ms; 5217 tiles (81.5 MiB) synced; CPU reference 74.6 ms/frame; max |GPU-CPU| = 0.00000
-         GPU timestamp for last brush dispatch: 42.300 ms
-undo 2 strokes (2926 tile uploads, 91.4 MiB history):  922.9 ms
-full readback of 16384 tiles (256 MiB):        571.5 ms  (0.44 GiB/s)
+terrain generation (CPU, all cores):    11814.0 ms
+full stats scan (CPU):                     54.8 ms  (land 30.2%)
+water (sim 2048×2048):    644.9 ms = downsample 29 + moisture 100 + fill 211 + flow 238 + lakes 18 + rivers 44 + vectorise 6   (219 rivers, 70 lakes)
+derived chain total:   1646.9 ms  (+ water raster 97 + temperature 38 + biome 862); wall 1648 ms
+water memory: sim intermediates 116.0 MiB peak; derived result kept 608.1 MiB CPU; derived textures 576.0 MiB GPU (water+biome at project res, moisture+temp at sim res)
+derived chain with baked water:   5041.7 ms (raster 640 + temperature 36 + biome 2037)
+upload to GPU:                            507.4 ms
+raise   stroke: 800 dabs r=256 in 40 frames: encode+submit+readback avg   34.76 ms, max  234.54 ms; readback wait avg  33.94 ms; derived avg  0.950 ms; 5217 tiles (81.5 MiB) synced; CPU reference 49.8 ms/frame; max |GPU-CPU| = 0.00000
+         GPU timestamp for last brush dispatch: 21.439 ms
+smooth  stroke: 800 dabs r=256 in 40 frames: encode+submit+readback avg   52.49 ms, max   63.66 ms; readback wait avg  51.73 ms; derived avg  0.907 ms; 5217 tiles (81.5 MiB) synced; CPU reference 69.2 ms/frame; max |GPU-CPU| = 0.00000
+         GPU timestamp for last brush dispatch: 48.323 ms
+undo 2 strokes (2926 tile uploads, 91.4 MiB history):  720.8 ms
+ridge brush (29083000 texel rect):       1616.3 ms
+coast brush (29830864 texel rect):       2160.7 ms
+full readback of 16384 tiles (256 MiB):        351.2 ms  (0.71 GiB/s)
 GPU field after undo matches original terrain bit-exactly
 device bytes for field + staging: 576.0 MiB
 allocator report total: 576.6 MiB

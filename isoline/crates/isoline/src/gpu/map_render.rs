@@ -17,17 +17,15 @@ pub enum ViewMode {
     BiomeFlat = 2,
     Moisture = 3,
     Temperature = 4,
-    Flow = 5,
 }
 
 impl ViewMode {
-    pub const ALL: [ViewMode; 6] = [
+    pub const ALL: [ViewMode; 5] = [
         ViewMode::BiomeShaded,
         ViewMode::Hypsometric,
         ViewMode::BiomeFlat,
         ViewMode::Moisture,
         ViewMode::Temperature,
-        ViewMode::Flow,
     ];
     pub fn label(self) -> &'static str {
         match self {
@@ -36,7 +34,6 @@ impl ViewMode {
             ViewMode::BiomeFlat => "Biomes",
             ViewMode::Moisture => "Moisture",
             ViewMode::Temperature => "Temperature",
-            ViewMode::Flow => "Flow accumulation",
         }
     }
 }
@@ -63,9 +60,12 @@ pub struct ViewUniform {
     pub time: f32,
     pub _pad: f32,
     pub view_mode: u32,
-    pub flow_max: f32,
+    pub _pad2: f32,
     pub temp_min: f32,
     pub temp_max: f32,
+    /// Moisture / temperature texture size divided by field size.
+    pub moist_scale: [f32; 2],
+    pub temp_scale: [f32; 2],
     pub palette: [[f32; 4]; 16],
 }
 
@@ -95,7 +95,6 @@ pub struct DerivedViews<'a> {
     pub moisture: &'a wgpu::TextureView,
     pub temperature: &'a wgpu::TextureView,
     pub biome: &'a wgpu::TextureView,
-    pub flow: &'a wgpu::TextureView,
 }
 
 impl MapRenderer {
@@ -123,7 +122,6 @@ impl MapRenderer {
                 tex_entry(3),
                 tex_entry(4),
                 tex_entry(5),
-                tex_entry(6),
             ],
         });
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -179,7 +177,6 @@ impl MapRenderer {
                 wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::TextureView(derived.moisture) },
                 wgpu::BindGroupEntry { binding: 4, resource: wgpu::BindingResource::TextureView(derived.temperature) },
                 wgpu::BindGroupEntry { binding: 5, resource: wgpu::BindingResource::TextureView(derived.biome) },
-                wgpu::BindGroupEntry { binding: 6, resource: wgpu::BindingResource::TextureView(derived.flow) },
             ],
         }));
     }

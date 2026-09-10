@@ -7,9 +7,108 @@ climate, biomes, forests, settlements) is *derived* from those fields, live.
 
 The coastline is literally the isoline `elevation == seaLevel`, hence the name.
 
-![Milestone 2](docs/milestone2.png)
+![Milestone 3](docs/milestone3.png)
 
-## Status: Milestone 2 — water and biome coupling
+## Status: Milestone 3 — procedural coastline and ridge brushes
+
+Both are *stroke-level* brushes: drag a control line, release, and the range
+or shoreline is generated over the affected rect on all cores and written
+into the elevation field through the normal tile-delta undo. Changing any
+parameter afterwards re-applies the last stroke, so you can tune a coast
+after drawing it.
+
+- **Ridge brush** (`isoline-core::procedural::apply_ridge`): a coherent
+  spine with height variation along its length and tapered ends, a peaked
+  cross profile (sharpness sets the exponent), asymmetric flank widths,
+  exponential foothills, secondary spurs running off the flanks (spur
+  frequency sets their spacing), surface roughness that scales with the
+  range, and a weathering age that lowers, rounds and smooths everything.
+  Additive, so it sits on whatever terrain is there.
+- **Coastline brush** (`apply_coast`): the control line becomes a signed
+  distance field; a domain-warped multi-octave noise displaces it; ridged
+  pulses along the arc length carve inlets whose depth tapers inland;
+  headland/bay bias shifts the mean; offshore islands and skerries come
+  from two more noise fields in the offshore zone. The elevation profile
+  on each side follows a gradient parameter, and the result blends into
+  the existing terrain at the band edges. Six **character presets** set
+  parameter bundles: fjord (deep narrow inlets, steep, skerries), drowned
+  river valley (branching inlets), barrier island and lagoon (an offshore
+  bar with gaps and a shallow lagoon), cliffed, deltaic (seaward lobes,
+  very low gradient), dune coast (smooth, low, with sand ridges). The
+  brush writes elevation, so the coast is still the sea-level isoline and
+  rivers and biomes follow it.
+- The stroke path is drawn as an overlay while dragging; `[` and `]` scale
+  the brush width; Escape cancels a stroke.
+
+### Water and climate amendment (applied this milestone)
+
+1. **Recompute modes**: Live, After stroke (default, 500 ms after the last
+   edit lands, previous result stays visible), Manual (`Recompute water`,
+   Ctrl+R). Water is excluded from the 100 ms coupled-recompute target.
+2. **Simulation resolution**: moisture and hydrology always run on a
+   downsampled copy at 2048² (longest edge), automatically dropping to
+   1024² after two consecutive runs over the 1 s budget. Rivers come out
+   as simplified, smoothed polylines with per-vertex width and tributary
+   links; lakes as polygons; both in project coordinates. Water coverage
+   for rendering is rasterized from that geometry at project resolution.
+3. **Bake water** (Water menu or panel): rivers and lakes become user-owned
+   geometry that recomputation no longer touches, moisture becomes a
+   paintable project-resolution field. The *Water edit* tool drags river
+   and lake vertices and deletes features; the *Moisture* brush paints
+   wetter, drier or smoothed moisture through the same GPU brush pipeline
+   as elevation. Unbake returns to derived water. Bake, unbake and every
+   geometry edit are undoable.
+4. **Interface**: `isoline_core::water::WaterOutput` (rivers, lake polygons,
+   moisture) is the only water data downstream systems can reach. Flow
+   accumulation, flow direction and the filled surface are crate-private
+   to `hydrology`.
+5. **Cuts**: braiding and fan deltas are removed (deltas come from the
+   deltaic coast preset). The flow view mode is gone. Erosion will be a
+   standalone GPU filter when it comes.
+6. **Undo** records only user-edited fields (elevation, baked moisture),
+   settings and user-owned geometry. Derived fields are never recorded.
+
+### Water recompute before and after the amendment
+
+Measured on four cores; the derived chain is CPU work so these are
+representative, unlike the GPU numbers.
+
+| Project | Before: chain | After: water (2048² sim) | After: full chain | Before: CPU kept | After: CPU kept (+116 MiB sim peak) | Before: GPU | After: GPU |
+|--------:|--------------:|-------------------------:|------------------:|-----------------:|------------------------------------:|------------:|-----------:|
+| 2048² | 0.71 s | 0.69 s | 0.79 s | ~135 MiB ×2 | 68 MiB | 80 MiB | 96 MiB |
+| 4096² | 3.9 s | 0.80 s | 1.1 s | ~540 MiB ×2 | 176 MiB | 320 MiB | 192 MiB |
+| 8192² | 26 s | 0.64 s | 1.6 s | ~2.1 GiB ×2 | 608 MiB | 1.25 GiB | 576 MiB |
+
+At 2048² the GPU figure went up slightly because the baked-water design
+keeps a scratch copy of the moisture texture for the smooth brush; at
+larger sizes it roughly halves. The "×2" before is the second CPU copy kept
+for tile diffing. After the change, the full chain at 8192² is dominated by
+biome classification at project resolution (0.9 s), not water. With baked
+water at 8192² the chain is slower (5 s) because moisture is then a
+project-resolution field that biome classification samples per texel; at
+2048² and 4096² the baked chain is 0.1 s and 0.3 s.
+
+"Before" memory is what Milestone 2 kept per result at project resolution:
+moisture, temperature, filled surface, flow, water, forest, lake ids and
+biome, plus a second copy for GPU diffing and five project-resolution GPU
+textures. "After" keeps water coverage, biome and forest at project
+resolution and moisture and temperature at simulation resolution; the
+simulation intermediates are freed when the job returns. With baked water
+the chain skips moisture and hydrology entirely (raster + temperature +
+biome only).
+
+### Deferred within Milestone 3
+
+- Coast and ridge strokes are applied on release; there is no live preview
+  of the generated result during the drag (only the control line).
+- Splines: strokes are polylines smoothed by the pointer filter, not
+  editable Catmull-Rom curves with handles. The re-apply path makes the
+  *parameters* editable after the fact; the *path* is not.
+- Water edit moves and deletes vertices; it does not insert vertices, draw
+  new rivers, or reconnect tributaries.
+- The deltaic preset produces lobes only; distributary channels are not cut.
+
+## Milestone 2 — water and biome coupling
 
 Everything below is derived from the elevation field and the map settings,
 recomputed on a background thread after every stroke, sea-level change or

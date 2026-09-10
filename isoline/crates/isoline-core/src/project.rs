@@ -14,7 +14,8 @@
 
 use crate::derived::DerivedParams;
 use crate::field::ScalarField;
-use crate::hydrology::{Lake, River};
+use crate::hydrology::River;
+use crate::water::LakePolygon;
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -120,7 +121,10 @@ pub struct Geometry {
     #[serde(default)]
     pub rivers: Vec<River>,
     #[serde(default)]
-    pub lakes: Vec<Lake>,
+    pub lakes: Vec<LakePolygon>,
+    /// True when the geometry (and the `moisture` field) is user-owned.
+    #[serde(default)]
+    pub baked: bool,
 }
 
 fn now_unix() -> u64 {

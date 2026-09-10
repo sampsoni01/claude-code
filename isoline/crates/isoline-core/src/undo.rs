@@ -3,7 +3,9 @@
 //! Entries beyond a RAM budget are spilled to files in a session-private
 //! directory and reloaded on demand, so history depth is bounded by disk.
 
-use crate::field::TILE_TEXELS;
+use crate::field::{ScalarField, TILE_TEXELS};
+use crate::hydrology::River;
+use crate::water::LakePolygon;
 use std::collections::VecDeque;
 use std::fs;
 use std::io::{self, Read, Write};
@@ -22,10 +24,33 @@ impl TileDelta {
     }
 }
 
+/// Rivers and lakes as one value (user-owned once baked).
+#[derive(Clone, Debug)]
+pub struct GeometrySnapshot {
+    pub rivers: Vec<River>,
+    pub lakes: Vec<LakePolygon>,
+}
+
+impl GeometrySnapshot {
+    pub fn bytes(&self) -> usize {
+        self.rivers.iter().map(|r| r.points.len() * 12 + 32).sum::<usize>() + self.lakes.iter().map(|l| l.polygon.points.len() * 8 + 16).sum::<usize>()
+    }
+}
+
+/// Only user-edited data is recorded: fields the user paints, settings the
+/// user changes, geometry the user owns. Derived water and climate fields
+/// are recomputed, never stored here.
 #[derive(Clone, Debug)]
 pub enum UndoOp {
     FieldTiles { field: String, deltas: Vec<TileDelta> },
     SeaLevel { before: f32, after: f32 },
+    Geometry { before: GeometrySnapshot, after: GeometrySnapshot },
+    Bake {
+        baked_before: Option<GeometrySnapshot>,
+        moisture_before: Option<ScalarField>,
+        baked_after: Option<GeometrySnapshot>,
+        moisture_after: Option<ScalarField>,
+    },
 }
 
 impl UndoOp {
@@ -33,6 +58,13 @@ impl UndoOp {
         match self {
             UndoOp::FieldTiles { deltas, .. } => deltas.iter().map(TileDelta::bytes).sum(),
             UndoOp::SeaLevel { .. } => 8,
+            UndoOp::Geometry { before, after } => before.bytes() + after.bytes(),
+            UndoOp::Bake { baked_before, moisture_before, baked_after, moisture_after } => {
+                baked_before.as_ref().map(|g| g.bytes()).unwrap_or(0)
+                    + baked_after.as_ref().map(|g| g.bytes()).unwrap_or(0)
+                    + moisture_before.as_ref().map(|m| m.byte_len()).unwrap_or(0)
+                    + moisture_after.as_ref().map(|m| m.byte_len()).unwrap_or(0)
+            }
         }
     }
 }

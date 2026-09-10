@@ -176,6 +176,56 @@ impl ScalarField {
         });
     }
 
+    /// Area-average resample to a smaller size (box filter over the source
+    /// texels covering each destination texel). Returns a clone if the size
+    /// is unchanged.
+    pub fn downsample(&self, width: u32, height: u32) -> ScalarField {
+        if width == self.width && height == self.height {
+            return self.clone();
+        }
+        let sx = self.width as f32 / width as f32;
+        let sy = self.height as f32 / height as f32;
+        let src = &self.data;
+        let sw = self.width as usize;
+        let mut out = vec![0f32; width as usize * height as usize];
+        out.par_chunks_mut(width as usize).enumerate().for_each(|(y, row)| {
+            let y0 = (y as f32 * sy).floor() as usize;
+            let y1 = (((y + 1) as f32 * sy).ceil() as usize).min(self.height as usize).max(y0 + 1);
+            for (x, o) in row.iter_mut().enumerate() {
+                let x0 = (x as f32 * sx).floor() as usize;
+                let x1 = (((x + 1) as f32 * sx).ceil() as usize).min(sw).max(x0 + 1);
+                let mut sum = 0.0;
+                let mut n = 0.0;
+                for yy in y0..y1 {
+                    let off = yy * sw;
+                    for v in &src[off + x0..off + x1] {
+                        sum += v;
+                        n += 1.0;
+                    }
+                }
+                *o = sum / n;
+            }
+        });
+        ScalarField::from_vec(width, height, out)
+    }
+
+    /// Bilinear resample to any size.
+    pub fn resample(&self, width: u32, height: u32) -> ScalarField {
+        if width == self.width && height == self.height {
+            return self.clone();
+        }
+        let sx = self.width as f32 / width as f32;
+        let sy = self.height as f32 / height as f32;
+        let mut out = vec![0f32; width as usize * height as usize];
+        out.par_chunks_mut(width as usize).enumerate().for_each(|(y, row)| {
+            let fy = (y as f32 + 0.5) * sy;
+            for (x, o) in row.iter_mut().enumerate() {
+                *o = self.sample((x as f32 + 0.5) * sx, fy);
+            }
+        });
+        ScalarField::from_vec(width, height, out)
+    }
+
     /// Indices of tiles whose contents differ between two same-sized fields.
     pub fn changed_tiles(&self, other: &ScalarField) -> Vec<u32> {
         assert_eq!((self.width, self.height), (other.width, other.height));
