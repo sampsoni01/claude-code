@@ -102,9 +102,14 @@ could not measure here. Per-frame numbers are for a batch of 20 dabs whose
 radius is 1/32 of the field edge, including the synchronous readback wait
 (the app itself never waits; readback lands the next frame).
 
-| Field | Terrain gen (CPU) | Raise: encode+submit+readback / frame | Smooth: same | Derived update / frame | Full readback |
-|------:|------------------:|--------------------------------------:|-------------:|-----------------------:|--------------:|
-| 2048² | see `docs/bench.txt` |  |  |  |  |
+| Field | Terrain gen (CPU) | Raise: encode+submit+readback / frame | Smooth: same | Derived update / frame | Undo 2 strokes | Full readback |
+|------:|------------------:|--------------------------------------:|-------------:|-----------------------:|---------------:|--------------:|
+| 2048² |   0.77 s | avg 3.4 ms, max 20 ms | avg 4.8 ms | 0.3 ms | 15 ms (266 tiles) | 27 ms (16 MiB) |
+| 4096² |   3.0 s  | avg 10 ms, max 64 ms | avg 16 ms | 0.5 ms | 58 ms (824 tiles) | 115 ms (64 MiB) |
+| 8192² |  11.6 s  | avg 76 ms, max 1.8 s* | avg 53 ms | 0.9 ms | 710 ms (2926 tiles) | 371 ms (256 MiB) |
+
+\* first frame: a 64 MiB staging buffer allocation plus pipeline warm-up on
+the software driver.
 
 Full numbers, including 4096² and 8192², are in `docs/bench.txt`. GPU/CPU
 brush agreement was exact (`max |GPU−CPU| = 0`) at every size, and undo

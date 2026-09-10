@@ -1,0 +1,53 @@
+   Compiling isoline v0.1.0 (/home/user/claude-code/isoline/crates/isoline)
+    Finished `release` profile [optimized + debuginfo] target(s) in 1m 30s
+Isoline headless bench
+  adapter: llvmpipe (LLVM 20.1.2, 256 bits) (Vulkan, Cpu)
+  field:   2048 × 2048  (16 MiB per field)
+  threads: 4 rayon workers
+terrain generation (CPU, all cores):      769.7 ms
+full stats scan (CPU):                      4.0 ms  (land 30.2%)
+upload to GPU:                             35.6 ms
+raise   stroke: 800 dabs r=64 in 40 frames: encode+submit+readback avg    3.36 ms, max   20.36 ms; readback wait avg   3.14 ms; derived avg  0.285 ms; 543 tiles (8.5 MiB) synced; CPU reference 2.9 ms/frame; max |GPU-CPU| = 0.00000
+         GPU timestamp for last brush dispatch: 2.008 ms
+smooth  stroke: 800 dabs r=64 in 40 frames: encode+submit+readback avg    4.78 ms, max    6.08 ms; readback wait avg   4.55 ms; derived avg  0.284 ms; 543 tiles (8.5 MiB) synced; CPU reference 4.6 ms/frame; max |GPU-CPU| = 0.00000
+         GPU timestamp for last brush dispatch: 3.061 ms
+undo 2 strokes (266 tile uploads, 8.3 MiB history):   14.8 ms
+full readback of 1024 tiles (16 MiB):         27.4 ms  (0.57 GiB/s)
+GPU field after undo matches original terrain bit-exactly
+device bytes for field + staging: 48.0 MiB
+allocator report total: 48.6 MiB
+
+Isoline headless bench
+  adapter: llvmpipe (LLVM 20.1.2, 256 bits) (Vulkan, Cpu)
+  field:   4096 × 4096  (64 MiB per field)
+  threads: 4 rayon workers
+terrain generation (CPU, all cores):     2995.3 ms
+full stats scan (CPU):                     16.5 ms  (land 30.2%)
+upload to GPU:                            162.4 ms
+raise   stroke: 800 dabs r=128 in 40 frames: encode+submit+readback avg   10.04 ms, max   63.86 ms; readback wait avg   9.47 ms; derived avg  0.460 ms; 1511 tiles (23.6 MiB) synced; CPU reference 12.1 ms/frame; max |GPU-CPU| = 0.00000
+         GPU timestamp for last brush dispatch: 6.861 ms
+smooth  stroke: 800 dabs r=128 in 40 frames: encode+submit+readback avg   16.07 ms, max   23.44 ms; readback wait avg  15.63 ms; derived avg  0.485 ms; 1511 tiles (23.6 MiB) synced; CPU reference 18.0 ms/frame; max |GPU-CPU| = 0.00000
+         GPU timestamp for last brush dispatch: 12.711 ms
+undo 2 strokes (824 tile uploads, 25.8 MiB history):   57.6 ms
+full readback of 4096 tiles (64 MiB):        114.9 ms  (0.54 GiB/s)
+GPU field after undo matches original terrain bit-exactly
+device bytes for field + staging: 192.0 MiB
+allocator report total: 192.6 MiB
+
+Isoline headless bench
+  adapter: llvmpipe (LLVM 20.1.2, 256 bits) (Vulkan, Cpu)
+  field:   8192 × 8192  (256 MiB per field)
+  threads: 4 rayon workers
+terrain generation (CPU, all cores):    11562.8 ms
+full stats scan (CPU):                     57.9 ms  (land 30.2%)
+upload to GPU:                            566.9 ms
+raise   stroke: 800 dabs r=256 in 40 frames: encode+submit+readback avg   75.85 ms, max 1831.87 ms; readback wait avg  71.43 ms; derived avg  0.919 ms; 5217 tiles (81.5 MiB) synced; CPU reference 45.6 ms/frame; max |GPU-CPU| = 0.00000
+         GPU timestamp for last brush dispatch: 16.230 ms
+smooth  stroke: 800 dabs r=256 in 40 frames: encode+submit+readback avg   53.32 ms, max   77.94 ms; readback wait avg  51.92 ms; derived avg  1.599 ms; 5217 tiles (81.5 MiB) synced; CPU reference 71.9 ms/frame; max |GPU-CPU| = 0.00000
+         GPU timestamp for last brush dispatch: 43.952 ms
+undo 2 strokes (2926 tile uploads, 91.4 MiB history):  709.6 ms
+full readback of 16384 tiles (256 MiB):        371.2 ms  (0.67 GiB/s)
+GPU field after undo matches original terrain bit-exactly
+device bytes for field + staging: 576.0 MiB
+allocator report total: 576.6 MiB
+
