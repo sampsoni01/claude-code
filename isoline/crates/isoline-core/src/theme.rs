@@ -52,15 +52,18 @@ pub enum ForestStyle {
     Clumps = 1,
     /// Stippled dots.
     Stipple = 2,
+    /// Tree symbols from the asset library (placed by the forest layer).
+    Symbols = 3,
 }
 
 impl ForestStyle {
-    pub const ALL: [ForestStyle; 3] = [ForestStyle::Clumps, ForestStyle::Stipple, ForestStyle::None];
+    pub const ALL: [ForestStyle; 4] = [ForestStyle::Symbols, ForestStyle::Clumps, ForestStyle::Stipple, ForestStyle::None];
     pub fn label(self) -> &'static str {
         match self {
             ForestStyle::None => "None",
             ForestStyle::Clumps => "Tree clumps",
             ForestStyle::Stipple => "Stipple",
+            ForestStyle::Symbols => "Tree symbols",
         }
     }
 }
@@ -119,7 +122,7 @@ impl Theme {
             hatch_strength: 0.9,
             hatch_spacing: 5.0,
             hillshade_strength: 0.35,
-            forest: ForestStyle::Clumps,
+            forest: ForestStyle::Symbols,
             forest_scale: 12.0,
             forest_threshold: 0.3,
             show_ornaments: true,
@@ -147,7 +150,7 @@ impl Theme {
             hatch_strength: 0.55,
             hatch_spacing: 5.0,
             hillshade_strength: 0.6,
-            forest: ForestStyle::Clumps,
+            forest: ForestStyle::Symbols,
             forest_scale: 12.0,
             forest_threshold: 0.3,
             show_ornaments: true,

@@ -15,6 +15,7 @@
 use crate::derived::DerivedParams;
 use crate::field::ScalarField;
 use crate::hydrology::River;
+use crate::placement::{ForestParams, MountainParams, Placement};
 use crate::theme::Theme;
 use crate::water::LakePolygon;
 use anyhow::{bail, Context, Result};
@@ -86,6 +87,8 @@ pub struct Manifest {
     pub render: RenderSettings,
     #[serde(default)]
     pub derived: DerivedParams,
+    #[serde(default)]
+    pub symbols: SymbolParams,
     pub saved_at_unix: u64,
     pub saved_at: String,
 }
@@ -104,9 +107,30 @@ impl Manifest {
             view: ViewState { center: [width as f32 / 2.0, height as f32 / 2.0], zoom: 0.0 },
             render: RenderSettings::default(),
             derived: DerivedParams::default(),
+            symbols: SymbolParams::default(),
             saved_at_unix: 0,
             saved_at: String::new(),
         }
+    }
+}
+
+/// Automatic symbol layers.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SymbolParams {
+    pub mountains: MountainParams,
+    pub forest: ForestParams,
+    /// Drop shadow strength for symbols.
+    #[serde(default = "default_shadow")]
+    pub shadow: f32,
+}
+
+fn default_shadow() -> f32 {
+    0.25
+}
+
+impl Default for SymbolParams {
+    fn default() -> Self {
+        Self { mountains: MountainParams::default(), forest: ForestParams::default(), shadow: default_shadow() }
     }
 }
 
@@ -129,6 +153,9 @@ pub struct Geometry {
     /// True when the geometry (and the `moisture` field) is user-owned.
     #[serde(default)]
     pub baked: bool,
+    /// Manual symbol placements.
+    #[serde(default)]
+    pub placements: Vec<Placement>,
 }
 
 fn now_unix() -> u64 {

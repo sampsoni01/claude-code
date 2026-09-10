@@ -4,7 +4,8 @@ use anyhow::Result;
 use isoline_core::derived::{BakedWater, Derived, DerivedParams};
 use isoline_core::field::ScalarField;
 use isoline_core::graph::{DepGraph, Edge, NodeId, Reach};
-use isoline_core::project::{Geometry, Manifest, ProjectData, RenderSettings, ViewState};
+use isoline_core::placement::Placement;
+use isoline_core::project::{Geometry, Manifest, ProjectData, RenderSettings, SymbolParams, ViewState};
 use isoline_core::stats::FieldStats;
 use isoline_core::tiles::{PixelRect, TileSet};
 use isoline_core::undo::{GeometrySnapshot, TileDelta, UndoOp, UndoStack};
@@ -85,6 +86,13 @@ pub struct Document {
     pub baked: Option<BakedWater>,
     /// Number of derived results that landed (for the profiler / status).
     pub derived_runs: u64,
+    /// User-placed symbols (persisted).
+    pub placements: Vec<Placement>,
+    /// Automatic symbol layers (regenerated).
+    pub auto_symbols: Vec<Placement>,
+    pub symbols: SymbolParams,
+    pub symbols_stale: bool,
+    pub next_placement_id: u64,
 }
 
 pub const UNDO_RAM_BUDGET: usize = 512 << 20;
@@ -150,6 +158,11 @@ impl Document {
             derived_requested: false,
             baked: None,
             derived_runs: 0,
+            placements: Vec::new(),
+            auto_symbols: Vec::new(),
+            symbols: SymbolParams::default(),
+            symbols_stale: true,
+            next_placement_id: 1,
         }
     }
 
@@ -169,6 +182,9 @@ impl Document {
         doc.render = manifest.render;
         doc.saved_view = manifest.view;
         doc.params = manifest.derived;
+        doc.symbols = manifest.symbols;
+        doc.placements = geometry.placements.clone();
+        doc.next_placement_id = doc.placements.iter().map(|p| p.id).max().unwrap_or(0) + 1;
         doc.path = path;
         if geometry.baked {
             let moisture = moisture.unwrap_or_else(|| ScalarField::new(doc.width(), doc.height(), 0.5));
@@ -184,15 +200,17 @@ impl Document {
         m.render = self.render.clone();
         m.view = view;
         m.derived = self.params.clone();
+        m.symbols = self.symbols.clone();
         let mut fields = vec![("elevation".to_string(), self.elevation.clone())];
-        let geometry = match (&self.baked, &self.derived) {
+        let mut geometry = match (&self.baked, &self.derived) {
             (Some(b), _) => {
                 fields.push(("moisture".into(), b.moisture.clone()));
-                Geometry { rivers: b.rivers.clone(), lakes: b.lakes.clone(), baked: true }
+                Geometry { rivers: b.rivers.clone(), lakes: b.lakes.clone(), baked: true, placements: Vec::new() }
             }
-            (None, Some(d)) => Geometry { rivers: d.water.rivers.clone(), lakes: d.water.lakes.clone(), baked: false },
+            (None, Some(d)) => Geometry { rivers: d.water.rivers.clone(), lakes: d.water.lakes.clone(), baked: false, placements: Vec::new() },
             _ => Geometry::default(),
         };
+        geometry.placements = self.placements.clone();
         ProjectData { manifest: m, fields, geometry }
     }
 
@@ -369,6 +387,11 @@ impl Document {
                 self.recompute_derived();
                 None
             }
+            UndoOp::Placements { before, after } => {
+                self.placements = if forward { after.clone() } else { before.clone() };
+                self.modified = true;
+                None
+            }
             UndoOp::Bake { baked_before, moisture_before, baked_after, moisture_after } => {
                 let (g, m) = if forward { (baked_after, moisture_after) } else { (baked_before, moisture_before) };
                 self.baked = match (g, m) {
@@ -478,6 +501,35 @@ impl Document {
         self.recompute_derived();
     }
 
+    // ---- symbols -----------------------------------------------------------
+
+    /// Commit a change to the manual placements as one undo entry.
+    pub fn commit_placements(&mut self, label: &str, before: Vec<Placement>) {
+        if before == self.placements {
+            return;
+        }
+        self.undo.push(label, UndoOp::Placements { before, after: self.placements.clone() });
+        self.modified = true;
+    }
+
+    pub fn new_placement_id(&mut self) -> u64 {
+        let id = self.next_placement_id;
+        self.next_placement_id += 1;
+        id
+    }
+
+    pub fn symbols_changed(&mut self) {
+        self.symbols_stale = true;
+        self.modified = true;
+    }
+
+    /// All symbols to draw, back to front.
+    pub fn all_symbols(&self) -> Vec<&Placement> {
+        let mut v: Vec<&Placement> = self.auto_symbols.iter().chain(self.placements.iter()).collect();
+        v.sort_by(|a, b| a.pos[1].partial_cmp(&b.pos[1]).unwrap_or(std::cmp::Ordering::Equal));
+        v
+    }
+
     // ---- derived data ------------------------------------------------------
 
     pub fn recompute_derived(&mut self) {
@@ -491,6 +543,7 @@ impl Document {
             self.graph.clear_dirty(self.nodes.derived);
             self.derived_stale = true;
             self.derived_last_change = Instant::now();
+            self.symbols_stale = true;
         }
         for n in [self.nodes.hillshade, self.nodes.coast, self.nodes.elevation, self.nodes.sea_level, self.nodes.settings, self.nodes.baked_water] {
             self.graph.clear_dirty(n);

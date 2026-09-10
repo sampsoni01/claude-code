@@ -19,6 +19,7 @@
 //! * [`hydrology`], [`climate`], [`biome`], [`derived`] — fill/flow/lakes/rivers
 //!   (internal), moisture and temperature, biome classification, and the chain.
 
+pub mod assets;
 pub mod biome;
 pub mod brush;
 pub mod climate;
@@ -28,6 +29,7 @@ pub mod geometry;
 pub mod graph;
 pub mod hydrology;
 pub mod noise;
+pub mod placement;
 pub mod procedural;
 pub mod project;
 pub mod stats;

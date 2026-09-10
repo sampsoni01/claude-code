@@ -5,7 +5,9 @@ use crate::document::Document;
 use crate::gpu::field::ReadbackStats;
 use crate::gpu::map_render::ViewMode;
 use crate::gpu::profiler::CpuStats;
+use crate::library::Library;
 use crate::tools::{MoistureMode, Tool, ToolState};
+use isoline_core::theme::ForestStyle as FS;
 use glam::Vec2;
 use isoline_core::biome::{Biome, MOIST_BINS, MOIST_BIN_LABELS, TEMP_BINS, TEMP_BIN_LABELS};
 use isoline_core::brush::Falloff;
@@ -174,6 +176,13 @@ pub enum UiAction {
     ReapplyLastStroke,
     DeleteSelectedWater,
     SelectTool(Tool),
+    SelectAsset { qid: String, additive: bool },
+    ToggleFavorite(String),
+    ImportImages,
+    AddPackDir,
+    RemovePackDir(PathBuf),
+    SymbolsChanged,
+    DeleteSelectedPlacement,
 }
 
 #[derive(Default)]
@@ -187,6 +196,10 @@ pub struct UiState {
     pub status: String,
     pub error: Option<String>,
     pub sea_drag_start: Option<f32>,
+    pub asset_query: String,
+    pub asset_category: Option<String>,
+    pub asset_favorites_only: bool,
+    pub show_packs: bool,
 }
 
 pub struct UiContext<'a> {
@@ -215,6 +228,11 @@ pub struct UiContext<'a> {
     pub has_last_procedural: Option<Tool>,
     pub water_selected: Option<WaterSel>,
     pub overlay: Overlay,
+    pub library: &'a Library,
+    pub atlas_tex: Option<egui::TextureId>,
+    pub symbols_running: bool,
+    pub selected_placement: Option<u64>,
+    pub sprite_count: u32,
 }
 
 fn fmt_bytes(b: u64) -> String {
@@ -371,6 +389,19 @@ fn tool_button(ui: &mut egui::Ui, tool: Tool, selected: bool, enabled: bool) -> 
             for (x, y) in [(-0.3, 0.1), (0.1, 0.2)] {
                 p.rect_filled(egui::Rect::from_center_size(pt(x, y), egui::vec2(6.0, 6.0)), 1.0, ink);
             }
+        }
+        Tool::Place => {
+            // A map pin.
+            let head: Vec<_> = (0..=16).map(|i| { let a = i as f32 / 16.0 * std::f32::consts::TAU; pt(a.cos() * 0.35, -0.25 + a.sin() * 0.35) }).collect();
+            p.add(egui::Shape::closed_line(head, s));
+            p.add(egui::Shape::line(vec![pt(-0.3, -0.05), pt(0.0, 0.7), pt(0.3, -0.05)], s));
+            p.circle_filled(pt(0.0, -0.25), 3.0, ink);
+        }
+        Tool::Scatter => {
+            for (x, y, r) in [(-0.45, -0.4, 3.0), (0.2, -0.5, 2.2), (0.5, 0.0, 3.4), (-0.15, 0.1, 2.6), (-0.55, 0.5, 2.4), (0.3, 0.55, 3.0)] {
+                p.circle_filled(pt(x, y), r, ink);
+            }
+            p.circle_stroke(c, u * 0.8, egui::Stroke::new(1.0, ink.gamma_multiply(0.5)));
         }
         Tool::Pan => {
             for (dx, dy) in [(0.0f32, -1.0f32), (0.0, 1.0), (-1.0, 0.0), (1.0, 0.0)] {
@@ -603,6 +634,36 @@ pub fn draw(root: &mut egui::Ui, st: &mut UiState, c: UiContext) -> Vec<UiAction
                         ui.label(format!("{} rivers, {} lakes (baked)", b.rivers.len(), b.lakes.len()));
                     }
                 }
+                Tool::Place => {
+                    ui.heading("Place symbol");
+                    ui.small("Click to stamp the selected symbol. Drag a placed symbol to move it. [ ] resize, Delete removes.");
+                    let mut sz = c.tools.place_size;
+                    let r = ui.add(egui::Slider::new(&mut sz, 0.0..=600.0).text("Size (0 = default)"));
+                    if r.changed() {
+                        c.tools.place_size = sz;
+                    }
+                    if let Some(qid) = c.tools.selected_assets.first() {
+                        ui.label(format!("Selected: {}", c.library.get(qid).map(|a| a.def.name.clone()).unwrap_or(qid.clone())));
+                    }
+                    if c.selected_placement.is_some() && ui.button("Delete placed symbol").clicked() {
+                        actions.push(UiAction::DeleteSelectedPlacement);
+                    }
+                    ui.label(format!("{} placed by hand", c.doc.placements.len()));
+                }
+                Tool::Scatter => {
+                    ui.heading("Scatter symbols");
+                    ui.small("Paint with the selected symbols (shift-click adds more). Erase mode removes placed symbols.");
+                    let sc = &mut c.tools.scatter;
+                    ui.add(egui::Slider::new(&mut sc.radius, 8.0..=800.0).logarithmic(true).text("Radius"));
+                    ui.add(egui::Slider::new(&mut sc.spacing, 3.0..=200.0).logarithmic(true).text("Spacing"));
+                    ui.add(egui::Slider::new(&mut sc.size_jitter, 0.0..=0.8).text("Size jitter"));
+                    ui.add(egui::Slider::new(&mut sc.rotation_jitter_deg, 0.0..=180.0).text("Rotation jitter"));
+                    ui.add(egui::Slider::new(&mut sc.max_slope, 1.0..=400.0).logarithmic(true).text("Max slope"));
+                    ui.checkbox(&mut sc.flip, "Random flip");
+                    ui.checkbox(&mut sc.avoid_water, "Avoid water");
+                    ui.checkbox(&mut sc.erase, "Erase mode");
+                    ui.label(format!("{} symbols selected", c.tools.selected_assets.len()));
+                }
                 Tool::Pan => {
                     ui.label("Drag to pan. Wheel to zoom.");
                 }
@@ -641,14 +702,35 @@ pub fn draw(root: &mut egui::Ui, st: &mut UiState, c: UiContext) -> Vec<UiAction
                 if th.relief != ReliefStyle::Hatched {
                     ui.add(egui::Slider::new(&mut th.hillshade_strength, 0.0..=1.0).text("Shading"));
                 }
+                let forest_before = th.forest;
                 egui::ComboBox::from_label("Woods").selected_text(th.forest.label()).show_ui(ui, |ui| {
                     for f in ForestStyle::ALL {
                         ui.selectable_value(&mut th.forest, f, f.label());
                     }
                 });
-                if th.forest != ForestStyle::None {
+                if th.forest != forest_before {
+                    actions.push(UiAction::SymbolsChanged);
+                }
+                if th.forest != ForestStyle::None && th.forest != ForestStyle::Symbols {
                     ui.add(egui::Slider::new(&mut th.forest_scale, 3.0..=24.0).text("Tree size"));
                     ui.add(egui::Slider::new(&mut th.forest_threshold, 0.0..=1.0).text("Tree cover"));
+                }
+                let sy = &mut c.doc.symbols;
+                let mut sym_changed = false;
+                sym_changed |= ui.checkbox(&mut sy.mountains.enabled, "Mountain symbols").changed();
+                if sy.mountains.enabled {
+                    sym_changed |= ui.add(egui::Slider::new(&mut sy.mountains.spacing, 8.0..=120.0).logarithmic(true).text("Mountain spacing")).drag_stopped();
+                    sym_changed |= ui.add(egui::Slider::new(&mut sy.mountains.size, 0.3..=3.0).text("Mountain size")).drag_stopped();
+                    sym_changed |= ui.add(egui::Slider::new(&mut sy.mountains.min_relief, 50.0..=1500.0).logarithmic(true).text("Peak relief")).drag_stopped();
+                }
+                if th.forest == FS::Symbols {
+                    sym_changed |= ui.add(egui::Slider::new(&mut sy.forest.spacing, 4.0..=60.0).logarithmic(true).text("Tree spacing")).drag_stopped();
+                    sym_changed |= ui.add(egui::Slider::new(&mut sy.forest.size, 0.3..=3.0).text("Tree size")).drag_stopped();
+                    sym_changed |= ui.add(egui::Slider::new(&mut sy.forest.threshold, 0.0..=1.0).text("Tree cover")).drag_stopped();
+                }
+                ui.add(egui::Slider::new(&mut sy.shadow, 0.0..=1.0).text("Symbol shadow"));
+                if sym_changed {
+                    actions.push(UiAction::SymbolsChanged);
                 }
                 let mut rings = th.coast_rings as i32;
                 ui.add(egui::Slider::new(&mut rings, 0..=8).text("Shore rings"));
@@ -707,11 +789,15 @@ pub fn draw(root: &mut egui::Ui, st: &mut UiState, c: UiContext) -> Vec<UiAction
                     changed = true;
                 }
                 let hy = &mut wp.hydrology;
-                let mut thr = hy.river_threshold_frac * 1e4;
-                if ui.add(egui::Slider::new(&mut thr, 0.1..=50.0).logarithmic(true).text("Fewer ↔ more rivers")).drag_stopped() {
+                // Displayed as "more rivers" = lower threshold.
+                let mut more = (50.0 - hy.river_threshold_frac * 1e4).clamp(0.0, 49.9);
+                let r = ui.add(egui::Slider::new(&mut more, 0.0..=49.9).text("Fewer ↔ more rivers"));
+                if r.changed() {
+                    hy.river_threshold_frac = (50.0 - more) * 1e-4;
+                }
+                if r.drag_stopped() {
                     changed = true;
                 }
-                hy.river_threshold_frac = 50.1e-4 - thr * 1e-4 + 0.1e-4;
                 changed |= ui.add(egui::Slider::new(&mut hy.river_width_scale, 0.2..=5.0).text("River width")).drag_stopped();
                 changed |= ui.checkbox(&mut hy.lakes_enabled, "Lakes").changed();
                 ui.horizontal(|ui| {
@@ -817,6 +903,100 @@ pub fn draw(root: &mut egui::Ui, st: &mut UiState, c: UiContext) -> Vec<UiAction
         });
     });
 
+    if c.tools.tool.uses_assets() {
+        egui::Panel::bottom("assets").default_size(210.0).resizable(true).show(root, |ui| {
+            ui.horizontal(|ui| {
+                ui.heading("Symbols");
+                ui.add(egui::TextEdit::singleline(&mut st.asset_query).hint_text("search name or tag").desired_width(160.0));
+                ui.toggle_value(&mut st.asset_favorites_only, "★ favourites");
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.button("Import image…").on_hover_text("PNG, JPG, WebP or SVG. Also: drop files onto the map.").clicked() {
+                        actions.push(UiAction::ImportImages);
+                    }
+                    if ui.button("Add pack folder…").clicked() {
+                        actions.push(UiAction::AddPackDir);
+                    }
+                    ui.toggle_value(&mut st.show_packs, "Packs");
+                });
+            });
+            ui.horizontal_wrapped(|ui| {
+                if ui.selectable_label(st.asset_category.is_none(), "All").clicked() {
+                    st.asset_category = None;
+                }
+                for cat in c.library.categories() {
+                    let sel = st.asset_category.as_deref() == Some(cat.as_str());
+                    if ui.selectable_label(sel, &cat).clicked() {
+                        st.asset_category = if sel { None } else { Some(cat.clone()) };
+                    }
+                }
+            });
+            if st.show_packs {
+                ui.horizontal_wrapped(|ui| {
+                    for p in &c.library.packs {
+                        ui.label(format!("{} ({} symbols)", p.manifest.name, p.assets.len()));
+                        if c.library.config.pack_dirs.contains(&p.root) && ui.small_button("remove").clicked() {
+                            actions.push(UiAction::RemovePackDir(p.root.clone()));
+                        }
+                        ui.separator();
+                    }
+                    if c.library.overflow > 0 {
+                        ui.colored_label(egui::Color32::from_rgb(230, 170, 80), format!("{} symbols did not fit the atlas", c.library.overflow));
+                    }
+                });
+            }
+            if !c.library.config.recent.is_empty() && st.asset_query.is_empty() && st.asset_category.is_none() && !st.asset_favorites_only {
+                ui.horizontal(|ui| {
+                    ui.small("Recent:");
+                    for qid in c.library.config.recent.iter().take(10) {
+                        if let Some(a) = c.library.get(qid) {
+                            if ui.small_button(&a.def.name).clicked() {
+                                actions.push(UiAction::SelectAsset { qid: qid.clone(), additive: false });
+                            }
+                        }
+                    }
+                });
+            }
+            let results = c.library.search(&st.asset_query, st.asset_category.as_deref(), st.asset_favorites_only);
+            let tile = 72.0;
+            egui::ScrollArea::vertical().show(ui, |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    ui.spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
+                    for a in results {
+                        let selected = c.tools.selected_assets.contains(&a.qid);
+                        let fav = c.library.config.favorites.contains(&a.qid);
+                        let (rect, resp) = ui.allocate_exact_size(egui::vec2(tile, tile + 18.0), egui::Sense::click());
+                        let v = ui.visuals();
+                        let fill = if selected { v.selection.bg_fill } else if resp.hovered() { v.widgets.hovered.bg_fill } else { v.widgets.inactive.bg_fill };
+                        let stroke = if selected { v.selection.stroke } else { egui::Stroke::new(1.0, egui::Color32::from_rgb(70, 58, 46)) };
+                        let p = ui.painter();
+                        p.rect(rect, egui::CornerRadius::same(6), fill, stroke, egui::StrokeKind::Inside);
+                        let img_rect = egui::Rect::from_min_size(rect.min + egui::vec2(4.0, 4.0), egui::vec2(tile - 8.0, tile - 8.0));
+                        p.rect_filled(img_rect, egui::CornerRadius::same(4), egui::Color32::from_rgb(236, 226, 200));
+                        if let (Some(tex), Some(r)) = (c.atlas_tex, a.rect) {
+                            let (uv0, uv1) = r.uv();
+                            let asp = r.aspect();
+                            let (w, h) = if asp >= 1.0 { (img_rect.width(), img_rect.width() / asp) } else { (img_rect.height() * asp, img_rect.height()) };
+                            let fit = egui::Rect::from_center_size(img_rect.center(), egui::vec2(w, h));
+                            p.image(tex, fit, egui::Rect::from_min_max(egui::pos2(uv0[0], uv0[1]), egui::pos2(uv1[0], uv1[1])), egui::Color32::WHITE);
+                        }
+                        p.text(egui::pos2(rect.center().x, rect.bottom() - 3.0), egui::Align2::CENTER_BOTTOM, &a.def.name, egui::FontId::proportional(10.0), v.text_color());
+                        let star = egui::Rect::from_min_size(rect.right_top() + egui::vec2(-16.0, 2.0), egui::vec2(14.0, 14.0));
+                        p.text(star.center(), egui::Align2::CENTER_CENTER, if fav { "★" } else { "☆" }, egui::FontId::proportional(12.0), if fav { egui::Color32::from_rgb(230, 190, 80) } else { v.text_color().gamma_multiply(0.6) });
+                        let resp = resp.on_hover_text(format!("{}\n{}\ntags: {}", a.def.name, a.pack, a.def.tags.join(", ")));
+                        if resp.clicked() {
+                            let pos = resp.interact_pointer_pos().unwrap_or(rect.center());
+                            if star.expand(3.0).contains(pos) {
+                                actions.push(UiAction::ToggleFavorite(a.qid.clone()));
+                            } else {
+                                actions.push(UiAction::SelectAsset { qid: a.qid.clone(), additive: ui.input(|i| i.modifiers.shift) });
+                            }
+                        }
+                    }
+                });
+            });
+        });
+    }
+
     egui::Panel::bottom("status").show(root, |ui| {
         ui.horizontal(|ui| {
             match c.cursor_field {
@@ -847,9 +1027,14 @@ pub fn draw(root: &mut egui::Ui, st: &mut UiState, c: UiContext) -> Vec<UiAction
                 ui.add(egui::ProgressBar::new(*p).desired_width(160.0).text(name.as_str()));
                 ui.separator();
             }
-            ui.label(&st.status);
+            if c.symbols_running {
+                ui.small("placing symbols…");
+                ui.separator();
+            }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.monospace(format!("{:.1} ms", c.cpu.avg_frame_ms()));
+                ui.monospace(format!("{:.1} ms · {} symbols", c.cpu.avg_frame_ms(), c.sprite_count));
+                ui.separator();
+                ui.add(egui::Label::new(&st.status).truncate());
             });
         });
     });

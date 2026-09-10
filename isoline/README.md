@@ -7,6 +7,64 @@ climate, biomes, forests, settlements) is *derived* from those fields, live.
 
 The coastline is literally the isoline `elevation == seaLevel`, hence the name.
 
+![Milestone 4](docs/milestone4.png)
+
+## Status: Milestone 4 — assets
+
+- **Default library** (`assets/packs/default`, 63 symbols, CC0): mountains
+  and snow peaks, ranges, hills, conifers and broadleaf trees in summer,
+  autumn, winter and ink-only variants, palm, dead tree, forest clusters,
+  village, town, city, castle, tower, ruins, temple, windmill, lighthouse,
+  bridge, cave, mine, ship, galley, sea serpent, kraken, anchor, compass
+  rose, cartouche, banner, scale bar, skull, camp, X. They are SVGs written
+  by `tools/gen_default_pack.py` with deliberate wobble and hatching so they
+  read as pen work; regenerate or replace them freely.
+- **Packs** (`isoline-core::assets`): a folder with an optional `pack.json`
+  (name, author, licence, per-asset id, tags, category, pivot, world size,
+  behaviour: rotation and scale ranges, flip, tint, hue jitter, shadow,
+  snap-to-ground, terrain filter). Image files not in the manifest are
+  registered with defaults and tagged by sub-folder. The folder name is the
+  pack id, so project references stay stable.
+- **Library** (`crates/isoline/src/library.rs`): built-in packs, user pack
+  folders (registered in the per-user config, or by dropping a pack folder
+  on the window), and the project's own `assets/` folder. Folders are
+  watched; adding or editing an image rebuilds the atlas within half a
+  second, no restart. Search by name, tag, pack or category, favourites,
+  recent list.
+- **Import**: drop a PNG, JPG, WebP or SVG on the map (or Import image…).
+  Transparent margins are trimmed; JPGs and fully opaque PNGs get a chroma
+  key from the corner colour with a soft edge; the result is copied into
+  the project's assets folder and appears in the browser immediately. SVGs
+  are kept as SVG and rasterised at 256 px through resvg.
+- **Rendering**: one 4096² RGBA atlas and an instanced sprite pass in field
+  coordinates, drawn back to front by y with an optional drop shadow, so a
+  peak in front overlaps the one behind it.
+- **Automatic layers** (`isoline-core::placement`): mountain and hill
+  symbols on crests and peaks (highest texel per cell, relief threshold,
+  prominence-first collision), snow variants where it is cold, sized by
+  height; tree symbols from the forest-density field with species by
+  temperature (palms, conifers, broadleaf) and ink-only variants on the
+  ink theme, never in water or on cliffs. Both are regenerated after the
+  derived chain lands, with spacing, size and threshold sliders in Look.
+- **Tools**: *Place symbol* (click to stamp, drag to move, `[` `]` resize,
+  Delete) and *Scatter symbols* (Poisson-disc brush over the selected
+  symbols with spacing, size and rotation jitter, water avoidance, slope
+  limit, erase mode). Manual placements are undoable and saved in the
+  project's `geometry.json`.
+
+### Deferred within Milestone 4
+
+- Terrain filters on scatter cover land/water and slope; biome, elevation
+  and distance-to-water predicates exist in the core but are not yet
+  exposed in the brush panel.
+- Outline and hue-jitter behaviours are stored but not rendered.
+- The atlas is a single 4096² page; packs beyond it get downscaled copies
+  and the browser reports how many did not fit.
+- Symbols scale with the map. A minimum on-screen size for far zoom-out,
+  and the icon-versus-detail switch, come with settlements in Milestone 7.
+- Tree density on the map still reads heavier than the references; the
+  next pass should cluster trees into groves rather than sprinkle them.
+
 ![Parchment & ink theme](docs/theme-ink.png)
 
 ## Look and feel pass (after Milestone 3)
@@ -282,6 +340,7 @@ cargo run --release -- --open My.isoline
 cargo run --release -- --bench 4096     # headless benchmark, no window needed
 cargo run --release -- --demo --screenshot out.png   # scripted strokes, save, capture, exit
 cargo run --release -- --theme illuminated           # start with a given theme
+cargo run --release -- --open My.isoline --zoom 1.5 --center 0.6 0.4   # start zoomed on a spot
 cargo test                              # core unit tests
 ```
 

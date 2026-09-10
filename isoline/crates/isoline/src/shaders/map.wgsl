@@ -372,7 +372,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
             }
         }
         // Woods.
-        if has_derived && fantasy && mode == MODE_MAP && view.forest_style != FOREST_NONE {
+        if has_derived && fantasy && mode == MODE_MAP && (view.forest_style == FOREST_CLUMPS || view.forest_style == FOREST_STIPPLE) {
             let fm = forest_marks(fp, ti);
             color = mix(color, view.forest_fill * (0.9 + 0.1 * shade), fm.x * 0.85);
             ink_mask = max(ink_mask, fm.y * 0.8);
@@ -385,11 +385,13 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
             let a = smoothstep(thr - aa, thr + aa, wc);
             let edge = 1.0 - smoothstep(thr, thr + aa * 3.0, wc);
             if fantasy {
-                color = mix(color, view.sea_fill, a);
-                ink_mask = max(ink_mask, a * edge * 0.9);
-                // Thin rivers read as ink strokes.
-                let thin = smoothstep(0.35, 0.65, wc) * (1.0 - smoothstep(0.65, 1.0, wc));
-                color = mix(color, view.river_ink, thin * a * 0.7);
+                // Wide water: paper-blue fill with an ink shoreline. Narrow
+                // channels: a solid ink stroke so rivers survive zooming out.
+                let interior = smoothstep(0.7, 0.95, wc);
+                color = mix(color, view.sea_fill, a * interior);
+                let stroke = a * (1.0 - interior * (1.0 - edge));
+                color = mix(color, view.river_ink, stroke * 0.9);
+                ink_mask = max(ink_mask, stroke * 0.35);
             } else {
                 var wcol = view.river_ink * mix(1.0, shade, 0.2);
                 wcol = mix(wcol, vec3<f32>(0.12, 0.20, 0.32), edge * 0.6);

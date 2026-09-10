@@ -13,17 +13,21 @@ pub enum Tool {
     Coast,
     Moisture,
     WaterEdit,
+    Place,
+    Scatter,
     Pan,
 }
 
 impl Tool {
-    pub const ALL: [Tool; 9] = [
+    pub const ALL: [Tool; 11] = [
         Tool::Raise,
         Tool::Lower,
         Tool::Smooth,
         Tool::Flatten,
         Tool::Ridge,
         Tool::Coast,
+        Tool::Place,
+        Tool::Scatter,
         Tool::Moisture,
         Tool::WaterEdit,
         Tool::Pan,
@@ -39,6 +43,8 @@ impl Tool {
             Tool::Coast => "Coast",
             Tool::Moisture => "Moisture",
             Tool::WaterEdit => "Water edit",
+            Tool::Place => "Place symbol",
+            Tool::Scatter => "Scatter symbols",
             Tool::Pan => "Pan",
         }
     }
@@ -51,9 +57,11 @@ impl Tool {
             Tool::Flatten => "4",
             Tool::Ridge => "5",
             Tool::Coast => "6",
-            Tool::Moisture => "7 (baked water only)",
-            Tool::WaterEdit => "8 (baked water only)",
-            Tool::Pan => "9 / Space",
+            Tool::Place => "7",
+            Tool::Scatter => "8",
+            Tool::Moisture => "9 (baked water only)",
+            Tool::WaterEdit => "0 (baked water only)",
+            Tool::Pan => "Space",
         }
     }
 
@@ -81,6 +89,30 @@ impl Tool {
     pub fn needs_baked_water(self) -> bool {
         matches!(self, Tool::Moisture | Tool::WaterEdit)
     }
+
+    pub fn uses_assets(self) -> bool {
+        matches!(self, Tool::Place | Tool::Scatter)
+    }
+}
+
+/// Scatter brush settings.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ScatterSettings {
+    pub radius: f32,
+    /// Spacing between symbols in texels.
+    pub spacing: f32,
+    pub size_jitter: f32,
+    pub rotation_jitter_deg: f32,
+    pub flip: bool,
+    pub avoid_water: bool,
+    pub max_slope: f32,
+    pub erase: bool,
+}
+
+impl Default for ScatterSettings {
+    fn default() -> Self {
+        Self { radius: 120.0, spacing: 22.0, size_jitter: 0.25, rotation_jitter_deg: 0.0, flip: true, avoid_water: true, max_slope: 80.0, erase: false }
+    }
 }
 
 /// Moisture brush direction.
@@ -105,6 +137,10 @@ pub struct ToolState {
     pub stroke_dabs: u32,
     /// Raw path of an in-progress procedural stroke, in field coordinates.
     pub path: Vec<[f32; 2]>,
+    /// Selected asset (qualified id) for Place / Scatter; several for scatter.
+    pub selected_assets: Vec<String>,
+    pub place_size: f32,
+    pub scatter: ScatterSettings,
 }
 
 impl Default for ToolState {
@@ -121,6 +157,9 @@ impl Default for ToolState {
             stroke_seed: 0x1234_5678,
             stroke_dabs: 0,
             path: Vec::new(),
+            selected_assets: Vec::new(),
+            place_size: 0.0,
+            scatter: ScatterSettings::default(),
         }
     }
 }
@@ -152,6 +191,8 @@ impl ToolState {
             Tool::Moisture => self.moisture_brush.radius,
             Tool::Ridge => self.ridge.width,
             Tool::Coast => self.coast.band,
+            Tool::Scatter => self.scatter.radius,
+            Tool::Place => 0.0,
             _ => self.brush.radius,
         }
     }

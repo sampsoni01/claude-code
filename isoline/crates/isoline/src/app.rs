@@ -6,6 +6,8 @@ use crate::gpu::brush::{BrushPass, MAX_DABS_PER_FRAME};
 use crate::gpu::field::GpuField;
 use crate::gpu::map_render::{DerivedViews, MapRenderer, ViewMode, ViewUniform, FLAG_CONTOURS, FLAG_CURSOR, FLAG_HAS_DERIVED, FLAG_HYPSO, FLAG_WATER};
 use crate::gpu::profiler::{CpuStats, GpuProfiler};
+use crate::gpu::sprites::{Atlas, SpriteInstance, SpritePass};
+use crate::library::Library;
 use crate::gpu::Gpu;
 use crate::jobs::Job;
 use crate::tools::{Tool, ToolState};
@@ -16,10 +18,12 @@ use isoline_core::biome::Biome;
 use isoline_core::brush::{StrokeInput, StrokeSampler};
 use isoline_core::derived::{self, Derived};
 use isoline_core::field::ScalarField;
+use isoline_core::placement::{self, Placement, PlacementLayer, Rng, SpatialHash, Terrain};
 use isoline_core::procedural::{self, CoastPreset};
 use isoline_core::project::{self, ProjectData, ViewState};
 use isoline_core::terrain;
 use isoline_core::theme::{ForestStyle, ReliefStyle, Theme, ThemeStyle};
+use isoline_core::assets::TerrainFilter;
 use isoline_core::tiles::PixelRect;
 use isoline_core::undo::GeometrySnapshot;
 use isoline_core::water::RecomputeMode;
@@ -46,11 +50,13 @@ pub struct StartupOptions {
     pub demo: bool,
     pub screenshot: Option<PathBuf>,
     pub theme: Option<String>,
+    pub zoom: Option<f32>,
+    pub center: Option<(f32, f32)>,
 }
 
 impl Default for StartupOptions {
     fn default() -> Self {
-        Self { open: None, size: 2048, demo: false, screenshot: None, theme: None }
+        Self { open: None, size: 2048, demo: false, screenshot: None, theme: None, zoom: None, center: None }
     }
 }
 
@@ -137,6 +143,18 @@ struct AppState {
     derived_tex: DerivedTextures,
     derived_job: Option<Job<Derived>>,
     derived_rerun: bool,
+    library: Library,
+    atlas: Atlas,
+    sprites: SpritePass,
+    atlas_egui: Option<egui::TextureId>,
+    symbol_job: Option<Job<(Vec<Placement>, u64)>>,
+    instances_dirty: bool,
+    instance_key: (usize, usize),
+    selected_placement: Option<u64>,
+    place_drag: Option<Vec<Placement>>,
+    scatter_before: Option<Vec<Placement>>,
+    scatter_hash: Option<SpatialHash>,
+    scatter_rng: Rng,
     /// Consecutive water runs over budget (two in a row downgrade the resolution).
     over_budget_runs: u32,
     view_mode: ViewMode,
@@ -160,6 +178,7 @@ struct AppState {
     demo: bool,
     demo_stage: u32,
     startup_theme: Option<ThemeStyle>,
+    startup_view: (Option<f32>, Option<(f32, f32)>),
     screenshot: Option<PathBuf>,
     frames_since_install: u32,
     surface_copyable: bool,
@@ -262,6 +281,13 @@ impl AppState {
         let derived_tex = DerivedTextures::new(&gpu.device, doc.width(), doc.height());
         map.bind(&gpu.device, &field, derived_tex.views());
         let profiler = GpuProfiler::new(&gpu.device, &gpu.queue, gpu.has_timestamps());
+        let mut atlas = Atlas::new(&gpu.device);
+        let mut library = Library::new();
+        library.reload(&mut atlas, &gpu.queue);
+        let mut sprites = SpritePass::new(&gpu.device, format);
+        sprites.bind(&gpu.device, &atlas);
+        let mut egui_renderer = egui_renderer;
+        let atlas_egui = Some(egui_renderer.register_native_texture(&gpu.device, &atlas.view, wgpu::FilterMode::Linear));
 
         let mut st = Self {
             window,
@@ -276,6 +302,18 @@ impl AppState {
             derived_tex,
             derived_job: None,
             derived_rerun: false,
+            library,
+            atlas,
+            sprites,
+            atlas_egui,
+            symbol_job: None,
+            instances_dirty: true,
+            instance_key: (usize::MAX, usize::MAX),
+            selected_placement: None,
+            place_drag: None,
+            scatter_before: None,
+            scatter_hash: None,
+            scatter_rng: Rng::new(99),
             over_budget_runs: 0,
             view_mode: ViewMode::Map,
             show_water: true,
@@ -303,6 +341,7 @@ impl AppState {
                 "modern" => Some(ThemeStyle::Modern),
                 _ => None,
             }),
+            startup_view: (opts.zoom, opts.center),
             screenshot: opts.screenshot.clone(),
             frames_since_install: u32::MAX,
             surface_copyable,
@@ -338,6 +377,8 @@ impl AppState {
             || self.save_job.is_some()
             || self.autosave_job.is_some()
             || self.derived_job.is_some()
+            || self.symbol_job.is_some()
+            || (self.doc.symbols_stale && self.doc.derived.is_some())
             || (self.doc.derived_stale && self.doc.params.water.mode != RecomputeMode::Manual)
             || self.doc.derived_requested
             || self.egui_ctx.has_requested_repaint()
@@ -355,6 +396,12 @@ impl AppState {
         if let Some(t) = self.startup_theme {
             self.doc.render.theme = Theme::preset(t);
         }
+        if let Some(j) = self.symbol_job.take() {
+            j.cancel();
+        }
+        self.library.set_project_dir(self.doc.path.clone());
+        self.selected_placement = None;
+        self.instances_dirty = true;
         self.field = GpuField::new(&self.gpu.device, self.doc.width(), self.doc.height());
         self.field.upload_all(&self.gpu.queue, &self.doc.elevation);
         self.derived_tex = DerivedTextures::new(&self.gpu.device, self.doc.width(), self.doc.height());
@@ -373,6 +420,11 @@ impl AppState {
         self.needs_fit = true;
         if self.doc.saved_view.zoom > 0.0 {
             self.camera = Camera::new(Vec2::from(self.doc.saved_view.center), self.doc.saved_view.zoom);
+            self.needs_fit = false;
+        }
+        if self.startup_view.0.is_some() || self.startup_view.1.is_some() {
+            let c = self.startup_view.1.map(|(x, y)| Vec2::new(x * self.doc.width() as f32, y * self.doc.height() as f32)).unwrap_or(Vec2::new(self.doc.width() as f32 / 2.0, self.doc.height() as f32 / 2.0));
+            self.camera = Camera::new(c, self.startup_view.0.unwrap_or(1.0));
             self.needs_fit = false;
         }
         self.doc.derived_stale = true;
@@ -558,6 +610,7 @@ impl AppState {
                 match result {
                     Ok(()) => {
                         self.doc.path = Some(path.clone());
+                        self.library.set_project_dir(Some(path.clone()));
                         self.doc.modified = false;
                         self.doc.last_autosave = Instant::now();
                         project::discard_autosave(Some(&path));
@@ -585,6 +638,13 @@ impl AppState {
                 let elapsed = job.started.elapsed();
                 self.derived_job = None;
                 if !result.cancelled {
+                    log::info!(
+                        "derived: {} rivers, {} lakes, water coverage max {:.2}, baked {}",
+                        result.water.rivers.len(),
+                        result.water.lakes.len(),
+                        result.water_cov.min_max().1,
+                        result.baked
+                    );
                     self.sync_derived_textures(&result);
                     self.doc.last_derived_ms = result.timings.total_ms;
                     self.doc.derived_runs += 1;
@@ -624,6 +684,38 @@ impl AppState {
             }
         } else if self.derived_job_allowed() {
             self.spawn_derived_job();
+        }
+
+        // Symbol layers follow the derived result.
+        if let Some(job) = &self.symbol_job {
+            if let Some((symbols, next_id)) = job.try_take() {
+                let ms = job.started.elapsed().as_secs_f32() * 1000.0;
+                self.symbol_job = None;
+                self.doc.auto_symbols = symbols;
+                self.doc.next_placement_id = self.doc.next_placement_id.max(next_id);
+                self.instances_dirty = true;
+                self.cpu.sections.insert("symbols job", ms);
+            }
+        } else if self.doc.symbols_stale && self.derived_job.is_none() && self.gen_job.is_none() && self.load_job.is_none() {
+            if let Some(d) = &self.doc.derived {
+                self.doc.symbols_stale = false;
+                let elev = self.doc.elevation.clone();
+                let sea = self.doc.sea_level;
+                let forest = d.forest.clone();
+                let water = d.water_cov.clone();
+                let temperature = d.temperature.clone();
+                let biome = d.biome.clone();
+                let mut params = self.doc.symbols.clone();
+                params.forest.enabled = params.forest.enabled && self.doc.render.theme.forest == ForestStyle::Symbols;
+                let sets = self.library.symbol_sets(self.doc.render.theme.style == ThemeStyle::ParchmentInk);
+                let mut next_id = self.doc.next_placement_id + 1_000_000;
+                self.symbol_job = Some(Job::spawn("Placing symbols", move |_, _| {
+                    let t = Terrain { elevation: &elev, sea_level: sea, biome: Some(&biome), water: Some(&water) };
+                    let mut out = placement::place_mountains(&t, &params.mountains, &sets, Some(&temperature), &mut next_id);
+                    out.extend(placement::place_forest(&t, &forest, Some(&temperature), &params.forest, &sets, &mut next_id));
+                    (out, next_id)
+                }));
+            }
         }
 
         if self.doc.modified && self.autosave_job.is_none() && self.save_job.is_none() && self.doc.last_autosave.elapsed() >= AUTOSAVE_INTERVAL && !self.input.stroke {
@@ -683,6 +775,17 @@ impl AppState {
             return;
         }
         let fp = self.camera.screen_to_field(pos_screen, self.screen_size());
+        if tool == Tool::Place {
+            self.place_press(pos_screen, fp);
+            return;
+        }
+        if tool == Tool::Scatter {
+            self.scatter_before = Some(self.doc.placements.clone());
+            self.scatter_hash = Some(self.build_scatter_hash());
+            self.input.stroke = true;
+            self.scatter_dab(fp);
+            return;
+        }
         if tool.is_procedural() {
             self.tools.path.clear();
             self.tools.path.push(fp.to_array());
@@ -728,6 +831,19 @@ impl AppState {
             self.water_edit_drag(fp);
             return;
         }
+        if self.place_drag.is_some() {
+            if let Some(id) = self.selected_placement {
+                if let Some(p) = self.doc.placements.iter_mut().find(|p| p.id == id) {
+                    p.pos = fp.to_array();
+                    self.instances_dirty = true;
+                }
+            }
+            return;
+        }
+        if self.tools.tool == Tool::Scatter && self.input.stroke {
+            self.scatter_dab(fp);
+            return;
+        }
         let t = self.start.elapsed().as_secs_f64();
         if let Some(s) = self.tools.sampler.as_mut() {
             let dabs = s.feed(StrokeInput { pos: fp, pressure, tilt: Vec2::ZERO, time: t });
@@ -738,6 +854,17 @@ impl AppState {
     fn end_stroke(&mut self) {
         if self.water_edit.dragging {
             self.water_edit_release();
+            return;
+        }
+        if let Some(before) = self.place_drag.take() {
+            self.input.stroke = false;
+            self.doc.commit_placements("Move symbol", before);
+            return;
+        }
+        if let Some(before) = self.scatter_before.take() {
+            self.input.stroke = false;
+            self.scatter_hash = None;
+            self.doc.commit_placements(if self.tools.scatter.erase { "Erase symbols" } else { "Scatter symbols" }, before);
             return;
         }
         if self.tools.tool.is_procedural() && self.input.stroke {
@@ -868,6 +995,176 @@ impl AppState {
         self.apply_procedural(last.tool, last.path);
     }
 
+    // ---- symbols ---------------------------------------------------------------
+
+    fn placement_under(&self, screen: Vec2) -> Option<u64> {
+        let ss = self.screen_size();
+        let mut best = None;
+        let mut best_d = f32::INFINITY;
+        for p in &self.doc.placements {
+            let Some(a) = self.library.get(&p.asset) else { continue };
+            let h = p.size / a.aspect.max(0.1);
+            let anchor = self.camera.field_to_screen(Vec2::from(p.pos), ss);
+            let top_left = anchor - Vec2::new(a.def.pivot[0] * p.size, a.def.pivot[1] * h) * self.camera.zoom;
+            let rect = egui::Rect::from_min_size(egui::pos2(top_left.x, top_left.y), egui::vec2(p.size * self.camera.zoom, h * self.camera.zoom)).expand(4.0);
+            if rect.contains(egui::pos2(screen.x, screen.y)) {
+                let d = (anchor - screen).length();
+                if d < best_d {
+                    best_d = d;
+                    best = Some(p.id);
+                }
+            }
+        }
+        best
+    }
+
+    fn make_placement(&mut self, qid: &str, pos: [f32; 2], size_override: f32, layer: PlacementLayer) -> Option<Placement> {
+        let a = self.library.get(qid)?;
+        let b = &a.def.behavior;
+        let rng = &mut self.scatter_rng;
+        let scale = rng.range(b.scale_range[0], b.scale_range[1]);
+        let size = if size_override > 0.0 { size_override } else { a.def.world_size } * scale;
+        let rotation = if b.rotation_range > 0.0 { rng.range(-b.rotation_range, b.rotation_range).to_radians() } else { 0.0 };
+        let flip = b.flip && rng.f32() < 0.5;
+        let id = self.doc.new_placement_id();
+        Some(Placement { id, asset: qid.to_string(), pos, size, rotation, flip, tint: b.tint, layer })
+    }
+
+    fn place_press(&mut self, screen: Vec2, fp: Vec2) {
+        if let Some(id) = self.placement_under(screen) {
+            self.selected_placement = Some(id);
+            self.place_drag = Some(self.doc.placements.clone());
+            self.input.stroke = true;
+            return;
+        }
+        let Some(qid) = self.tools.selected_assets.first().cloned() else {
+            self.ui.status = "Pick a symbol in the browser below".into();
+            return;
+        };
+        let size = self.tools.place_size;
+        if let Some(p) = self.make_placement(&qid, fp.to_array(), size, PlacementLayer::Manual) {
+            let before = self.doc.placements.clone();
+            self.selected_placement = Some(p.id);
+            self.doc.placements.push(p);
+            self.doc.commit_placements("Place symbol", before);
+            self.library.touch_recent(&qid);
+            self.instances_dirty = true;
+        }
+    }
+
+    fn build_scatter_hash(&self) -> SpatialHash {
+        let mut h = SpatialHash::new(self.tools.scatter.spacing.max(4.0) * 2.0);
+        for p in &self.doc.placements {
+            h.insert(p.pos, p.size * 0.3);
+        }
+        h
+    }
+
+    fn scatter_dab(&mut self, fp: Vec2) {
+        let s = self.tools.scatter.clone();
+        if s.erase {
+            let r2 = s.radius * s.radius;
+            let n = self.doc.placements.len();
+            self.doc.placements.retain(|p| (p.pos[0] - fp.x).powi(2) + (p.pos[1] - fp.y).powi(2) > r2);
+            if self.doc.placements.len() != n {
+                self.instances_dirty = true;
+            }
+            return;
+        }
+        if self.tools.selected_assets.is_empty() {
+            self.ui.status = "Pick one or more symbols in the browser below".into();
+            return;
+        }
+        let Some(mut hash) = self.scatter_hash.take() else { return };
+        let water = self.doc.derived.as_ref().map(|d| d.water_cov.clone());
+        let biome = self.doc.derived.as_ref().map(|d| d.biome.clone());
+        let filter = TerrainFilter { on_land: if s.avoid_water { Some(true) } else { None }, max_slope: Some(s.max_slope), ..Default::default() };
+        let assets = self.tools.selected_assets.clone();
+        let mut rng = Rng::new(self.scatter_rng.next_u64());
+        let spacing = s.spacing.max(2.0);
+        let pts = {
+            let t = Terrain { elevation: &self.doc.elevation, sea_level: self.doc.sea_level, biome: biome.as_deref(), water: water.as_ref() };
+            placement::scatter_disc(fp.to_array(), s.radius, spacing, &mut hash, &mut rng, |p, _| if t.passes(p, &filter) { Some(spacing * 0.45) } else { None })
+        };
+        for (p, _) in pts {
+            let qid = rng.pick(&assets).clone();
+            let base = self.library.get(&qid).map(|a| a.def.world_size).unwrap_or(32.0);
+            let size = base * rng.range(1.0 - s.size_jitter, 1.0 + s.size_jitter);
+            let mut pl = match self.make_placement(&qid, p, size, PlacementLayer::Manual) {
+                Some(pl) => pl,
+                None => continue,
+            };
+            if s.rotation_jitter_deg > 0.0 {
+                pl.rotation = rng.range(-s.rotation_jitter_deg, s.rotation_jitter_deg).to_radians();
+            }
+            pl.flip = s.flip && rng.f32() < 0.5;
+            self.doc.placements.push(pl);
+        }
+        self.scatter_hash = Some(hash);
+        self.instances_dirty = true;
+    }
+
+    fn delete_selected_placement(&mut self) {
+        let Some(id) = self.selected_placement.take() else { return };
+        let before = self.doc.placements.clone();
+        self.doc.placements.retain(|p| p.id != id);
+        self.doc.commit_placements("Delete symbol", before);
+        self.instances_dirty = true;
+    }
+
+    fn rebuild_instances(&mut self) {
+        let mut inst: Vec<SpriteInstance> = Vec::new();
+        for p in self.doc.all_symbols() {
+            let Some(a) = self.library.get(&p.asset) else { continue };
+            let Some(rect) = a.rect else { continue };
+            let (uv0, uv1) = rect.uv();
+            let h = p.size / rect.aspect().max(0.05);
+            let sel = self.selected_placement == Some(p.id);
+            inst.push(SpriteInstance {
+                pos: p.pos,
+                size: [p.size, h],
+                pivot: a.def.pivot,
+                uv0,
+                uv1,
+                rot_flip: [p.rotation, if p.flip { 1.0 } else { 0.0 }],
+                tint: [p.tint[0], p.tint[1], p.tint[2] * if sel { 0.6 } else { 1.0 }, 1.0],
+            });
+        }
+        self.sprites.set_instances(&self.gpu.device, &self.gpu.queue, &inst);
+        self.instances_dirty = false;
+        self.instance_key = (self.doc.placements.len(), self.doc.auto_symbols.len());
+    }
+
+    fn reload_library(&mut self) {
+        self.library.reload(&mut self.atlas, &self.gpu.queue);
+        self.sprites.bind(&self.gpu.device, &self.atlas);
+        if let Some(old) = self.atlas_egui.take() {
+            self.egui_renderer.free_texture(&old);
+        }
+        self.atlas_egui = Some(self.egui_renderer.register_native_texture(&self.gpu.device, &self.atlas.view, wgpu::FilterMode::Linear));
+        self.doc.symbols_stale = true;
+        self.instances_dirty = true;
+        self.ui.status = format!("Library: {} symbols in {} packs", self.library.assets.len(), self.library.packs.len());
+    }
+
+    fn import_files(&mut self, files: Vec<PathBuf>) {
+        let mut n = 0;
+        for f in files {
+            let ext = f.extension().and_then(|e| e.to_str()).map(|e| e.to_ascii_lowercase()).unwrap_or_default();
+            if !isoline_core::assets::IMAGE_EXTENSIONS.contains(&ext.as_str()) {
+                continue;
+            }
+            match self.library.import_image(&f, true, ext == "jpg" || ext == "jpeg", 0.12) {
+                Ok(_) => n += 1,
+                Err(e) => self.ui.error = Some(format!("Import failed: {e:#}")),
+            }
+        }
+        if n > 0 {
+            self.ui.status = format!("Imported {n} image(s) into the project's assets folder");
+            self.tools.tool = Tool::Place;
+        }
+    }
+
     // ---- water editing -------------------------------------------------------
 
     fn water_edit_press(&mut self, pos_screen: Vec2) {
@@ -971,6 +1268,7 @@ impl AppState {
     }
 
     fn after_history_step(&mut self, step: Option<(FieldKind, Vec<u32>)>, had_baked: bool) {
+        self.instances_dirty = true;
         if let Some((kind, tiles)) = step {
             let f = self.doc.field(kind).unwrap().clone();
             self.gpu_field_for(kind).upload_tiles(&self.gpu.queue, &f, tiles.into_iter());
@@ -1058,6 +1356,36 @@ impl AppState {
                 UiAction::ReapplyLastStroke => self.reapply_last_procedural(),
                 UiAction::DeleteSelectedWater => self.delete_selected_water(),
                 UiAction::SelectTool(t) => self.tools.tool = t,
+                UiAction::SelectAsset { qid, additive } => {
+                    if additive && self.tools.tool == Tool::Scatter {
+                        if let Some(i) = self.tools.selected_assets.iter().position(|a| a == &qid) {
+                            self.tools.selected_assets.remove(i);
+                        } else {
+                            self.tools.selected_assets.push(qid);
+                        }
+                    } else {
+                        self.tools.selected_assets = vec![qid];
+                    }
+                    if !self.tools.tool.uses_assets() {
+                        self.tools.tool = Tool::Place;
+                    }
+                }
+                UiAction::ToggleFavorite(qid) => self.library.toggle_favorite(&qid),
+                UiAction::ImportImages => {
+                    if self.doc.path.is_none() {
+                        self.ui.error = Some("Save the project first: imported images are copied into its assets folder.".into());
+                    } else if let Some(files) = rfd::FileDialog::new().set_title("Import images").add_filter("Images", &["png", "jpg", "jpeg", "webp", "svg"]).pick_files() {
+                        self.import_files(files);
+                    }
+                }
+                UiAction::AddPackDir => {
+                    if let Some(dir) = rfd::FileDialog::new().set_title("Add an asset pack folder").pick_folder() {
+                        self.library.register_pack_dir(dir);
+                    }
+                }
+                UiAction::RemovePackDir(dir) => self.library.unregister_pack_dir(&dir),
+                UiAction::SymbolsChanged => self.doc.symbols_changed(),
+                UiAction::DeleteSelectedPlacement => self.delete_selected_placement(),
             }
         }
     }
@@ -1088,6 +1416,12 @@ impl AppState {
                     if let Some(p) = path.parent() {
                         self.open_path(p.to_path_buf());
                     }
+                } else if path.join("pack.json").exists() {
+                    self.library.register_pack_dir(path);
+                } else if self.doc.path.is_none() {
+                    self.ui.error = Some("Save the project first: dropped images are copied into its assets folder.".into());
+                } else {
+                    self.import_files(vec![path]);
                 }
             }
             WindowEvent::ModifiersChanged(m) => {
@@ -1239,14 +1573,17 @@ impl AppState {
             KeyCode::Digit4 => self.tools.tool = Tool::Flatten,
             KeyCode::Digit5 => self.tools.tool = Tool::Ridge,
             KeyCode::Digit6 => self.tools.tool = Tool::Coast,
-            KeyCode::Digit7 => self.tools.tool = Tool::Moisture,
-            KeyCode::Digit8 => self.tools.tool = Tool::WaterEdit,
-            KeyCode::Digit9 => self.tools.tool = Tool::Pan,
+            KeyCode::Digit7 => self.tools.tool = Tool::Place,
+            KeyCode::Digit8 => self.tools.tool = Tool::Scatter,
+            KeyCode::Digit9 => self.tools.tool = Tool::Moisture,
+            KeyCode::Digit0 => self.tools.tool = Tool::WaterEdit,
             KeyCode::BracketLeft => self.scale_radius(1.0 / 1.2),
             KeyCode::BracketRight => self.scale_radius(1.2),
             KeyCode::Delete | KeyCode::Backspace => {
                 if self.tools.tool == Tool::WaterEdit {
                     self.delete_selected_water();
+                } else if self.tools.tool == Tool::Place {
+                    self.delete_selected_placement();
                 }
             }
             KeyCode::Escape => {
@@ -1268,6 +1605,17 @@ impl AppState {
             Tool::Moisture => self.tools.moisture_brush.radius = (self.tools.moisture_brush.radius * k).clamp(1.0, 1024.0),
             Tool::Ridge => self.tools.ridge.width = (self.tools.ridge.width * k).clamp(2.0, 1024.0),
             Tool::Coast => self.tools.coast.band = (self.tools.coast.band * k).clamp(4.0, 1024.0),
+            Tool::Scatter => self.tools.scatter.radius = (self.tools.scatter.radius * k).clamp(4.0, 1024.0),
+            Tool::Place => {
+                if let Some(id) = self.selected_placement {
+                    let before = self.doc.placements.clone();
+                    if let Some(p) = self.doc.placements.iter_mut().find(|p| p.id == id) {
+                        p.size = (p.size * k).clamp(2.0, 2048.0);
+                    }
+                    self.doc.commit_placements("Resize symbol", before);
+                    self.instances_dirty = true;
+                }
+            }
             _ => self.tools.brush.radius = (self.tools.brush.radius * k).clamp(1.0, 1024.0),
         }
     }
@@ -1400,6 +1748,13 @@ impl AppState {
             ov.path = self.tools.path.iter().map(|p| to(*p)).collect();
             ov.path_is_coast = self.tools.tool == Tool::Coast;
         }
+        if self.tools.tool == Tool::Place {
+            if let Some(id) = self.selected_placement {
+                if let Some(p) = self.doc.placements.iter().find(|p| p.id == id) {
+                    ov.selected = Some(to(p.pos));
+                }
+            }
+        }
         if self.tools.tool == Tool::WaterEdit {
             if let Some(b) = &self.doc.baked {
                 ov.rivers = b.rivers.iter().map(|r| r.points.iter().map(|p| to(*p)).collect()).collect();
@@ -1418,6 +1773,14 @@ impl AppState {
         self.profiler.poll();
         self.profiler.begin_frame();
         self.poll_jobs();
+        if self.library.poll() {
+            self.reload_library();
+        }
+        if self.instances_dirty || self.instance_key != (self.doc.placements.len(), self.doc.auto_symbols.len()) {
+            let t = Instant::now();
+            self.rebuild_instances();
+            self.cpu.sections.insert("symbol instances", t.elapsed().as_secs_f32() * 1000.0);
+        }
         if self.needs_fit {
             self.fit_view();
         }
@@ -1429,8 +1792,46 @@ impl AppState {
                     self.run_demo();
                 } else if self.demo_stage == 1 && self.doc.derived.is_some() && self.derived_job.is_none() && !self.doc.derived_stale {
                     self.demo_stage = 2;
-                    self.handle_actions(vec![UiAction::BakeWater], event_loop);
-                    self.tools.tool = Tool::WaterEdit;
+                    let w = self.doc.width() as f32;
+                    let h = self.doc.height() as f32;
+                    let before = self.doc.placements.clone();
+                    for (qid, x, y, size) in [("default/city", 0.62, 0.55, 150.0), ("default/castle", 0.45, 0.48, 110.0), ("default/village", 0.70, 0.40, 80.0), ("default/ship", 0.15, 0.30, 90.0), ("default/sea_serpent", 0.82, 0.78, 120.0), ("default/ruins", 0.36, 0.72, 80.0)] {
+                        if let Some(p) = self.make_placement(qid, [w * x, h * y], size, PlacementLayer::Manual) {
+                            self.doc.placements.push(p);
+                        }
+                    }
+                    self.doc.commit_placements("Demo symbols", before);
+                    self.instances_dirty = true;
+                    self.tools.tool = Tool::Place;
+                } else if self.demo_stage == 2 && self.save_job.is_none() && self.doc.path.is_some() {
+                    self.demo_stage = 3;
+                    // Import a PNG with a white background to exercise trim, chroma key and hot reload.
+                    let png_path = std::env::temp_dir().join("isoline-demo-import.png");
+                    let mut bm = isoline_core::assets::Bitmap::new(96, 96);
+                    for y in 0..96u32 {
+                        for x in 0..96u32 {
+                            let dx = x as f32 - 48.0;
+                            let dy = y as f32 - 48.0;
+                            let inside = dx * dx + dy * dy < 30.0 * 30.0 && (dx.abs() > 8.0 || dy > 0.0);
+                            bm.set(x, y, if inside { [140, 40, 40, 255] } else { [255, 255, 255, 255] });
+                        }
+                    }
+                    let f = std::fs::File::create(&png_path).unwrap();
+                    let mut enc = png::Encoder::new(std::io::BufWriter::new(f), 96, 96);
+                    enc.set_color(png::ColorType::Rgba);
+                    enc.set_depth(png::BitDepth::Eight);
+                    enc.write_header().unwrap().write_image_data(&bm.rgba).unwrap();
+                    self.import_files(vec![png_path]);
+                } else if self.demo_stage == 3 && (self.library.get("project/isoline_demo_import").is_some() || self.frames_since_install > 400) {
+                    self.demo_stage = 4;
+                    let w = self.doc.width() as f32;
+                    let h = self.doc.height() as f32;
+                    let before = self.doc.placements.clone();
+                    if let Some(p) = self.make_placement("project/isoline_demo_import", [w * 0.55, h * 0.30], 70.0, PlacementLayer::Manual) {
+                        self.doc.placements.push(p);
+                    }
+                    self.doc.commit_placements("Imported symbol", before);
+                    self.instances_dirty = true;
                 }
             }
         }
@@ -1481,6 +1882,11 @@ impl AppState {
                 has_last_procedural: self.last_proc.as_ref().map(|l| l.tool),
                 water_selected: self.water_edit.selected,
                 overlay,
+                library: &self.library,
+                atlas_tex: self.atlas_egui,
+                symbols_running: self.symbol_job.is_some(),
+                selected_placement: self.selected_placement,
+                sprite_count: self.sprites.last_instances,
             });
             ctx.run_ui(raw, |root| {
                 if let Some(uc) = uc.take() {
@@ -1614,6 +2020,11 @@ impl AppState {
         };
         let _ = (ReliefStyle::Shaded, ForestStyle::None);
         self.map.render(&self.gpu.queue, &mut encoder, &target, &view, &mut self.profiler);
+        if self.view_mode == ViewMode::Map {
+            let t = Instant::now();
+            self.sprites.render(&self.gpu.queue, &mut encoder, &target, ss.to_array(), origin.to_array(), self.camera.zoom, self.doc.symbols.shadow);
+            self.cpu.sections.insert("sprites encode", t.elapsed().as_secs_f32() * 1000.0);
+        }
 
         // egui on top.
         let t = Instant::now();
@@ -1657,9 +2068,11 @@ impl AppState {
             && self.gen_job.is_none()
             && self.load_job.is_none()
             && self.derived_job.is_none()
+            && self.symbol_job.is_none()
+            && !self.doc.symbols_stale
             && !self.doc.derived_stale
             && self.doc.derived.is_some()
-            && (!self.demo || self.demo_stage >= 2)
+            && (!self.demo || self.demo_stage >= 4)
             && self.save_job.is_none();
         if take_shot {
             let path = self.screenshot.take().unwrap();

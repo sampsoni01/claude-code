@@ -4,6 +4,7 @@ pub mod brush;
 pub mod field;
 pub mod map_render;
 pub mod profiler;
+pub mod sprites;
 
 use anyhow::{anyhow, Context, Result};
 use std::sync::Arc;

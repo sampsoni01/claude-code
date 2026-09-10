@@ -6,6 +6,7 @@ mod camera;
 mod document;
 mod gpu;
 mod jobs;
+mod library;
 mod tools;
 mod ui;
 
@@ -34,6 +35,12 @@ fn main() {
             "--size" => opts.size = args.next().and_then(|s| s.parse().ok()).unwrap_or(2048),
             "--demo" => opts.demo = true,
             "--theme" => opts.theme = args.next(),
+            "--zoom" => opts.zoom = args.next().and_then(|s| s.parse().ok()),
+            "--center" => {
+                let x = args.next().and_then(|s| s.parse().ok());
+                let y = args.next().and_then(|s| s.parse().ok());
+                opts.center = x.zip(y);
+            }
             "--screenshot" => opts.screenshot = args.next().map(PathBuf::from),
             "--bench" => {
                 bench = Some(args.next().and_then(|s| s.parse().ok()).unwrap_or(2048));
