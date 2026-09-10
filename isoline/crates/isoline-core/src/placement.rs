@@ -362,6 +362,11 @@ pub fn place_mountains(t: &Terrain<'_>, p: &MountainParams, sets: &SymbolSets, t
         if hash.collides(pt, r) {
             continue;
         }
+        // Never stand a peak or hill in a lake or the sea, or so close that
+        // its footprint would cover the shore.
+        if t.is_water(pt) || t.water_distance(pt, size * 0.45) < size * 0.4 {
+            continue;
+        }
         hash.insert(pt, r);
         // Small y jitter breaks up straight rows; x jitter stays on the crest.
         let pos = [(pt[0] + rng.range(-0.1, 0.1) * size).clamp(0.0, w - 1.0), (pt[1] + rng.range(-0.2, 0.2) * size).clamp(0.0, h - 1.0)];
@@ -381,7 +386,7 @@ pub fn place_mountains(t: &Terrain<'_>, p: &MountainParams, sets: &SymbolSets, t
                 }
                 let ssize = size * rng.range(0.5, 0.75);
                 let sr = ssize * 0.24;
-                if hash.collides(q, sr) {
+                if hash.collides(q, sr) || t.is_water(q) || t.water_distance(q, ssize * 0.45) < ssize * 0.4 {
                     continue;
                 }
                 hash.insert(q, sr);
