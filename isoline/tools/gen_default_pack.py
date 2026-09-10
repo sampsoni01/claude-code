@@ -66,56 +66,104 @@ def emit(name, category, tags, w, h, body, pivot=(0.5, 0.95), size=48.0, behavio
     assets.append(a)
 
 # ---------------------------------------------------------------- mountains
-def mountain(seed, snow=False, steep=0.5, width=100, height=80, style="ink"):
+def fade_fill(gid, y0, y1, colour=PAPER, top=0.92, knee=0.62):
+    """Vertical gradient: paper-coloured near the summit, transparent at the
+    base, so a row of peaks never forms a flat-bottomed band."""
+    return (f'<linearGradient id="{gid}" gradientUnits="userSpaceOnUse" x1="0" y1="{y0:.1f}" x2="0" y2="{y1:.1f}">'
+            f'<stop offset="0" stop-color="{colour}" stop-opacity="{top}"/>'
+            f'<stop offset="{knee}" stop-color="{colour}" stop-opacity="{top * 0.8:.2f}"/>'
+            f'<stop offset="1" stop-color="{colour}" stop-opacity="0"/></linearGradient>')
+
+def path_d(pts, close=False):
+    return "M " + " L ".join(f"{x:.1f} {y:.1f}" for x, y in pts) + (" Z" if close else "")
+
+def mountain(seed, snow=False, steep=0.5, width=100, height=80, style="ink", twin=False):
+    """One peak (or two summits joined by a saddle): a paper-filled silhouette
+    that fades out toward the base, an ink outline, a shadow ridge from the
+    summit and slope hatching on the shaded side, all clipped to the body."""
     rng.seed(seed)
-    base_y = height - 6
-    apex = (width * rng.uniform(0.42, 0.58), 8 + rng.uniform(0, 6))
-    left = [(4, base_y)]
-    # Left flank with a couple of shoulders.
-    n = rng.randint(2, 4)
-    for i in range(1, n):
-        t = i / n
-        x = 4 + (apex[0] - 4) * t
-        y = base_y + (apex[1] - base_y) * (t ** (1.0 + steep)) + rng.uniform(-4, 4)
-        left.append((x, y))
-    left.append(apex)
-    right = [apex]
-    n = rng.randint(2, 4)
-    for i in range(1, n):
-        t = i / n
-        x = apex[0] + (width - 4 - apex[0]) * t
-        y = apex[1] + (base_y - apex[1]) * (1 - (1 - t) ** (1.0 + steep)) + rng.uniform(-4, 4)
-        right.append((x, y))
-    right.append((width - 4, base_y))
-    outline = wob(left + right[1:], 1.0)
-    body = ""
-    # Paper fill so it covers terrain behind it.
-    body += poly(outline + [(width - 4, base_y), (4, base_y)], stroke="none", fill=PAPER if style == "ink" else "#e9dcc0", w=0, close=True)
-    body += curve(outline, w=2.4)
-    # Shadow ridge from apex down to the right foot.
-    ridge = [apex]
-    steps = 4
-    for i in range(1, steps + 1):
-        t = i / steps
-        ridge.append((apex[0] + (width * 0.28) * t + rng.uniform(-3, 3), apex[1] + (base_y - apex[1]) * t * 0.95))
-    body += curve(wob(ridge, 1.2), w=1.6)
-    # Hatching on the shadow (right) side.
-    for i in range(6):
-        t = (i + 0.6) / 7
-        sx = apex[0] + (width * 0.28) * t
-        sy = apex[1] + (base_y - apex[1]) * t * 0.95
-        ex = min(width - 6, sx + width * 0.22 * (0.5 + t))
-        ey = min(base_y - 2, sy + (base_y - sy) * 0.5)
-        body += poly(wob([(sx, sy), (ex, ey)], 0.7), w=1.2)
-    # A second smaller ridge line on the left flank.
-    body += curve(wob([(apex[0] - 6, apex[1] + 14), (apex[0] - 18, apex[1] + 30), (apex[0] - 26, apex[1] + 48)], 1.0), w=1.1)
-    if snow:
-        cap = [(apex[0] - 12, apex[1] + 16), (apex[0] - 5, apex[1] + 11), (apex[0], apex[1] + 15), (apex[0] + 6, apex[1] + 10), (apex[0] + 13, apex[1] + 17)]
-        body += curve(wob(cap, 0.8), w=1.4)
+    base_y = height - 3
+    top_y = 5 + rng.uniform(0, 6)
+    apexes = []
+    if twin:
+        ax = width * rng.uniform(0.30, 0.42)
+        bx = ax + width * rng.uniform(0.22, 0.34)
+        hi_left = rng.random() < 0.5
+        apexes = [(ax, top_y if hi_left else top_y + rng.uniform(10, 20)), (bx, top_y + rng.uniform(10, 20) if hi_left else top_y)]
+    else:
+        apexes = [(width * rng.uniform(0.32, 0.68), top_y)]
+    p = 1.0 / (1.0 + steep)  # <1: steep near the summit, easing out at the foot
+
+    def flank(apex, foot_x, n):
+        # Points from the summit down to the foot, concave, with small
+        # shoulders so no two flanks match.
+        pts = []
+        for i in range(1, n):
+            t = i / n
+            x = apex[0] + (foot_x - apex[0]) * t
+            y = apex[1] + (base_y - apex[1]) * (t ** p)
+            pts.append((x + rng.uniform(-2.5, 2.5), min(base_y - 1, y + rng.uniform(-3, 3))))
+        return pts
+
+    left = flank(apexes[0], 2, rng.randint(3, 5))[::-1]
+    right = flank(apexes[-1], width - 2, rng.randint(3, 5))
+    outline = [(2, base_y)] + left + [apexes[0]]
+    if twin:
+        a, b = apexes
+        saddle_y = max(a[1], b[1]) + rng.uniform(8, 16)
+        outline += [((a[0] * 0.55 + b[0] * 0.45), saddle_y + rng.uniform(-2, 2)), b]
+    outline += right + [(width - 2, base_y)]
+    apex_idx = [len(left) + 1] + ([len(left) + 3] if twin else [])
+    outline = wob(outline, 0.8)
+    for k in apex_idx:
+        outline[k] = apexes[0] if k == apex_idx[0] else apexes[-1]
+    gid = f"g{seed}"
+    cid = f"c{seed}"
+    fill = PAPER if style == "ink" else "#e9dcc0"
+    body = f'<defs>{fade_fill(gid, top_y, base_y, fill)}<clipPath id="{cid}"><path d="{path_d(outline, True)}"/></clipPath></defs>'
+    body += f'<path d="{path_d(outline, True)}" fill="url(#{gid})" stroke="none"/>'
+    inner = ""
+    for apex in apexes:
+        # Shadow ridge: summit down and to the right, ending short of the foot.
+        foot = (apex[0] + width * rng.uniform(0.16, 0.26), base_y - rng.uniform(2, 8))
+        ridge = [apex]
+        for i in range(1, 5):
+            t = i / 4
+            ridge.append((apex[0] + (foot[0] - apex[0]) * t + rng.uniform(-2, 2), apex[1] + (foot[1] - apex[1]) * (t ** 0.9)))
+        inner += curve(ridge, w=1.5)
+        # Hatching: short strokes leaving the ridge toward the right foot,
+        # parallel to the shaded slope, longer lower down.
+        n = rng.randint(4, 6)
+        for i in range(n):
+            t = (i + 0.7) / (n + 0.6)
+            sx = apex[0] + (foot[0] - apex[0]) * t
+            sy = apex[1] + (foot[1] - apex[1]) * (t ** 0.9)
+            L = 5 + 22 * t
+            dirx, diry = (width - 2) - sx, base_y - sy
+            m = math.hypot(dirx, diry) or 1
+            ex, ey = sx + dirx / m * L, sy + diry / m * L * 0.9
+            inner += poly(wob([(sx + 2, sy + 1), (ex, ey)], 0.6), w=1.1)
+        # One or two light contour strokes on the lit side.
+        for k in range(rng.randint(1, 2)):
+            ox = apex[0] - 8 - k * 9
+            oy = apex[1] + 14 + k * 8
+            inner += curve(wob([(ox, oy), (ox - 7, oy + 11), (ox - 13, oy + 24)], 0.7), w=1.0)
+        if snow:
+            cap = [(apex[0] - 12, apex[1] + 15), (apex[0] - 6, apex[1] + 10), (apex[0] - 1, apex[1] + 15), (apex[0] + 5, apex[1] + 9), (apex[0] + 11, apex[1] + 16)]
+            inner += curve(wob(cap, 0.7), w=1.3)
+    body += f'<g clip-path="url(#{cid})">{inner}</g>'
+    # Outline last so it sits over the hatching; drawn in pieces that meet
+    # at each summit so the smoothing never rounds a peak into a loop.
+    cuts = [0] + apex_idx + [len(outline) - 1]
+    for a, b in zip(cuts, cuts[1:]):
+        body += curve(outline[a:b + 1], w=2.3)
     return body
 
-for i in range(6):
-    emit(f"mountain_{i+1}", "mountains", ["mountain", "peak", "ink"], 100, 80, mountain(100 + i, snow=(i % 3 == 2), steep=0.3 + 0.15 * (i % 3)), size=54)
+shapes = [(100, 80, 0.3), (90, 88, 0.55), (120, 70, 0.2), (96, 84, 0.45), (110, 76, 0.35), (84, 90, 0.7), (104, 72, 0.25), (92, 86, 0.6), (116, 80, 0.4), (88, 78, 0.5)]
+for i, (w, h, st) in enumerate(shapes):
+    emit(f"mountain_{i+1}", "mountains", ["mountain", "peak", "ink"], w, h, mountain(100 + i, snow=(i % 4 == 3), steep=st, width=w, height=h, twin=(i % 3 == 1)), size=54 * w / 100)
+for i in range(4):
+    emit(f"foothill_{i+1}", "mountains", ["mountain", "peak", "small", "ink"], 80, 46, mountain(160 + i, steep=0.25, width=80, height=46), size=34)
 for i in range(3):
     emit(f"mountain_snow_{i+1}", "mountains", ["mountain", "peak", "snow", "ink"], 100, 80, mountain(200 + i, snow=True, steep=0.6), size=58)
 for i in range(3):
@@ -125,19 +173,28 @@ for i in range(3):
 # ---------------------------------------------------------------- hills
 def hill(seed, w=90, h=44):
     rng.seed(seed)
-    base = h - 6
-    pts = [(4, base)]
-    for i in range(1, 8):
-        t = i / 8
-        pts.append((4 + (w - 8) * t, base - math.sin(t * math.pi) * (h - 16) + rng.uniform(-2, 2)))
-    pts.append((w - 4, base))
-    body = poly(pts + [(w - 4, base + 4), (4, base + 4)], stroke="none", fill=PAPER, w=0, close=True)
-    body += curve(wob(pts, 0.9), w=2.0)
-    for i in range(4):
-        t = 0.55 + i * 0.1
-        x = 4 + (w - 8) * t
-        y = base - math.sin(t * math.pi) * (h - 16)
-        body += poly(wob([(x, y + 3), (x + 6, min(base - 2, y + 14))], 0.6), w=1.1)
+    base = h - 3
+    pts = [(3, base)]
+    peak_t = rng.uniform(0.4, 0.6)
+    for i in range(1, 9):
+        t = i / 9
+        # Asymmetric dome: a skewed sine so no two hills share a profile.
+        u = t / peak_t * 0.5 if t < peak_t else 0.5 + (t - peak_t) / (1 - peak_t) * 0.5
+        pts.append((3 + (w - 6) * t, base - math.sin(u * math.pi) * (h - 12) + rng.uniform(-1.5, 1.5)))
+    pts.append((w - 3, base))
+    pts = wob(pts, 0.7)
+    gid, cid = f"g{seed}", f"c{seed}"
+    body = f'<defs>{fade_fill(gid, 6, base, PAPER, top=0.9, knee=0.55)}<clipPath id="{cid}"><path d="{path_d(pts, True)}"/></clipPath></defs>'
+    body += f'<path d="{path_d(pts, True)}" fill="url(#{gid})" stroke="none"/>'
+    inner = ""
+    for i in range(rng.randint(3, 5)):
+        t = 0.58 + i * 0.09
+        x = 3 + (w - 6) * t
+        u = 0.5 + (t - peak_t) / (1 - peak_t) * 0.5
+        y = base - math.sin(u * math.pi) * (h - 12)
+        inner += poly(wob([(x, y + 3), (x + 5 + i, min(base - 1, y + 12 + i * 2))], 0.5), w=1.0)
+    body += f'<g clip-path="url(#{cid})">{inner}</g>'
+    body += curve(pts, w=1.9)
     return body
 
 for i in range(4):

@@ -356,9 +356,12 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
                     if view.relief_style != RELIEF_SHADED && view.hatch_strength > 0.0 {
                         // Slope gates the hatching so flat land stays clean.
                         let slope = 1.0 - n.z;
-                        let gate = smoothstep(0.02, 0.18, slope * view.exaggeration);
-                        let hk = hatch(sp, darkness * gate + 0.15 * gate);
-                        ink_mask = max(ink_mask, hk * view.hatch_strength * 0.85);
+                        // Close up, per-texel slope noise breaks the lines into
+                        // smudges; the symbols carry the relief there instead.
+                        let zoom_fade = 1.0 - smoothstep(1.2, 2.5, view.scale);
+                        let gate = smoothstep(0.08, 0.3, slope * view.exaggeration) * zoom_fade;
+                        let hk = hatch(sp, min(darkness, 0.7) * gate);
+                        ink_mask = max(ink_mask, hk * view.hatch_strength * 0.7);
                     }
                 } else {
                     let b = u32(textureLoad(biome_tex, ti, 0).r + 0.5);

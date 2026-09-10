@@ -130,7 +130,7 @@ pub struct SymbolParams {
 }
 
 fn default_shadow() -> f32 {
-    0.25
+    0.12
 }
 
 fn default_culture() -> String {

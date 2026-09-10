@@ -7,7 +7,37 @@ climate, biomes, forests, settlements) is *derived* from those fields, live.
 
 The coastline is literally the isoline `elevation == seaLevel`, hence the name.
 
-![Milestone 5](docs/milestone5.png)
+![Current build](docs/milestone5b.png)
+
+## Symbol and usability pass (after Milestone 5)
+
+Feedback: the mountain symbols looked copy-pasted, there were artifacts in
+the range and among the trees, and the program was far too configurable.
+
+- **Mountain symbols redrawn** (`tools/gen_default_pack.py`): ten peak
+  shapes plus four foothills, one- or two-summit silhouettes, a shadow
+  ridge with slope hatching clipped to the body, and a fill that fades to
+  transparent toward the base so a row of peaks never forms a flat-bottomed
+  band. Summits are drawn in pieces so smoothing cannot round them into
+  loops. `cargo run -p isoline-core --example contact_sheet -- assets/packs/default out.png`
+  renders a pack for checking.
+- **Placement**: peaks vary in size well beyond their height, jitter off the
+  crest, and each main peak may spawn one or two smaller companions a little
+  downhill, so ranges read as massifs two or three deep rather than a single
+  file of summits. Hills are skipped inside woods; trees avoid peaks.
+- **Artifacts**: shader hatching is gated by slope, fades out above 1.2×
+  zoom (symbols carry the relief there), and is lighter by default; the
+  symbol drop shadow is halved.
+- **UI cut down**: the right panel is now Style (one choice of three),
+  Sea level, Rivers & lakes (fewer ↔ more, update mode, Recompute, Bake) and
+  Names (language, Name everything). Every appearance slider is gone: paper
+  grain, burnt edges, colour wash, relief mode, hatching, shading, woods
+  style, tree and peak sliders, shore rings, coast ink, ornaments, labels,
+  typography, light direction, relief strength and contours. Each tool
+  shows two or three controls with the rest behind a collapsed *More…*.
+  Climate, hydrology, the biome matrix, data views, contour lines,
+  automatic-symbol tuning and project statistics live in View → Advanced
+  settings.
 
 ## Status: Milestone 5 — naming and labels
 

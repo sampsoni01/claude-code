@@ -18,7 +18,7 @@
         0.5,
         0.95
       ],
-      "world_size": 54
+      "world_size": 54.0
     },
     {
       "id": "mountain_2",
@@ -34,7 +34,7 @@
         0.5,
         0.95
       ],
-      "world_size": 54
+      "world_size": 48.6
     },
     {
       "id": "mountain_3",
@@ -50,7 +50,7 @@
         0.5,
         0.95
       ],
-      "world_size": 54
+      "world_size": 64.8
     },
     {
       "id": "mountain_4",
@@ -66,7 +66,7 @@
         0.5,
         0.95
       ],
-      "world_size": 54
+      "world_size": 51.84
     },
     {
       "id": "mountain_5",
@@ -82,7 +82,7 @@
         0.5,
         0.95
       ],
-      "world_size": 54
+      "world_size": 59.4
     },
     {
       "id": "mountain_6",
@@ -98,7 +98,139 @@
         0.5,
         0.95
       ],
-      "world_size": 54
+      "world_size": 45.36
+    },
+    {
+      "id": "mountain_7",
+      "name": "Mountain 7",
+      "file": "mountain_7.svg",
+      "category": "mountains",
+      "tags": [
+        "mountain",
+        "peak",
+        "ink"
+      ],
+      "pivot": [
+        0.5,
+        0.95
+      ],
+      "world_size": 56.16
+    },
+    {
+      "id": "mountain_8",
+      "name": "Mountain 8",
+      "file": "mountain_8.svg",
+      "category": "mountains",
+      "tags": [
+        "mountain",
+        "peak",
+        "ink"
+      ],
+      "pivot": [
+        0.5,
+        0.95
+      ],
+      "world_size": 49.68
+    },
+    {
+      "id": "mountain_9",
+      "name": "Mountain 9",
+      "file": "mountain_9.svg",
+      "category": "mountains",
+      "tags": [
+        "mountain",
+        "peak",
+        "ink"
+      ],
+      "pivot": [
+        0.5,
+        0.95
+      ],
+      "world_size": 62.64
+    },
+    {
+      "id": "mountain_10",
+      "name": "Mountain 10",
+      "file": "mountain_10.svg",
+      "category": "mountains",
+      "tags": [
+        "mountain",
+        "peak",
+        "ink"
+      ],
+      "pivot": [
+        0.5,
+        0.95
+      ],
+      "world_size": 47.52
+    },
+    {
+      "id": "foothill_1",
+      "name": "Foothill 1",
+      "file": "foothill_1.svg",
+      "category": "mountains",
+      "tags": [
+        "mountain",
+        "peak",
+        "small",
+        "ink"
+      ],
+      "pivot": [
+        0.5,
+        0.95
+      ],
+      "world_size": 34
+    },
+    {
+      "id": "foothill_2",
+      "name": "Foothill 2",
+      "file": "foothill_2.svg",
+      "category": "mountains",
+      "tags": [
+        "mountain",
+        "peak",
+        "small",
+        "ink"
+      ],
+      "pivot": [
+        0.5,
+        0.95
+      ],
+      "world_size": 34
+    },
+    {
+      "id": "foothill_3",
+      "name": "Foothill 3",
+      "file": "foothill_3.svg",
+      "category": "mountains",
+      "tags": [
+        "mountain",
+        "peak",
+        "small",
+        "ink"
+      ],
+      "pivot": [
+        0.5,
+        0.95
+      ],
+      "world_size": 34
+    },
+    {
+      "id": "foothill_4",
+      "name": "Foothill 4",
+      "file": "foothill_4.svg",
+      "category": "mountains",
+      "tags": [
+        "mountain",
+        "peak",
+        "small",
+        "ink"
+      ],
+      "pivot": [
+        0.5,
+        0.95
+      ],
+      "world_size": 34
     },
     {
       "id": "mountain_snow_1",

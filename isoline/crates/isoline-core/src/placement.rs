@@ -287,16 +287,16 @@ fn relief(e: &ScalarField, p: [f32; 2], r: f32) -> f32 {
 /// Automatic mountain and hill symbols: candidates on a jittered grid, kept
 /// where local relief is high and the point is a local maximum. Bigger,
 /// snow-capped symbols for taller peaks. Sorted back to front (by y).
-pub fn place_mountains(t: &Terrain<'_>, p: &MountainParams, sets: &SymbolSets, temperature: Option<&ScalarField>, next_id: &mut u64) -> Vec<Placement> {
+pub fn place_mountains(t: &Terrain<'_>, p: &MountainParams, sets: &SymbolSets, temperature: Option<&ScalarField>, forest: Option<&ScalarField>, next_id: &mut u64) -> (Vec<Placement>, SpatialHash) {
     let mut out = Vec::new();
+    let mut hash = SpatialHash::new(p.spacing.max(4.0) * 2.0);
     if !p.enabled || (sets.mountains.is_empty() && sets.hills.is_empty()) {
-        return out;
+        return (out, hash);
     }
     let e = t.elevation;
     let (w, h) = (e.width() as f32, e.height() as f32);
     let s = p.spacing.max(4.0);
     let mut rng = Rng::new(p.seed);
-    let mut hash = SpatialHash::new(s * 2.0);
     let (elo, ehi) = e.min_max();
     let land_range = (ehi - t.sea_level).max(1.0);
     let nx = (w / s).ceil() as i32;
@@ -339,6 +339,14 @@ pub fn place_mountains(t: &Terrain<'_>, p: &MountainParams, sets: &SymbolSets, t
         if !is_mountain && sets.hills.is_empty() {
             continue;
         }
+        // Hills inside woods read as litter among the trees; skip them.
+        if !is_mountain {
+            if let Some(f) = forest {
+                if f.sample(pt[0] * f.width() as f32 / w, pt[1] * f.height() as f32 / h) > 0.35 {
+                    continue;
+                }
+            }
+        }
         let height01 = ((hh - t.sea_level) / land_range).clamp(0.0, 1.0);
         let cold = temperature.map(|tf| tf.sample(pt[0] * tf.width() as f32 / w, pt[1] * tf.height() as f32 / h) < -2.0).unwrap_or(false);
         let (asset, base) = if is_mountain {
@@ -347,24 +355,52 @@ pub fn place_mountains(t: &Terrain<'_>, p: &MountainParams, sets: &SymbolSets, t
         } else {
             rng.pick(&sets.hills).clone()
         };
-        let size = base * p.size * (if is_mountain { 0.7 + 0.8 * height01 + 0.15 * rng.f32() } else { 0.75 + 0.3 * rng.f32() });
-        let r = size * 0.32;
+        // Vary size well beyond the height term so ridges of equal height do
+        // not become a row of identical peaks, and let neighbours overlap.
+        let size = base * p.size * (if is_mountain { 0.6 + 0.5 * height01 + 0.4 * rng.f32() } else { 0.7 + 0.4 * rng.f32() });
+        let r = size * 0.24;
         if hash.collides(pt, r) {
             continue;
         }
         hash.insert(pt, r);
+        // Small y jitter breaks up straight rows; x jitter stays on the crest.
+        let pos = [(pt[0] + rng.range(-0.1, 0.1) * size).clamp(0.0, w - 1.0), (pt[1] + rng.range(-0.2, 0.2) * size).clamp(0.0, h - 1.0)];
         *next_id += 1;
-        out.push(Placement { id: *next_id, asset, pos: pt, size, rotation: 0.0, flip: rng.f32() < 0.5, tint: [1.0; 3], layer: PlacementLayer::Mountains });
+        out.push(Placement { id: *next_id, asset: asset.clone(), pos, size, rotation: 0.0, flip: rng.f32() < 0.5, tint: [1.0; 3], layer: PlacementLayer::Mountains });
+        // Satellite peaks: hand-drawn ranges are massifs two or three deep,
+        // not a single file of summits along the crest. Each main peak may
+        // spawn one or two smaller companions a little downhill of it.
+        if is_mountain {
+            let n = if rng.f32() < 0.75 { 1 + (rng.f32() < 0.4) as usize } else { 0 };
+            for _ in 0..n {
+                let a = rng.range(0.0, std::f32::consts::TAU);
+                let d = size * rng.range(0.45, 0.8);
+                let q = [(pos[0] + a.cos() * d).clamp(0.0, w - 1.0), (pos[1] + a.sin() * d * 0.7).clamp(0.0, h - 1.0)];
+                if e.sample(q[0], q[1]) <= t.sea_level || relief(e, q, s * 0.9) < p.hill_relief * 0.5 {
+                    continue;
+                }
+                let ssize = size * rng.range(0.5, 0.75);
+                let sr = ssize * 0.24;
+                if hash.collides(q, sr) {
+                    continue;
+                }
+                hash.insert(q, sr);
+                let pool = if cold && !sets.snow_mountains.is_empty() { &sets.snow_mountains } else { &sets.mountains };
+                let (sasset, sbase) = rng.pick(pool).clone();
+                *next_id += 1;
+                out.push(Placement { id: *next_id, asset: sasset, pos: q, size: ssize * sbase / base, rotation: 0.0, flip: rng.f32() < 0.5, tint: [1.0; 3], layer: PlacementLayer::Mountains });
+            }
+        }
     }
     let _ = elo;
     out.sort_by(|a, b| a.pos[1].partial_cmp(&b.pos[1]).unwrap());
-    out
+    (out, hash)
 }
 
 /// Automatic tree symbols from the forest-density field: spacing shrinks
 /// with density, species follow biome and temperature, never in water or
 /// on steep ground, thinning toward the treeline.
-pub fn place_forest(t: &Terrain<'_>, forest: &ScalarField, temperature: Option<&ScalarField>, p: &ForestParams, sets: &SymbolSets, next_id: &mut u64) -> Vec<Placement> {
+pub fn place_forest(t: &Terrain<'_>, forest: &ScalarField, temperature: Option<&ScalarField>, p: &ForestParams, sets: &SymbolSets, avoid: &SpatialHash, next_id: &mut u64) -> Vec<Placement> {
     let mut out = Vec::new();
     if !p.enabled || (sets.conifers.is_empty() && sets.broadleaf.is_empty()) {
         return out;
@@ -390,7 +426,7 @@ pub fn place_forest(t: &Terrain<'_>, forest: &ScalarField, temperature: Option<&
                 if d < p.threshold || rng.f32() > (d - p.threshold) / (1.0 - p.threshold).max(0.05) * 1.3 {
                     continue;
                 }
-                if t.is_water(pt) || t.slope(pt) > 60.0 {
+                if t.is_water(pt) || t.slope(pt) > 60.0 || avoid.collides(pt, 4.0) {
                     continue;
                 }
                 let temp = temperature.map(|tf| tf.sample(pt[0] * tf.width() as f32 / w, pt[1] * tf.height() as f32 / h)).unwrap_or(12.0);
@@ -450,7 +486,7 @@ mod tests {
         let t = Terrain { elevation: &e, sea_level: 0.0, biome: None, water: None };
         let sets = SymbolSets { mountains: vec![("default/mountain_1".into(), 90.0)], hills: vec![("default/hill_1".into(), 60.0)], ..Default::default() };
         let mut id = 0;
-        let m = place_mountains(&t, &MountainParams::default(), &sets, None, &mut id);
+        let (m, _) = place_mountains(&t, &MountainParams::default(), &sets, None, None, &mut id);
         assert!(!m.is_empty());
         for pl in &m {
             let d = ((pl.pos[0] - 128.0).powi(2) + (pl.pos[1] - 128.0).powi(2)).sqrt();

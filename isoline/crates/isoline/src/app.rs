@@ -727,8 +727,8 @@ impl AppState {
                 let mut next_id = self.doc.next_placement_id + 1_000_000;
                 self.symbol_job = Some(Job::spawn("Placing symbols", move |_, _| {
                     let t = Terrain { elevation: &elev, sea_level: sea, biome: Some(&biome), water: Some(&water) };
-                    let mut out = placement::place_mountains(&t, &params.mountains, &sets, Some(&temperature), &mut next_id);
-                    out.extend(placement::place_forest(&t, &forest, Some(&temperature), &params.forest, &sets, &mut next_id));
+                    let (mut out, peaks) = placement::place_mountains(&t, &params.mountains, &sets, Some(&temperature), Some(&forest), &mut next_id);
+                    out.extend(placement::place_forest(&t, &forest, Some(&temperature), &params.forest, &sets, &peaks, &mut next_id));
                     (out, next_id)
                 }));
             }
@@ -2012,8 +2012,12 @@ impl AppState {
                         for x in 0..96u32 {
                             let dx = x as f32 - 48.0;
                             let dy = y as f32 - 48.0;
-                            let inside = dx * dx + dy * dy < 30.0 * 30.0 && (dx.abs() > 8.0 || dy > 0.0);
-                            bm.set(x, y, if inside { [140, 40, 40, 255] } else { [255, 255, 255, 255] });
+                            // A ring of standing stones drawn in ink on white.
+                            let r = (dx * dx + dy * dy).sqrt();
+                            let ang = dy.atan2(dx);
+                            let stone = (r - 30.0).abs() < 6.0 && ((ang * 4.0 / std::f32::consts::PI).rem_euclid(1.0) - 0.5).abs() < 0.22;
+                            let centre = r < 5.0;
+                            bm.set(x, y, if stone || centre { [42, 31, 20, 255] } else { [255, 255, 255, 255] });
                         }
                     }
                     let f = std::fs::File::create(&png_path).unwrap();
@@ -2033,7 +2037,7 @@ impl AppState {
                     let w = self.doc.width() as f32;
                     let h = self.doc.height() as f32;
                     let before = self.doc.placements.clone();
-                    if let Some(p) = self.make_placement("project/isoline_demo_import", [w * 0.55, h * 0.30], 70.0, PlacementLayer::Manual) {
+                    if let Some(p) = self.make_placement("project/isoline_demo_import", [w * 0.30, h * 0.58], 60.0, PlacementLayer::Manual) {
                         self.doc.placements.push(p);
                     }
                     self.doc.commit_placements("Imported symbol", before);
