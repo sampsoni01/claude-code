@@ -1,0 +1,57 @@
+name: Isoline builds
+
+on:
+  push:
+    branches: [claude/fantasy-map-design-h4jk93]
+    paths: ["isoline/**", ".github/workflows/isoline-build.yml"]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows
+            os: windows-latest
+            exe: isoline.exe
+            archive: isoline-windows.zip
+          - name: macOS
+            os: macos-latest
+            exe: isoline
+            archive: isoline-macos.zip
+          - name: Linux
+            os: ubuntu-latest
+            exe: isoline
+            archive: isoline-linux.zip
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: isoline
+      - name: Linux build dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libxkbcommon-dev libwayland-dev
+      - name: Build
+        working-directory: isoline
+        run: cargo build --release -p isoline
+      - name: Package
+        shell: bash
+        run: |
+          mkdir -p dist/isoline
+          cp isoline/target/release/${{ matrix.exe }} dist/isoline/
+          cp -r isoline/assets dist/isoline/assets
+          cp isoline/README.md dist/isoline/
+          cd dist
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            7z a ../${{ matrix.archive }} isoline
+          else
+            zip -r ../${{ matrix.archive }} isoline
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.archive }}
+          path: ${{ matrix.archive }}
