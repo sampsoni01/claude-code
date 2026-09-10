@@ -226,6 +226,56 @@ pub fn run(size: u32) -> Result<()> {
         bail!("GPU field after undo does not match the original terrain");
     }
     println!("GPU field after undo matches original terrain bit-exactly");
+
+    // Every kind of undoable edit, in a chain, undone and redone twice.
+    {
+        use isoline_core::borders::{Border, BorderKind, BorderStyle, Region};
+        use isoline_core::entity::{Entity, EntityKind, EntityRef};
+        use isoline_core::placement::{Placement, PlacementLayer};
+        use isoline_core::settlement::{Settlement, SettlementParams};
+        let t = Instant::now();
+        let sea0 = doc.sea_level;
+        doc.set_sea_level_live(sea0 + 25.0);
+        doc.commit_sea_level(sea0, sea0 + 25.0);
+        // The first commit dropped the redo branch left by the stroke test.
+        let depth0 = doc.undo.len() - 1;
+        let before = doc.placements.clone();
+        doc.placements.push(Placement { id: 1, asset: "default/castle".into(), pos: [100.0, 100.0], size: 40.0, rotation: 0.0, flip: false, tint: [1.0; 3], layer: PlacementLayer::Manual });
+        doc.commit_placements("bench place", before);
+        let before = doc.entities.clone();
+        doc.entities.push(Entity::new(1, EntityKind::Marker, "Bench", EntityRef::Point([100.0, 100.0])));
+        doc.commit_entities("bench name", before);
+        let before = doc.region_snapshot();
+        doc.regions.push(Region { id: 1, seed: [50.0, 50.0], color: 0, entity: None });
+        doc.borders.push(Border { id: 1, left: 1, right: 0, points: vec![[10.0, 10.0], [90.0, 10.0], [90.0, 90.0], [10.0, 90.0], [10.0, 10.0]], kind: BorderKind::Drawn, style: BorderStyle::Dashed, naturalness: 0.5, control: Vec::new() });
+        doc.commit_regions("bench realm", before);
+        let before = doc.settlements.clone();
+        doc.settlements.push(Settlement { id: 1, pos: [120.0, 120.0], params: SettlementParams::default(), layout: Default::default(), entity: None });
+        doc.commit_settlements("bench town", before);
+        let added = doc.undo.len() - depth0;
+        if added != 5 {
+            bail!("expected 5 undo entries, found {added}");
+        }
+        for _round in 0..2 {
+            for _ in 0..5 {
+                if doc.undo().is_none() {
+                    bail!("undo ran dry");
+                }
+            }
+            if doc.sea_level != sea0 || !doc.placements.is_empty() || !doc.entities.is_empty() || !doc.regions.is_empty() || !doc.borders.is_empty() || !doc.settlements.is_empty() || !doc.region_rings.is_empty() {
+                bail!("undo chain did not restore the document");
+            }
+            for _ in 0..5 {
+                if doc.redo().is_none() {
+                    bail!("redo ran dry");
+                }
+            }
+            if doc.sea_level != sea0 + 25.0 || doc.placements.len() != 1 || doc.entities.len() != 1 || doc.regions.len() != 1 || doc.borders.len() != 1 || doc.settlements.len() != 1 || doc.region_rings_of(1).is_empty() {
+                bail!("redo chain did not rebuild the document");
+            }
+        }
+        println!("undo/redo chain over sea level, symbols, names, realms and towns (×2): {:6.1} ms, all state restored", ms(t));
+    }
     println!("device bytes for field + staging: {:.1} MiB", field.device_bytes as f64 / 1048576.0);
     if let Some(b) = gpu.allocated_bytes() {
         println!("allocator report total: {:.1} MiB", b as f64 / 1048576.0);

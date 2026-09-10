@@ -70,6 +70,8 @@ pub struct Overlay {
     /// Capital markers with their realm colour (Realms tool only).
     pub capitals: Vec<(egui::Pos2, egui::Color32)>,
     pub settlements: Vec<SettlementDraw>,
+    /// Grid overlay: (hex?, cell size in points, screen origin of field (0,0), points per texel).
+    pub grid: Option<(bool, f32, egui::Pos2, f32)>,
 }
 
 /// A town layout in screen points, ready to draw.
@@ -120,6 +122,56 @@ impl Default for Overlay {
             borders: Vec::new(),
             capitals: Vec::new(),
             settlements: Vec::new(),
+            grid: None,
+        }
+    }
+}
+
+/// Square or hex grid over the sheet, clipped to the map rectangle.
+fn draw_grid(painter: &egui::Painter, ov: &Overlay, hex: bool, spacing: f32, origin: egui::Pos2, scale: f32) {
+    let r = ov.map_rect;
+    let sp = spacing * scale;
+    if sp < 4.0 {
+        return;
+    }
+    let stroke = egui::Stroke::new(0.7, ov.ink.gamma_multiply(0.28));
+    let painter = painter.with_clip_rect(r);
+    if hex {
+        let rad = sp / 2.0;
+        let dx = rad * 3f32.sqrt();
+        let mut row = 0;
+        let mut y = origin.y;
+        while y < r.bottom() + rad {
+            if y > r.top() - rad {
+                let mut x = origin.x + if row % 2 == 0 { 0.0 } else { dx * 0.5 };
+                while x < r.right() + dx {
+                    if x > r.left() - dx {
+                        let pts: Vec<egui::Pos2> = (0..6).map(|k| {
+                            let a = (k as f32 + 0.5) * std::f32::consts::FRAC_PI_3;
+                            egui::pos2(x + a.cos() * rad, y + a.sin() * rad)
+                        }).collect();
+                        painter.add(egui::Shape::closed_line(pts, stroke));
+                    }
+                    x += dx;
+                }
+            }
+            y += rad * 1.5;
+            row += 1;
+        }
+    } else {
+        let mut x = origin.x;
+        while x <= r.right() {
+            if x >= r.left() {
+                painter.line_segment([egui::pos2(x, r.top()), egui::pos2(x, r.bottom())], stroke);
+            }
+            x += sp;
+        }
+        let mut y = origin.y;
+        while y <= r.bottom() {
+            if y >= r.top() {
+                painter.line_segment([egui::pos2(r.left(), y), egui::pos2(r.right(), y)], stroke);
+            }
+            y += sp;
         }
     }
 }
@@ -386,6 +438,11 @@ pub enum UiAction {
     SelectSettlement(Option<u64>),
     /// Pick a file and start a raster export with these settings.
     ExportImage(ExportSettings),
+    ExportSvg,
+    ImportTheme,
+    ExportTheme,
+    /// Apply a theme from the library by name.
+    ApplyTheme(String),
 }
 
 #[derive(Default)]
@@ -443,6 +500,7 @@ pub struct UiContext<'a> {
     pub sprite_count: u32,
     pub labels: &'a LabelEngine,
     pub cultures: &'a [Culture],
+    pub themes: &'a [Theme],
     pub selected_entity: Option<u64>,
     pub selected_border: Option<u64>,
     pub selected_region: Option<u64>,
@@ -512,6 +570,9 @@ pub fn draw_overlay(ctx: &egui::Context, ov: &Overlay) {
     let painter = ctx.layer_painter(egui::LayerId::background());
     if ov.show_ornaments {
         draw_ornaments(&painter, ov);
+    }
+    if let Some((hex, spacing, origin, scale)) = ov.grid {
+        draw_grid(&painter, ov, hex, spacing, origin, scale);
     }
     for t in &ov.settlements {
         draw_settlement(&painter, ov, t);
@@ -756,6 +817,19 @@ pub fn draw(root: &mut egui::Ui, st: &mut UiState, c: UiContext) -> Vec<UiAction
                 ui.separator();
                 if ui.button("Export image…").clicked() {
                     st.show_export = true;
+                    ui.close();
+                }
+                if ui.button("Import theme…").clicked() {
+                    actions.push(UiAction::ImportTheme);
+                    ui.close();
+                }
+                if ui.button("Export theme…").clicked() {
+                    actions.push(UiAction::ExportTheme);
+                    ui.close();
+                }
+                ui.separator();
+                if ui.button("Export vector (SVG)…").clicked() {
+                    actions.push(UiAction::ExportSvg);
                     ui.close();
                 }
                 if ui.button("Export gazetteer (CSV)…").clicked() {
@@ -1286,17 +1360,21 @@ pub fn draw(root: &mut egui::Ui, st: &mut UiState, c: UiContext) -> Vec<UiAction
         egui::ScrollArea::vertical().show(ui, |ui| {
             ui.add_space(4.0);
             ui.heading("Map");
-            let th = &mut c.doc.render.theme;
-            let mut style = th.style;
-            egui::ComboBox::from_label("Style").selected_text(style.label()).show_ui(ui, |ui| {
-                for s in ThemeStyle::ALL {
-                    ui.selectable_value(&mut style, s, s.label());
+            let current = c.doc.render.theme.name.clone();
+            let mut pick: Option<String> = None;
+            egui::ComboBox::from_label("Style").selected_text(&current).show_ui(ui, |ui| {
+                for t in c.themes {
+                    if ui.selectable_label(t.name == current, &t.name).clicked() {
+                        pick = Some(t.name.clone());
+                    }
                 }
             });
-            if style != th.style {
-                *th = Theme::preset(style);
-                actions.push(UiAction::SymbolsChanged);
+            if let Some(name) = pick {
+                if name != current {
+                    actions.push(UiAction::ApplyTheme(name));
+                }
             }
+            let _ = (ThemeStyle::ALL, Theme::preset);
             ui.add_space(6.0);
             ui.label(egui::RichText::new("Sea level").strong());
             let (lo, hi) = (c.doc.stats.min.min(-1.0), c.doc.stats.max.max(1.0));
@@ -1729,6 +1807,17 @@ pub fn draw(root: &mut egui::Ui, st: &mut UiState, c: UiContext) -> Vec<UiAction
                 ui.checkbox(&mut rs.show_contours, "Contour lines");
                 if rs.show_contours {
                     ui.add(egui::Slider::new(&mut rs.contour_interval, 10.0..=1000.0).logarithmic(true).suffix(" m").text("Interval"));
+                }
+                ui.horizontal(|ui| {
+                    egui::ComboBox::from_id_salt("grid_kind").selected_text(rs.grid.kind.label()).show_ui(ui, |ui| {
+                        for k in isoline_core::project::GridKind::ALL {
+                            ui.selectable_value(&mut rs.grid.kind, k, k.label());
+                        }
+                    });
+                    ui.label("Grid overlay (display only)");
+                });
+                if rs.grid.kind != isoline_core::project::GridKind::None {
+                    ui.add(egui::Slider::new(&mut rs.grid.spacing, 8.0..=512.0).logarithmic(true).text("Cell size (texels)"));
                 }
             });
             egui::CollapsingHeader::new("Automatic symbols").default_open(false).show(ui, |ui| {

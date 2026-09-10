@@ -1,0 +1,243 @@
+{
+  "name": "Blueprint",
+  "style": "Modern",
+  "paper": [
+    0.9,
+    0.93,
+    0.97
+  ],
+  "paper_dark": [
+    0.8,
+    0.77,
+    0.7
+  ],
+  "ink": [
+    0.15,
+    0.25,
+    0.45
+  ],
+  "sea_fill": [
+    0.62,
+    0.74,
+    0.9
+  ],
+  "sea_ink": [
+    0.25,
+    0.38,
+    0.62
+  ],
+  "river_ink": [
+    0.25,
+    0.38,
+    0.62
+  ],
+  "forest_fill": [
+    0.3,
+    0.5,
+    0.28
+  ],
+  "land_tint": 1.0,
+  "paper_grain": 0.0,
+  "vignette": 0.0,
+  "coast_line_width": 1.4,
+  "coast_rings": 0,
+  "ring_spacing": 8.0,
+  "relief": "Shaded",
+  "hatch_strength": 0.0,
+  "hatch_spacing": 5.0,
+  "hillshade_strength": 0.5,
+  "forest": "None",
+  "forest_scale": 7.0,
+  "forest_threshold": 0.35,
+  "show_ornaments": false,
+  "labels": {
+    "settlement": {
+      "size": 14.0,
+      "italic": false,
+      "bold": false,
+      "uppercase": false,
+      "letter_spacing": 0.5,
+      "color": [
+        0.12,
+        0.2,
+        0.4
+      ],
+      "halo": 2.0,
+      "shadow": false,
+      "min_zoom": 0.0,
+      "max_zoom": 100.0,
+      "curved": false
+    },
+    "river": {
+      "size": 12.0,
+      "italic": true,
+      "bold": false,
+      "uppercase": false,
+      "letter_spacing": 1.0,
+      "color": [
+        0.12,
+        0.2,
+        0.4
+      ],
+      "halo": 2.0,
+      "shadow": false,
+      "min_zoom": 0.15,
+      "max_zoom": 100.0,
+      "curved": true
+    },
+    "lake": {
+      "size": 12.0,
+      "italic": true,
+      "bold": false,
+      "uppercase": false,
+      "letter_spacing": 0.8,
+      "color": [
+        0.12,
+        0.2,
+        0.4
+      ],
+      "halo": 2.0,
+      "shadow": false,
+      "min_zoom": 0.12,
+      "max_zoom": 100.0,
+      "curved": true
+    },
+    "range": {
+      "size": 15.0,
+      "italic": false,
+      "bold": false,
+      "uppercase": true,
+      "letter_spacing": 3.5,
+      "color": [
+        0.12,
+        0.2,
+        0.4
+      ],
+      "halo": 2.0,
+      "shadow": false,
+      "min_zoom": 0.0,
+      "max_zoom": 100.0,
+      "curved": true
+    },
+    "peak": {
+      "size": 10.0,
+      "italic": true,
+      "bold": false,
+      "uppercase": false,
+      "letter_spacing": 0.3,
+      "color": [
+        0.12,
+        0.2,
+        0.4
+      ],
+      "halo": 2.0,
+      "shadow": false,
+      "min_zoom": 0.6,
+      "max_zoom": 100.0,
+      "curved": false
+    },
+    "forest": {
+      "size": 13.0,
+      "italic": true,
+      "bold": false,
+      "uppercase": false,
+      "letter_spacing": 1.5,
+      "color": [
+        0.12,
+        0.2,
+        0.4
+      ],
+      "halo": 2.0,
+      "shadow": false,
+      "min_zoom": 0.2,
+      "max_zoom": 100.0,
+      "curved": true
+    },
+    "sea": {
+      "size": 22.0,
+      "italic": true,
+      "bold": false,
+      "uppercase": true,
+      "letter_spacing": 6.0,
+      "color": [
+        0.12,
+        0.2,
+        0.4
+      ],
+      "halo": 2.0,
+      "shadow": false,
+      "min_zoom": 0.0,
+      "max_zoom": 100.0,
+      "curved": true
+    },
+    "region": {
+      "size": 15.0,
+      "italic": false,
+      "bold": true,
+      "uppercase": true,
+      "letter_spacing": 4.0,
+      "color": [
+        0.12,
+        0.2,
+        0.4
+      ],
+      "halo": 2.0,
+      "shadow": false,
+      "min_zoom": 0.0,
+      "max_zoom": 100.0,
+      "curved": true
+    },
+    "marker": {
+      "size": 11.0,
+      "italic": false,
+      "bold": false,
+      "uppercase": false,
+      "letter_spacing": 0.3,
+      "color": [
+        0.12,
+        0.2,
+        0.4
+      ],
+      "halo": 2.0,
+      "shadow": false,
+      "min_zoom": 0.5,
+      "max_zoom": 100.0,
+      "curved": false
+    },
+    "bay": {
+      "size": 12.0,
+      "italic": true,
+      "bold": false,
+      "uppercase": false,
+      "letter_spacing": 1.2,
+      "color": [
+        0.12,
+        0.2,
+        0.4
+      ],
+      "halo": 2.0,
+      "shadow": false,
+      "min_zoom": 0.25,
+      "max_zoom": 100.0,
+      "curved": true
+    },
+    "title": {
+      "size": 30.0,
+      "italic": true,
+      "bold": true,
+      "uppercase": false,
+      "letter_spacing": 1.0,
+      "color": [
+        0.12,
+        0.2,
+        0.4
+      ],
+      "halo": 2.0,
+      "shadow": false,
+      "min_zoom": 0.0,
+      "max_zoom": 100.0,
+      "curved": false
+    }
+  },
+  "show_labels": true
+}

@@ -5,6 +5,8 @@ use crate::document::{Document, FieldKind};
 use crate::gpu::brush::{BrushPass, MAX_DABS_PER_FRAME};
 use crate::gpu::field::GpuField;
 use crate::export::{ExportJob, ExportSettings, Reference};
+use crate::svg::{SvgGlyph, SvgInput, SvgLabel, SvgSymbol};
+use crate::themes::ThemeLibrary;
 use crate::gpu::map_render::{DerivedViews, MapRenderer, ViewMode, ViewUniform, FLAG_CONTOURS, FLAG_CURSOR, FLAG_HAS_DERIVED, FLAG_HYPSO, FLAG_TRANSPARENT, FLAG_WATER};
 use crate::gpu::profiler::{CpuStats, GpuProfiler};
 use crate::gpu::sprites::{Atlas, SpriteInstance, SpritePass};
@@ -214,6 +216,7 @@ struct AppState {
     place_drag: Option<Vec<Placement>>,
     labels: LabelEngine,
     cultures: Vec<Culture>,
+    themes: ThemeLibrary,
     selected_entity: Option<u64>,
     label_drag: Option<(Vec<Entity>, Vec2, [f32; 2])>,
     name_rng: NameRng,
@@ -392,6 +395,7 @@ impl AppState {
             place_drag: None,
             labels: LabelEngine::default(),
             cultures: names::load_cultures(&names::builtin_culture_dirs()),
+            themes: ThemeLibrary::load(),
             selected_entity: None,
             label_drag: None,
             name_rng: NameRng::new(1234),
@@ -2350,6 +2354,44 @@ impl AppState {
                         self.start_export(settings, path);
                     }
                 }
+                UiAction::ImportTheme => {
+                    if let Some(path) = rfd::FileDialog::new().set_title("Import theme").add_filter("Theme JSON", &["json"]).pick_file() {
+                        match self.themes.import(&path) {
+                            Ok(t) => {
+                                self.doc.render.theme = t;
+                                self.doc.modified = true;
+                                self.doc.symbols_changed();
+                                self.ui.status = format!("Theme \"{}\" imported", self.doc.render.theme.name);
+                            }
+                            Err(e) => self.ui.error = Some(format!("Theme import failed: {e:#}")),
+                        }
+                    }
+                }
+                UiAction::ExportTheme => {
+                    let name = format!("{}.json", self.doc.render.theme.name.to_lowercase().replace(' ', "-").replace('&', "and"));
+                    if let Some(path) = rfd::FileDialog::new().set_title("Export theme").add_filter("Theme JSON", &["json"]).set_file_name(name).save_file() {
+                        let mut t = self.doc.render.theme.clone();
+                        if let Some(stem) = path.file_stem() {
+                            t.name = stem.to_string_lossy().replace(['-', '_'], " ");
+                        }
+                        match crate::themes::write_theme(&path, &t) {
+                            Ok(()) => self.ui.status = format!("Theme written to {}", path.display()),
+                            Err(e) => self.ui.error = Some(format!("Theme export failed: {e:#}")),
+                        }
+                    }
+                }
+                UiAction::ApplyTheme(name) => {
+                    if let Some(t) = self.themes.themes.iter().find(|t| t.name == name) {
+                        self.doc.render.theme = t.clone();
+                        self.doc.modified = true;
+                        self.doc.symbols_changed();
+                    }
+                }
+                UiAction::ExportSvg => {
+                    if let Some(path) = rfd::FileDialog::new().set_title("Export vector").add_filter("SVG", &["svg"]).set_file_name(format!("{}.svg", self.doc.name)).save_file() {
+                        self.export_svg(path);
+                    }
+                }
                 UiAction::SettlementParamsChanged => self.regenerate_selected_settlement(false),
                 UiAction::RerollSettlement => self.regenerate_selected_settlement(true),
                 UiAction::RerollDistrict(d) => self.reroll_district(d),
@@ -2877,6 +2919,133 @@ impl AppState {
         }
     }
 
+    /// Vector export: a terrain raster is rendered first (one band per
+    /// frame), then embedded under the vector layers.
+    fn export_svg(&mut self, path: PathBuf) {
+        let tmp = std::env::temp_dir().join(format!("isoline-svg-terrain-{}.png", std::process::id()));
+        self.start_export(ExportSettings { scale: 1.0, terrain_only: true, ..Default::default() }, tmp);
+        if let Some(job) = self.export.as_mut() {
+            job.svg_after = Some(path);
+        }
+    }
+
+    /// Everything vector on the sheet, in texels.
+    fn write_svg(&mut self, path: &Path, terrain_png: Option<Vec<u8>>) -> Result<()> {
+        let fw = self.doc.width() as f32;
+        let fh = self.doc.height() as f32;
+        let fs = Vec2::new(fw, fh);
+        let t = Instant::now();
+        // Coast at sea level, sampled every other texel.
+        let step = if fw.max(fh) > 4096.0 { 4 } else { 2 };
+        let coast: Vec<Vec<[f32; 2]>> = isoline_core::geometry::isolines(&self.doc.elevation, self.doc.sea_level, step)
+            .into_iter()
+            .map(|l| {
+                let keep = isoline_core::geometry::simplify(&l, 0.8);
+                keep.into_iter().map(|i| l[i]).collect::<Vec<_>>()
+            })
+            .filter(|l| l.len() >= 3)
+            .collect();
+        type RiverList = Vec<(Vec<[f32; 2]>, f32)>;
+        let (rivers, lakes): (RiverList, Vec<isoline_core::geometry::Polygon>) = match (&self.doc.baked, &self.doc.derived) {
+            (Some(b), _) => (b.rivers.iter().map(|r| (r.points.clone(), r.widths.iter().sum::<f32>() / r.widths.len().max(1) as f32)).collect(), b.lakes.iter().map(|l| l.polygon.clone()).collect()),
+            (None, Some(d)) => (d.water.rivers.iter().map(|r| (r.points.clone(), r.widths.iter().sum::<f32>() / r.widths.len().max(1) as f32)).collect(), d.water.lakes.iter().map(|l| l.polygon.clone()).collect()),
+            _ => (Vec::new(), Vec::new()),
+        };
+        let regions: Vec<([f32; 3], Vec<isoline_core::geometry::Polygon>)> = self.doc.regions.iter().map(|r| (REGION_PALETTE[r.color as usize % REGION_PALETTE.len()], self.doc.region_rings_of(r.id).to_vec())).collect();
+        // Labels as on the fitted view.
+        let screen_ppp = self.egui_ctx.pixels_per_point();
+        let ref_zoom = Camera::fit(fs, self.screen_size()).zoom / screen_ppp;
+        let cam = Camera::new(fs * 0.5, ref_zoom);
+        let ss = fs * ref_zoom;
+        let ctx = egui::Context::default();
+        ui::install_fonts(&ctx);
+        ctx.set_pixels_per_point(1.0);
+        let raw = egui::RawInput { screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(ss.x, ss.y))), ..Default::default() };
+        let _ = ctx.run_ui(raw, |_| {});
+        let mut engine = LabelEngine::default();
+        {
+            let lib = &self.library;
+            let placements = &self.doc.placements;
+            let symbol_half = |e: &Entity| -> f32 {
+                match &e.geometry {
+                    EntityRef::Placement { id, .. } => placements.iter().find(|p| p.id == *id).and_then(|p| lib.get(&p.asset).map(|a| p.size / a.aspect.max(0.1) * 0.5)).unwrap_or(0.0),
+                    _ => 0.0,
+                }
+            };
+            engine.layout(&ctx, &self.doc.entities, &self.doc.render.theme, &cam, ss, fs, 1.0, symbol_half, None);
+        }
+        let to_field = |p: egui::Pos2| -> [f32; 2] { [(p.x - ss.x * 0.5) / ref_zoom + fw * 0.5, (p.y - ss.y * 0.5) / ref_zoom + fh * 0.5] };
+        let labels: Vec<SvgLabel> = engine
+            .placed
+            .iter()
+            .filter(|l| l.visible)
+            .map(|l| {
+                let mut italic = false;
+                let bold = false;
+                let glyphs = l
+                    .glyphs
+                    .iter()
+                    .map(|g| {
+                        let fmt = g.galley.job.sections.first().map(|s| s.format.clone());
+                        let size = fmt.as_ref().map(|f| f.font_id.size).unwrap_or(12.0);
+                        if let Some(f) = &fmt {
+                            if let egui::FontFamily::Name(n) = &f.font_id.family {
+                                italic |= n.as_ref() == ui::SERIF_ITALIC;
+                            }
+                        }
+                        SvgGlyph { text: g.galley.job.text.clone(), pos: to_field(g.pos), angle: g.angle, size: size / ref_zoom }
+                    })
+                    .collect();
+                let c = l.color;
+                SvgLabel { glyphs, color: [c.r() as f32 / 255.0, c.g() as f32 / 255.0, c.b() as f32 / 255.0], halo: l.halo / ref_zoom, italic, bold }
+            })
+            .collect();
+        // Symbols: placed and automatic, plus town icons at this zoom.
+        let mut symbols: Vec<SvgSymbol> = Vec::new();
+        for p in self.doc.all_symbols() {
+            if let Some(a) = self.library.get(&p.asset) {
+                symbols.push(SvgSymbol { path: a.path.clone(), pos: p.pos, size: p.size, aspect: a.aspect, pivot: a.def.pivot, rotation: p.rotation, flip: p.flip });
+            }
+        }
+        if ref_zoom < TOWN_ICON_ZOOM {
+            for st in &self.doc.settlements {
+                let qid = match st.params.kind {
+                    SettlementKind::Homestead => "default/homestead",
+                    SettlementKind::Hamlet => "default/hamlet",
+                    SettlementKind::Village => "default/village",
+                    SettlementKind::Town => "default/town",
+                    SettlementKind::City => "default/city",
+                };
+                if let Some(a) = self.library.get(qid) {
+                    symbols.push(SvgSymbol { path: a.path.clone(), pos: st.layout.center, size: (st.layout.radius * 1.1).max(24.0), aspect: a.aspect, pivot: [0.5, 0.6], rotation: 0.0, flip: false });
+                }
+            }
+        }
+        let grid = if self.doc.render.grid.kind != isoline_core::project::GridKind::None { Some((self.doc.render.grid.kind == isoline_core::project::GridKind::Hex, self.doc.render.grid.spacing)) } else { None };
+        let input = SvgInput {
+            width: self.doc.width(),
+            height: self.doc.height(),
+            theme: &self.doc.render.theme,
+            coast: &coast,
+            rivers: &rivers,
+            lakes: &lakes,
+            regions: &regions,
+            borders: &self.doc.borders,
+            settlements: &self.doc.settlements,
+            symbols: &symbols,
+            labels: &labels,
+            terrain_png: terrain_png.as_deref(),
+            grid,
+        };
+        let text = crate::svg::write(&input);
+        std::fs::write(path, text).with_context(|| format!("write {}", path.display()))?;
+        let ms = t.elapsed().as_secs_f32() * 1000.0;
+        self.cpu.sections.insert("svg export", ms);
+        self.ui.status = format!("Exported {} ({} coast lines, {} labels, {} symbols) in {:.1} s", path.display(), coast.len(), labels.len(), symbols.len(), ms / 1000.0);
+        log::info!("{}", self.ui.status);
+        Ok(())
+    }
+
     /// Render and write one band of the running export.
     fn export_step(&mut self) {
         let Some(mut job) = self.export.take() else { return };
@@ -2955,7 +3124,15 @@ impl AppState {
                 self.ui.status = crate::export::describe(&paths[0], job.width, job.height, ms);
                 log::info!("{}", self.ui.status);
                 self.instances_dirty = true;
+                let svg_after = job.svg_after.take();
                 self.export = None;
+                if let Some(svg_path) = svg_after {
+                    let png = std::fs::read(&paths[0]).ok();
+                    let _ = std::fs::remove_file(&paths[0]);
+                    if let Err(e) = self.write_svg(&svg_path, png) {
+                        self.ui.error = Some(format!("SVG export failed: {e:#}"));
+                    }
+                }
             }
             Ok(false) => {
                 self.ui.status = format!("Exporting… {:.0}%", job.progress() * 100.0);
@@ -2989,6 +3166,9 @@ impl AppState {
         let b = to([self.doc.width() as f32, self.doc.height() as f32]);
         ov.map_rect = egui::Rect::from_two_pos(a, b);
         ov.title = self.doc.name.clone();
+        if self.doc.render.grid.kind != isoline_core::project::GridKind::None && self.view_mode == ViewMode::Map {
+            ov.grid = Some((self.doc.render.grid.kind == isoline_core::project::GridKind::Hex, self.doc.render.grid.spacing, a, camera.zoom / ppp));
+        }
         ov.show_ornaments = self.doc.render.theme.show_ornaments && self.doc.render.theme.style != ThemeStyle::Modern && self.view_mode == ViewMode::Map;
         ov.sun_azimuth_deg = self.doc.render.sun_azimuth_deg;
         let ink = self.doc.render.theme.ink;
@@ -3287,6 +3467,7 @@ impl AppState {
                 sprite_count: self.sprites.last_instances,
                 labels: &self.labels,
                 cultures: &self.cultures,
+                themes: &self.themes.themes,
                 selected_entity: self.selected_entity,
                 selected_border: self.selected_border,
                 selected_region: self.selected_region,
@@ -3420,7 +3601,12 @@ impl AppState {
                 let separate_layers = std::env::var("ISOLINE_EXPORT_LAYERS").is_ok();
                 let transparent = std::env::var("ISOLINE_EXPORT_TRANSPARENT").is_ok();
                 let jpeg = path.extension().map(|e| e.eq_ignore_ascii_case("jpg") || e.eq_ignore_ascii_case("jpeg")).unwrap_or(false);
-                self.start_export(ExportSettings { scale, separate_layers, transparent, jpeg, ..Default::default() }, path);
+                let svg = path.extension().map(|e| e.eq_ignore_ascii_case("svg")).unwrap_or(false);
+                if svg {
+                    self.export_svg(path);
+                } else {
+                    self.start_export(ExportSettings { scale, separate_layers, transparent, jpeg, ..Default::default() }, path);
+                }
                 self.exit_after_export = true;
                 self.window.request_redraw();
             } else if self.exit_after_export && self.screenshot.is_none() {
@@ -3441,6 +3627,10 @@ impl AppState {
             && self.save_job.is_none();
         if take_shot {
             let path = self.screenshot.take().unwrap();
+            let mut keys: Vec<_> = self.cpu.sections.keys().copied().collect();
+            keys.sort();
+            let parts: Vec<String> = keys.iter().map(|k| format!("{k} {:.1}", self.cpu.sections[k])).collect();
+            log::info!("perf: frame avg {:.1} ms; {}", self.cpu.avg_frame_ms(), parts.join(", "));
             if self.surface_copyable {
                 if let Err(e) = self.save_screenshot(&frame.texture, &path) {
                     log::error!("screenshot failed: {e:#}");

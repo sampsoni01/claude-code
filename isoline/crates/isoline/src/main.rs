@@ -6,6 +6,8 @@ mod bench;
 mod camera;
 mod document;
 mod export;
+mod svg;
+mod themes;
 mod gpu;
 mod jobs;
 mod labels;

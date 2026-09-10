@@ -280,3 +280,131 @@ mod tests {
         assert_eq!(k.len(), 3);
     }
 }
+
+/// Isolines of a scalar field at `level`, sampled every `step` texels and
+/// joined into polylines (marching squares over cell corners; loops close).
+/// Coordinates are in texels.
+pub fn isolines(field: &crate::field::ScalarField, level: f32, step: u32) -> Vec<Vec<P2>> {
+    use std::collections::HashMap;
+    let step = step.max(1);
+    let w = field.width() / step;
+    let h = field.height() / step;
+    if w < 2 || h < 2 {
+        return Vec::new();
+    }
+    let at = |x: u32, y: u32| field.sample((x * step) as f32 + 0.5, (y * step) as f32 + 0.5) - level;
+    // Each segment joins two edge midpoints; key edges by (x, y, horizontal).
+    let key = |x: u32, y: u32, horiz: bool| (x, y, horiz);
+    let cross = |a: f32, b: f32| if (a - b).abs() < 1e-9 { 0.5 } else { a / (a - b) };
+    type EdgeKey = (u32, u32, bool);
+    let mut segs: Vec<(EdgeKey, EdgeKey)> = Vec::new();
+    let mut pos: HashMap<(u32, u32, bool), P2> = HashMap::new();
+    for y in 0..h - 1 {
+        for x in 0..w - 1 {
+            let v = [at(x, y), at(x + 1, y), at(x + 1, y + 1), at(x, y + 1)];
+            let mut c = 0;
+            for (i, vv) in v.iter().enumerate() {
+                if *vv > 0.0 {
+                    c |= 1 << i;
+                }
+            }
+            if c == 0 || c == 15 {
+                continue;
+            }
+            // Edge ids: 0 top (x,y,h), 1 right (x+1,y,v), 2 bottom (x,y+1,h), 3 left (x,y,v).
+            let edge = |e: usize| match e {
+                0 => key(x, y, true),
+                1 => key(x + 1, y, false),
+                2 => key(x, y + 1, true),
+                _ => key(x, y, false),
+            };
+            let epos = |e: usize| -> P2 {
+                let s = step as f32;
+                match e {
+                    0 => [(x as f32 + cross(v[0], v[1])) * s, y as f32 * s],
+                    1 => [(x + 1) as f32 * s, (y as f32 + cross(v[1], v[2])) * s],
+                    2 => [(x as f32 + cross(v[3], v[2])) * s, (y + 1) as f32 * s],
+                    _ => [x as f32 * s, (y as f32 + cross(v[0], v[3])) * s],
+                }
+            };
+            let pairs: &[(usize, usize)] = match c {
+                1 | 14 => &[(3, 0)],
+                2 | 13 => &[(0, 1)],
+                3 | 12 => &[(3, 1)],
+                4 | 11 => &[(1, 2)],
+                5 => &[(3, 0), (1, 2)],
+                6 | 9 => &[(0, 2)],
+                7 | 8 => &[(3, 2)],
+                10 => &[(0, 1), (2, 3)],
+                _ => &[],
+            };
+            for (a, b) in pairs {
+                pos.insert(edge(*a), epos(*a));
+                pos.insert(edge(*b), epos(*b));
+                segs.push((edge(*a), edge(*b)));
+            }
+        }
+    }
+    // Join segments by shared edge keys.
+    let mut adj: HashMap<(u32, u32, bool), Vec<usize>> = HashMap::new();
+    for (i, (a, b)) in segs.iter().enumerate() {
+        adj.entry(*a).or_default().push(i);
+        adj.entry(*b).or_default().push(i);
+    }
+    let mut used = vec![false; segs.len()];
+    let mut out = Vec::new();
+    for start in 0..segs.len() {
+        if used[start] {
+            continue;
+        }
+        used[start] = true;
+        let (a, b) = segs[start];
+        let mut line = vec![a, b];
+        // Extend forward then backward.
+        for dir in 0..2 {
+            loop {
+                let end = if dir == 0 { *line.last().unwrap() } else { line[0] };
+                let Some(next) = adj.get(&end).and_then(|v| v.iter().copied().find(|&k| !used[k])) else { break };
+                used[next] = true;
+                let (na, nb) = segs[next];
+                let other = if na == end { nb } else { na };
+                if dir == 0 {
+                    line.push(other);
+                } else {
+                    line.insert(0, other);
+                }
+            }
+        }
+        out.push(line.into_iter().map(|k| pos[&k]).collect());
+    }
+    out
+}
+
+#[cfg(test)]
+mod iso_tests {
+    use super::*;
+    #[test]
+    fn isolines_ring_an_island() {
+        let (w, h) = (64u32, 64u32);
+        let mut d = vec![-10.0f32; (w * h) as usize];
+        for y in 0..h {
+            for x in 0..w {
+                let r = ((x as f32 - 32.0).powi(2) + (y as f32 - 32.0).powi(2)).sqrt();
+                if r < 14.0 {
+                    d[(y * w + x) as usize] = 10.0;
+                }
+            }
+        }
+        let f = crate::field::ScalarField::from_vec(w, h, d);
+        let lines = isolines(&f, 0.0, 1);
+        assert_eq!(lines.len(), 1, "one closed coast");
+        let l = &lines[0];
+        assert!(l.len() > 40);
+        let d0 = ((l[0][0] - l[l.len() - 1][0]).powi(2) + (l[0][1] - l[l.len() - 1][1]).powi(2)).sqrt();
+        assert!(d0 < 2.0, "loop closes ({d0})");
+        for p in l {
+            let r = ((p[0] - 32.5).powi(2) + (p[1] - 32.5).powi(2)).sqrt();
+            assert!((r - 14.0).abs() < 1.5, "radius {r}");
+        }
+    }
+}

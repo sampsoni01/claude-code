@@ -7,6 +7,74 @@ climate, biomes, forests, settlements) is *derived* from those fields, live.
 
 The coastline is literally the isoline `elevation == seaLevel`, hence the name.
 
+![Milestone 8](docs/milestone8.png)
+
+## Status: Milestone 8 — themes, export, polish
+
+- **Raster export** (File → Export image…): any resolution as pixels per
+  texel, DPI written to the PNG, JPEG with quality, transparent desk,
+  print bleed in texels, and *separate layers* (terrain, symbols,
+  labels/borders/towns as three files). The sheet is rendered in tiles
+  (up to 4096×1024) and streamed to disk band by band, so a 16000-pixel
+  export never sits in memory; the job advances one band per frame and
+  the UI stays live with a progress bar. Labels, ornaments and town detail
+  are laid out once at a *reference zoom* (the fitted view by default, or
+  the current view) and carried to the export resolution by the pixel
+  ratio, so a print looks like the screen, only sharper. Headless:
+  `--export out.png --export-scale 3`.
+- **Vector export** (File → Export vector (SVG)…): coastlines (marching
+  squares at sea level), rivers with width, lakes, realm fills, borders
+  with their dash styles, town streets/buildings/walls, every symbol as an
+  embedded `<use>` of its source SVG or PNG, the grid, and labels as one
+  positioned, rotated `<text>` per glyph with halos in a separate pass.
+  The terrain shading is embedded as a raster under the vectors; the two
+  label faces travel with the file as `@font-face` so glyph advances match.
+- **Theme files**: a theme is the whole `Theme` struct as JSON. The Style
+  list shows the three built-in looks plus every theme in `assets/themes/`
+  (Sepia atlas, Night ink and Blueprint ship as examples) and the user's
+  config folder. File → Import theme… copies a file into that folder and
+  applies it; Export theme… writes the current one. Themes are text, so
+  users author and share them without touching the app.
+- **Grid overlay** (View → Advanced settings): square or hex, cell size in
+  texels, drawn as a display layer over the sheet and included in both
+  exports. It is never a data structure.
+- **Undo robustness**: the headless bench now chains sea level, symbols,
+  names, realms and towns, undoes and redoes the chain twice and checks
+  every list and the region outlines come back exactly (18 ms).
+- **Performance pass** on the CPU-only test stack (llvmpipe Vulkan, 4
+  threads, 2048² map), from the bench and the demo's frame log:
+
+| Step | Actual |
+|---|---|
+| Brush stroke, 800 dabs r=64 over 40 frames | 2.5 ms/frame encode+submit+readback, bit-exact vs CPU |
+| Water + biome recompute (2048² sim) | 552 ms; 74 ms with baked water |
+| Symbol placement job | 130 ms |
+| Realm growth job | 236 ms |
+| Border cost field | 40 ms |
+| Label layout per frame | 0.2 ms |
+| UI per frame | 0.8 ms |
+| Undo of two strokes (266 tiles) | 4.8 ms |
+| Undo/redo chain, all edit kinds ×2 | 18 ms |
+| Export 2048² PNG | 0.5 s |
+| Export 6144² PNG (6 bands, 12 tiles) | 3.1 s |
+| SVG export (40 coast lines, 22 labels, 457 symbols) | 0.1 s + 0.4 s terrain raster |
+
+  On a mid-range discrete GPU the GPU-bound numbers (brush, export
+  tiles, map pass) drop by an order of magnitude; the CPU jobs above are
+  the ones that stay.
+
+### Deferred within Milestone 8
+
+- PDF export: the SVG carries everything vector; a PDF writer or an
+  external SVG→PDF step would follow.
+- Per-layer and per-entity style overrides beyond the label overrides
+  already stored.
+- Code signing, auto-update and installers, per the spec's final-milestone
+  deferral. Nothing blocks them: the app is one executable that finds its
+  `assets/` folder next to it (or via `ISOLINE_ASSETS`).
+- The compass rose and cartouche are raster-only in the SVG (they are
+  drawn from egui shapes); a vector version is straightforward.
+
 ![Milestone 7](docs/milestone7-city.png)
 
 ## Status: Milestone 7 — settlement layouts

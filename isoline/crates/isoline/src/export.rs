@@ -24,6 +24,8 @@ pub struct ExportSettings {
     pub separate_layers: bool,
     /// Which view's label sizes and detail the export reproduces.
     pub reference: Reference,
+    /// Terrain shading only (the raster under an SVG export).
+    pub terrain_only: bool,
 }
 
 /// Labels, ornaments and town detail are sized as they appear on screen
@@ -38,7 +40,7 @@ pub enum Reference {
 
 impl Default for ExportSettings {
     fn default() -> Self {
-        Self { scale: 2.0, dpi: 300, jpeg: false, quality: 90, transparent: false, bleed: 0.0, separate_layers: false, reference: Reference::Fit }
+        Self { scale: 2.0, dpi: 300, jpeg: false, quality: 90, transparent: false, bleed: 0.0, separate_layers: false, reference: Reference::Fit, terrain_only: false }
     }
 }
 
@@ -75,7 +77,7 @@ impl Layer {
 }
 
 enum Sink {
-    Png(png::StreamWriter<'static, std::io::BufWriter<std::fs::File>>),
+    Png(Box<png::StreamWriter<'static, std::io::BufWriter<std::fs::File>>>),
     Jpeg { path: PathBuf, rgb: Vec<u8>, quality: u8 },
 }
 
@@ -103,6 +105,8 @@ pub struct ExportJob {
     pub renderer: egui_wgpu::Renderer,
     /// Output pixels per overlay point.
     pub ppp: f32,
+    /// When set, the finished terrain raster is embedded in an SVG at this path.
+    pub svg_after: Option<PathBuf>,
     pub done: bool,
     pub started: Instant,
     bgra: bool,
@@ -151,7 +155,7 @@ impl ExportJob {
             usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
             mapped_at_creation: false,
         });
-        let layers = if settings.separate_layers { vec![Layer::Terrain, Layer::Symbols, Layer::Overlay] } else { vec![Layer::All] };
+        let layers = if settings.terrain_only { vec![Layer::Terrain] } else if settings.separate_layers { vec![Layer::Terrain, Layer::Symbols, Layer::Overlay] } else { vec![Layer::All] };
         let bands = height.div_ceil(band_h);
         let bgra = matches!(format, wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Bgra8UnormSrgb);
         let mut job = Self {
@@ -175,6 +179,7 @@ impl ExportJob {
             ctx,
             renderer,
             ppp,
+            svg_after: None,
             done: false,
             started: Instant::now(),
             bgra,
@@ -212,7 +217,7 @@ impl ExportJob {
             let ppm = (self.settings.dpi as f32 / 0.0254).round() as u32;
             enc.set_pixel_dims(Some(png::PixelDimensions { xppu: ppm, yppu: ppm, unit: png::Unit::Meter }));
             let writer = enc.write_header()?;
-            self.sink = Some(Sink::Png(writer.into_stream_writer()?));
+            self.sink = Some(Sink::Png(Box::new(writer.into_stream_writer()?)));
         }
         self.band_y = 0;
         Ok(())

@@ -58,6 +58,41 @@ pub struct RenderSettings {
     pub coast_line_width: f32,
     #[serde(default)]
     pub theme: Theme,
+    /// Display-only grid overlay (never a data structure).
+    #[serde(default)]
+    pub grid: GridSettings,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum GridKind {
+    #[default]
+    None,
+    Square,
+    Hex,
+}
+
+impl GridKind {
+    pub const ALL: [GridKind; 3] = [GridKind::None, GridKind::Square, GridKind::Hex];
+    pub fn label(self) -> &'static str {
+        match self {
+            GridKind::None => "None",
+            GridKind::Square => "Square",
+            GridKind::Hex => "Hex",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct GridSettings {
+    pub kind: GridKind,
+    /// Cell size in texels (hex: flat-to-flat).
+    pub spacing: f32,
+}
+
+impl Default for GridSettings {
+    fn default() -> Self {
+        Self { kind: GridKind::None, spacing: 64.0 }
+    }
 }
 
 impl Default for RenderSettings {
@@ -71,6 +106,7 @@ impl Default for RenderSettings {
             show_contours: false,
             coast_line_width: 1.4,
             theme: Theme::default(),
+            grid: GridSettings::default(),
         }
     }
 }
