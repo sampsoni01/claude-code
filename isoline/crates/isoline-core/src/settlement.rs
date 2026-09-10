@@ -621,10 +621,17 @@ pub fn generate(site: &Site<'_>, at: P2, p: &SettlementParams) -> Layout {
         let half_w = if road.primary { 1.4 } else { 0.9 };
         let mut along = 0.0;
         let spacing_base = 1.8 + 3.6 * (1.0 - p.density);
-        for w in road.points.windows(2) {
+        for (wi, w) in road.points.windows(2).enumerate() {
             let seg_len = dist(w[0], w[1]);
             let dir = norm(sub(w[1], w[0]));
-            let side_v = perp(dir);
+            // Lots face a smoothed street direction (the chord over the
+            // neighbouring vertices) so a wandering street does not turn
+            // every house a different way.
+            let prev = road.points.get(wi.wrapping_sub(1)).copied().unwrap_or(w[0]);
+            let next = road.points.get(wi + 2).copied().unwrap_or(w[1]);
+            let face = norm(sub(next, prev));
+            let face = if face[0].abs() + face[1].abs() < 1e-3 { dir } else { face };
+            let side_v = perp(face);
             let mut t = 0.0;
             while t < seg_len {
                 let at_pt = add(w[0], mul(dir, t));
@@ -657,7 +664,7 @@ pub fn generate(site: &Site<'_>, at: P2, p: &SettlementParams) -> Layout {
                     for row in 0..rows {
                         let off = half_w + bd * 0.5 + row as f32 * (bd + 1.5) + h.range(0.0, 1.0) * jitter;
                         let c = add(at_pt, mul(side_v, *side * off));
-                        let c = add(c, mul(dir, h.range(-0.3, 0.3) * jitter * bw));
+                        let c = add(c, mul(face, h.range(-0.3, 0.3) * jitter * bw));
                         if !site.buildable(c, max_slope) {
                             break;
                         }
@@ -674,13 +681,18 @@ pub fn generate(site: &Site<'_>, at: P2, p: &SettlementParams) -> Layout {
                             break;
                         }
                         let (qw, qd) = if district == District::Farmland { (bw * 3.0, bd * 2.2) } else { (bw, bd) };
-                        let r = (qw.max(qd)) * 0.5;
-                        if collides(&hash, c, r * 0.95) {
+                        // Half-diagonal, so rotated footprints never overlap.
+                        let r = (qw * qw + qd * qd).sqrt() * 0.5;
+                        if collides(&hash, c, r * 0.9) {
+                            break;
+                        }
+                        // Clear of every street, not only the one it faces.
+                        if row == 0 && road_clearance(&road_snapshot, ri, c) < half_w + qw.min(qd) * 0.45 {
                             break;
                         }
                         let ang = h.range(-0.12, 0.12) * jitter;
                         let (s, cs) = ang.sin_cos();
-                        let dx = [dir[0] * cs - dir[1] * s, dir[0] * s + dir[1] * cs];
+                        let dx = [face[0] * cs - face[1] * s, face[0] * s + face[1] * cs];
                         let dy = perp(dx);
                         let hw = mul(dx, qw * 0.5);
                         let hd = mul(dy, qd * 0.5);
@@ -856,6 +868,20 @@ pub fn reroll_district(site: &Site<'_>, s: &mut Settlement, district: District) 
     }
     s.layout.buildings = out;
     s.layout.next_building_id = next;
+}
+
+/// Distance from a point to the nearest street other than `own`.
+fn road_clearance(roads: &[Road], own: usize, p: P2) -> f32 {
+    let mut best = f32::INFINITY;
+    for (i, r) in roads.iter().enumerate() {
+        if i == own {
+            continue;
+        }
+        for w in r.points.windows(2) {
+            best = best.min(seg_dist2(p, w[0], w[1]).0);
+        }
+    }
+    best.sqrt()
 }
 
 fn h_spacing(seed: u64, road: u64, lot: u64) -> f32 {
