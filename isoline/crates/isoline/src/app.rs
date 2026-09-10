@@ -1280,6 +1280,8 @@ impl AppState {
         if self.town_icons_visible {
             for st in &self.doc.settlements {
                 let qid = match st.params.kind {
+                    SettlementKind::Homestead => "default/homestead",
+                    SettlementKind::Hamlet => "default/hamlet",
                     SettlementKind::Village => "default/village",
                     SettlementKind::Town => "default/town",
                     SettlementKind::City => "default/city",
@@ -1859,7 +1861,8 @@ impl AppState {
     }
 
     fn place_settlement(&mut self, fp: Vec2) {
-        if self.doc.elevation.sample(fp.x, fp.y) <= self.doc.sea_level {
+        let lake = self.doc.derived.as_ref().map(|d| d.water_cov.sample(fp.x, fp.y) > 0.5).unwrap_or(false);
+        if self.doc.elevation.sample(fp.x, fp.y) <= self.doc.sea_level || lake {
             self.ui.status = "A town needs dry land".into();
             return;
         }
@@ -2903,9 +2906,21 @@ impl AppState {
                     self.apply_border_stroke(path);
                     self.selected_border = None;
                     // A city and a village with generated layouts.
-                    for (x, y, kind, model) in [(0.62, 0.55, SettlementKind::City, settlement::GrowthModel::Organic), (0.70, 0.40, SettlementKind::Village, settlement::GrowthModel::Organic)] {
+                    for (x, y, kind, model) in [
+                        (0.62, 0.55, SettlementKind::City, settlement::GrowthModel::Organic),
+                        (0.70, 0.40, SettlementKind::Village, settlement::GrowthModel::Organic),
+                        (0.645, 0.585, SettlementKind::Homestead, settlement::GrowthModel::Organic),
+                        (0.665, 0.515, SettlementKind::Hamlet, settlement::GrowthModel::Organic),
+                    ] {
                         self.tools.settlement = settlement::SettlementParams { kind, model, ..Default::default() };
-                        self.place_settlement(Vec2::new(w * x, h * y));
+                        // Step a little if the spot is water.
+                        for k in 0..6 {
+                            let n = self.doc.settlements.len();
+                            self.place_settlement(Vec2::new(w * (x + 0.012 * k as f32), h * (y - 0.008 * k as f32)));
+                            if self.doc.settlements.len() > n {
+                                break;
+                            }
+                        }
                     }
                     self.selected_settlement = None;
                     self.instances_dirty = true;

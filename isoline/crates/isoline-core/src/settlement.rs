@@ -40,23 +40,35 @@ impl GrowthModel {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SettlementKind {
+    /// A farmstead: a house, a barn and fields on one lane. No walls.
+    Homestead,
+    /// A handful of houses on a lane or two.
+    Hamlet,
     Village,
     Town,
     City,
 }
 
 impl SettlementKind {
-    pub const ALL: [SettlementKind; 3] = [SettlementKind::Village, SettlementKind::Town, SettlementKind::City];
+    pub const ALL: [SettlementKind; 5] = [SettlementKind::Homestead, SettlementKind::Hamlet, SettlementKind::Village, SettlementKind::Town, SettlementKind::City];
     pub fn label(self) -> &'static str {
         match self {
+            SettlementKind::Homestead => "Homestead",
+            SettlementKind::Hamlet => "Hamlet",
             SettlementKind::Village => "Village",
             SettlementKind::Town => "Town",
             SettlementKind::City => "City",
         }
     }
+    /// Walls, keep, plaza and cemetery only from a village up.
+    pub fn is_settlement(self) -> bool {
+        !matches!(self, SettlementKind::Homestead | SettlementKind::Hamlet)
+    }
     /// Base radius in project texels.
     pub fn radius(self) -> f32 {
         match self {
+            SettlementKind::Homestead => 6.0,
+            SettlementKind::Hamlet => 10.0,
             SettlementKind::Village => 14.0,
             SettlementKind::Town => 32.0,
             SettlementKind::City => 56.0,
@@ -64,6 +76,8 @@ impl SettlementKind {
     }
     pub fn importance(self) -> f32 {
         match self {
+            SettlementKind::Homestead => 0.12,
+            SettlementKind::Hamlet => 0.22,
             SettlementKind::Village => 0.35,
             SettlementKind::Town => 0.6,
             SettlementKind::City => 0.9,
@@ -399,9 +413,10 @@ pub fn generate(site: &Site<'_>, at: P2, p: &SettlementParams) -> Layout {
     let mut center = at;
     let mut best = f32::INFINITY;
     let n = 9;
+    let search = radius.max(12.0);
     for iy in 0..n {
         for ix in 0..n {
-            let q = [at[0] + (ix as f32 / (n - 1) as f32 - 0.5) * radius, at[1] + (iy as f32 / (n - 1) as f32 - 0.5) * radius];
+            let q = [at[0] + (ix as f32 / (n - 1) as f32 - 0.5) * search, at[1] + (iy as f32 / (n - 1) as f32 - 0.5) * search];
             if !site.buildable(q, max_slope * 0.6) {
                 continue;
             }
@@ -440,6 +455,8 @@ pub fn generate(site: &Site<'_>, at: P2, p: &SettlementParams) -> Layout {
     match model {
         GrowthModel::Organic | GrowthModel::Hybrid | GrowthModel::Radial => {
             let n = match p.kind {
+                SettlementKind::Homestead => 1,
+                SettlementKind::Hamlet => 2,
                 SettlementKind::Village => 3,
                 SettlementKind::Town => 4 + (rng.f() * 2.0) as usize,
                 SettlementKind::City => 6 + (rng.f() * 2.0) as usize,
@@ -448,6 +465,18 @@ pub fn generate(site: &Site<'_>, at: P2, p: &SettlementParams) -> Layout {
             let w = if model == GrowthModel::Radial { wander * 0.3 } else { wander };
             for i in 0..n {
                 let a = base_a + i as f32 / n as f32 * std::f32::consts::TAU + rng.range(-0.25, 0.25) * (1.0 + p.irregularity);
+                if p.kind == SettlementKind::Homestead {
+                    // One lane passing the yard.
+                    let (mut back, _) = grow_road(site, &mut rng, center, [-a.cos(), -a.sin()], radius * 1.2, step, w, max_slope);
+                    let (fwd, br) = grow_road(site, &mut rng, center, [a.cos(), a.sin()], radius * 1.2, step, w, max_slope);
+                    if let Some(b) = br {
+                        bridges.push(b);
+                    }
+                    back.reverse();
+                    back.extend(fwd.into_iter().skip(1));
+                    push_road(back, true, &mut roads);
+                    continue;
+                }
                 let (pts, br) = grow_road(site, &mut rng, center, [a.cos(), a.sin()], radius * 1.35, step, w, max_slope);
                 if let Some(b) = br {
                     bridges.push(b);
@@ -518,6 +547,7 @@ pub fn generate(site: &Site<'_>, at: P2, p: &SettlementParams) -> Layout {
     match model {
         GrowthModel::Radial => {
             let rings: &[f32] = match p.kind {
+                SettlementKind::Homestead | SettlementKind::Hamlet => &[],
                 SettlementKind::Village => &[0.6],
                 SettlementKind::Town => &[0.45, 0.85],
                 SettlementKind::City => &[0.3, 0.6, 0.9],
@@ -551,6 +581,8 @@ pub fn generate(site: &Site<'_>, at: P2, p: &SettlementParams) -> Layout {
             // one partial ring for the hybrid.
             let n = primary.len();
             let connectors = match p.kind {
+                SettlementKind::Homestead => 0,
+                SettlementKind::Hamlet => 1,
                 SettlementKind::Village => 2,
                 SettlementKind::Town => 5,
                 SettlementKind::City => 10,
@@ -643,6 +675,8 @@ pub fn generate(site: &Site<'_>, at: P2, p: &SettlementParams) -> Layout {
                     let mut h = H::new(p.seed ^ (p.district_seeds[district.index()] as u64) << 20, (ri as u64) << 24 | lot_i << 2 | si as u64);
                     // Density gate and district-specific sparseness.
                     let keep_prob = match district {
+                        District::Farmland if p.kind == SettlementKind::Homestead => 0.6,
+                        District::Farmland if p.kind == SettlementKind::Hamlet => 0.25,
                         District::Farmland => 0.08,
                         District::Noble => 0.45,
                         District::Temple => 0.5,
@@ -653,6 +687,8 @@ pub fn generate(site: &Site<'_>, at: P2, p: &SettlementParams) -> Layout {
                         continue;
                     }
                     let scale_k = match p.kind {
+                        SettlementKind::Homestead => 0.6,
+                        SettlementKind::Hamlet => 0.55,
                         SettlementKind::Village => 0.55,
                         SettlementKind::Town => 0.62,
                         SettlementKind::City => 0.7,
@@ -674,7 +710,7 @@ pub fn generate(site: &Site<'_>, at: P2, p: &SettlementParams) -> Layout {
                         if !(dry(add(c, mul(dir, fw))) && dry(sub(c, mul(dir, fw))) && dry(add(c, mul(side_v, fdp))) && dry(sub(c, mul(side_v, fdp)))) {
                             break;
                         }
-                        if dist(c, center) < plaza_r || dist(c, center) > radius * 1.6 {
+                        if (p.kind.is_settlement() && dist(c, center) < plaza_r) || dist(c, center) > radius * 1.6 {
                             break;
                         }
                         if district != District::Farmland && dist(c, center) > radius * 1.08 {
@@ -713,7 +749,7 @@ pub fn generate(site: &Site<'_>, at: P2, p: &SettlementParams) -> Layout {
     }
 
     // 6. Walls: offset hull of the core, towers, gates.
-    if p.walls && p.kind != SettlementKind::Village {
+    if p.walls && matches!(p.kind, SettlementKind::Town | SettlementKind::City) {
         let rings: Vec<f32> = if p.rings >= 2 { vec![1.0, 0.55] } else { vec![1.0] };
         for (k, rf) in rings.iter().enumerate() {
             let core: Vec<P2> = buildings.iter().map(|b| b.centre()).filter(|c| dist(*c, center) <= radius * rf * 0.98).collect();
@@ -785,8 +821,10 @@ pub fn generate(site: &Site<'_>, at: P2, p: &SettlementParams) -> Layout {
         let r = plaza_r * (1.0 + pr.range(-0.15, 0.15) * p.irregularity);
         [center[0] + a.cos() * r, center[1] + a.sin() * r]
     }).collect();
-    layout.plaza = Some(Polygon { points: plaza });
-    if p.kind != SettlementKind::Village {
+    if p.kind.is_settlement() {
+        layout.plaza = Some(Polygon { points: plaza });
+    }
+    if matches!(p.kind, SettlementKind::Town | SettlementKind::City) {
         if let Some(k) = keep_at {
             layout.keep = Some((k, (radius * 0.07).max(2.5)));
             buildings.retain(|b| dist(b.centre(), k) > radius * 0.09);
@@ -795,7 +833,8 @@ pub fn generate(site: &Site<'_>, at: P2, p: &SettlementParams) -> Layout {
     if let Some((to_water, dw)) = water {
         if dw < radius * 1.2 {
             let n = match p.kind {
-                SettlementKind::Village => 1,
+                SettlementKind::Homestead => 0,
+                SettlementKind::Hamlet | SettlementKind::Village => 1,
                 SettlementKind::Town => 3,
                 SettlementKind::City => 5,
             };
@@ -832,7 +871,7 @@ pub fn generate(site: &Site<'_>, at: P2, p: &SettlementParams) -> Layout {
         None => base_dir,
     };
     let cc = add(center, mul(away, radius * 0.95));
-    if site.buildable(cc, max_slope) {
+    if p.kind.is_settlement() && site.buildable(cc, max_slope) {
         let w = (radius * 0.16).max(3.0);
         let h = (radius * 0.11).max(2.0);
         let dx = perp(away);
@@ -1076,6 +1115,20 @@ mod tests {
             let l = generate(&site, [120.0, 120.0], &p);
             assert!(l.buildings.len() > 20, "{m:?}: {} buildings", l.buildings.len());
         }
+    }
+
+    #[test]
+    fn homestead_is_a_few_buildings_without_walls() {
+        let e = site_field();
+        let site = Site { elevation: &e, sea_level: 0.0, water: None, rivers: &[] };
+        let p = SettlementParams { seed: 5, kind: SettlementKind::Homestead, ..Default::default() };
+        let l = generate(&site, [60.0, 60.0], &p);
+        assert!(!l.buildings.is_empty() && l.buildings.len() <= 8, "{} buildings", l.buildings.len());
+        assert!(l.walls.is_empty() && l.plaza.is_none() && l.keep.is_none() && l.cemetery.is_none());
+        assert!(!l.fields.is_empty(), "a homestead farms");
+        let h = SettlementParams { seed: 5, kind: SettlementKind::Hamlet, ..Default::default() };
+        let l = generate(&site, [60.0, 60.0], &h);
+        assert!(l.buildings.len() >= 3 && l.walls.is_empty());
     }
 
     #[test]

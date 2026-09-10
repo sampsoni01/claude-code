@@ -260,6 +260,10 @@ def house(x, y, w=18, h=14, tower=False):
     return body
 
 rng.seed(800)
+emit("homestead", "settlements", ["homestead", "farm", "settlement", "house"], 64, 48, house(24, 42, 18, 13) + poly(wob([(4, 44), (60, 44)], 0.4), w=1.2) + "".join(poly([(x, 44), (x, 38)], w=1.2) for x in range(6, 60, 7)) + poly(wob([(46, 41), (46, 33), (56, 33), (56, 41)], 0.5), fill=PAPER, w=1.3, close=True), size=26)
+rng.seed(805)
+emit("hamlet", "settlements", ["hamlet", "settlement", "houses"], 64, 48, house(8, 42, 14, 10) + house(38, 44, 15, 11), size=32)
+rng.seed(800)
 emit("village", "settlements", ["village", "settlement", "houses"], 64, 48, house(6, 42, 16, 12) + house(30, 44, 18, 13) + house(46, 40, 14, 11), size=40)
 rng.seed(801)
 emit("town", "settlements", ["town", "settlement"], 90, 64, house(4, 58, 18, 14) + house(26, 60, 20, 16, tower=True) + house(54, 58, 18, 14) + house(70, 60, 16, 12), size=56)

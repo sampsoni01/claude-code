@@ -627,6 +627,39 @@
       "world_size": 48
     },
     {
+      "id": "homestead",
+      "name": "Homestead",
+      "file": "homestead.svg",
+      "category": "settlements",
+      "tags": [
+        "homestead",
+        "farm",
+        "settlement",
+        "house"
+      ],
+      "pivot": [
+        0.5,
+        0.95
+      ],
+      "world_size": 26
+    },
+    {
+      "id": "hamlet",
+      "name": "Hamlet",
+      "file": "hamlet.svg",
+      "category": "settlements",
+      "tags": [
+        "hamlet",
+        "settlement",
+        "houses"
+      ],
+      "pivot": [
+        0.5,
+        0.95
+      ],
+      "world_size": 32
+    },
+    {
       "id": "village",
       "name": "Village",
       "file": "village.svg",
