@@ -2,14 +2,16 @@
 
 use anyhow::Result;
 use isoline_core::derived::{BakedWater, Derived, DerivedParams};
-use isoline_core::entity::Entity;
+use isoline_core::borders::{self, Border, Region};
+use isoline_core::entity::{Entity, EntityRef};
+use isoline_core::geometry::Polygon;
 use isoline_core::field::ScalarField;
 use isoline_core::graph::{DepGraph, Edge, NodeId, Reach};
 use isoline_core::placement::Placement;
 use isoline_core::project::{Geometry, Manifest, ProjectData, RenderSettings, SymbolParams, ViewState};
 use isoline_core::stats::FieldStats;
 use isoline_core::tiles::{PixelRect, TileSet};
-use isoline_core::undo::{GeometrySnapshot, TileDelta, UndoOp, UndoStack};
+use isoline_core::undo::{GeometrySnapshot, RegionSnapshot, TileDelta, UndoOp, UndoStack};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::Instant;
@@ -97,6 +99,15 @@ pub struct Document {
     pub entities: Vec<Entity>,
     pub next_entity_id: u64,
     pub culture: String,
+    /// Realms and the borders between them (plus hand-drawn borders).
+    pub regions: Vec<Region>,
+    pub borders: Vec<Border>,
+    pub next_region_id: u64,
+    pub next_border_id: u64,
+    /// Region outlines assembled from the border arcs (derived, cached).
+    pub region_rings: Vec<(u64, Vec<Polygon>)>,
+    /// The region fill texture needs re-rasterizing.
+    pub regions_dirty: bool,
 }
 
 pub const UNDO_RAM_BUDGET: usize = 512 << 20;
@@ -170,6 +181,12 @@ impl Document {
             entities: Vec::new(),
             next_entity_id: 1,
             culture: "northern".into(),
+            regions: Vec::new(),
+            borders: Vec::new(),
+            next_region_id: 1,
+            next_border_id: 1,
+            region_rings: Vec::new(),
+            regions_dirty: true,
         }
     }
 
@@ -195,6 +212,11 @@ impl Document {
         doc.entities = geometry.entities.clone();
         doc.next_entity_id = doc.entities.iter().map(|e| e.id).max().unwrap_or(0) + 1;
         doc.culture = manifest.culture.clone();
+        doc.regions = geometry.regions.clone();
+        doc.borders = geometry.borders.clone();
+        doc.next_region_id = doc.regions.iter().map(|r| r.id).max().unwrap_or(0) + 1;
+        doc.next_border_id = doc.borders.iter().map(|b| b.id).max().unwrap_or(0) + 1;
+        doc.rebuild_region_rings();
         doc.path = path;
         if geometry.baked {
             let moisture = moisture.unwrap_or_else(|| ScalarField::new(doc.width(), doc.height(), 0.5));
@@ -216,13 +238,15 @@ impl Document {
         let mut geometry = match (&self.baked, &self.derived) {
             (Some(b), _) => {
                 fields.push(("moisture".into(), b.moisture.clone()));
-                Geometry { rivers: b.rivers.clone(), lakes: b.lakes.clone(), baked: true, placements: Vec::new(), entities: Vec::new() }
+                Geometry { rivers: b.rivers.clone(), lakes: b.lakes.clone(), baked: true, ..Default::default() }
             }
-            (None, Some(d)) => Geometry { rivers: d.water.rivers.clone(), lakes: d.water.lakes.clone(), baked: false, placements: Vec::new(), entities: Vec::new() },
+            (None, Some(d)) => Geometry { rivers: d.water.rivers.clone(), lakes: d.water.lakes.clone(), baked: false, ..Default::default() },
             _ => Geometry::default(),
         };
         geometry.placements = self.placements.clone();
         geometry.entities = self.entities.clone();
+        geometry.regions = self.regions.clone();
+        geometry.borders = self.borders.clone();
         ProjectData { manifest: m, fields, geometry }
     }
 
@@ -409,6 +433,14 @@ impl Document {
                 self.modified = true;
                 None
             }
+            UndoOp::Regions { before, after } => {
+                let snap = if forward { after } else { before };
+                self.regions = snap.regions.clone();
+                self.borders = snap.borders.clone();
+                self.rebuild_region_rings();
+                self.modified = true;
+                None
+            }
             UndoOp::Bake { baked_before, moisture_before, baked_after, moisture_after } => {
                 let (g, m) = if forward { (baked_after, moisture_after) } else { (baked_before, moisture_before) };
                 self.baked = match (g, m) {
@@ -542,6 +574,58 @@ impl Document {
         }
         self.undo.push(label, UndoOp::Entities { before, after: self.entities.clone() });
         self.modified = true;
+    }
+
+    // ---- regions and borders ---------------------------------------------
+
+    pub fn region_snapshot(&self) -> RegionSnapshot {
+        RegionSnapshot { regions: self.regions.clone(), borders: self.borders.clone() }
+    }
+
+    /// Commit a change to regions or borders as one undo entry.
+    pub fn commit_regions(&mut self, label: &str, before: RegionSnapshot) {
+        let after = self.region_snapshot();
+        if after == before {
+            return;
+        }
+        self.undo.push(label, UndoOp::Regions { before, after });
+        self.rebuild_region_rings();
+        self.modified = true;
+    }
+
+    /// Reassemble every region's rings from the shared arcs and refresh the
+    /// region labels' extents (the label geometry is derived from the rings).
+    pub fn rebuild_region_rings(&mut self) {
+        self.region_rings = self.regions.iter().map(|r| (r.id, borders::region_rings(&self.borders, r.id))).collect();
+        for (rid, rings) in &self.region_rings {
+            let Some(eid) = self.regions.iter().find(|r| r.id == *rid).and_then(|r| r.entity) else { continue };
+            if let Some((c, radius)) = borders::region_extent(rings) {
+                if let Some(e) = self.entities.iter_mut().find(|e| e.id == eid) {
+                    e.geometry = EntityRef::Area { center: c, radius };
+                }
+            }
+        }
+        self.regions_dirty = true;
+    }
+
+    pub fn region_rings_of(&self, id: u64) -> &[Polygon] {
+        self.region_rings.iter().find(|(r, _)| *r == id).map(|(_, v)| v.as_slice()).unwrap_or(&[])
+    }
+
+    /// The region under a point, if any.
+    pub fn region_at(&self, p: [f32; 2]) -> Option<u64> {
+        self.region_rings.iter().find(|(_, rings)| borders::rings_contain(rings, p)).map(|(id, _)| *id)
+    }
+
+    pub fn new_region_id(&mut self) -> u64 {
+        let id = self.next_region_id;
+        self.next_region_id += 1;
+        id
+    }
+    pub fn new_border_id(&mut self) -> u64 {
+        let id = self.next_border_id;
+        self.next_border_id += 1;
+        id
     }
 
     pub fn entity(&self, id: u64) -> Option<&Entity> {

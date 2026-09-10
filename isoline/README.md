@@ -7,7 +7,79 @@ climate, biomes, forests, settlements) is *derived* from those fields, live.
 
 The coastline is literally the isoline `elevation == seaLevel`, hence the name.
 
-![Current build](docs/milestone5b.png)
+![Milestone 6](docs/milestone6.png)
+
+## Status: Milestone 6 — borders and regions
+
+- **Cost field** (`isoline-core::borders`): the elevation field and the
+  water system's rivers and lakes are reduced to a travel-cost grid at a
+  capped working resolution (1024 cells on the long side; 2 project
+  texels per cell at 2048²). Flat land costs 1 per cell; slope and the
+  top of the height range add to it; rivers (×0.25), coasts (×0.35) and
+  **ridgelines** (×0.3, detected as cells above both neighbours on two of
+  four axes, in place of watershed divides per the amendment) pull cost
+  down; lakes (5) and sea (12) push it up. Sea stays passable so islands
+  are claimed by the nearest realm; it never beats a land route.
+- **Border brush** (`B`): drag a rough line. The stroke is simplified to
+  control points (fewer as naturalness drops) and consecutive points are
+  joined by A* least-cost routes over a blend of uniform and terrain cost.
+  Naturalness 0 gives straight surveyed segments; 1 follows rivers,
+  ridges and coasts. Moving the *Surveyed ↔ natural* slider or the line
+  style re-routes the selected border from its kept control points. A
+  stroke that ends near its start closes into a region of its own.
+- **Realms** (`T`): click to place a capital; every capital grows a
+  territory by multi-source Dijkstra over the cost field (rivers and
+  coasts carry it far, mountains hold it back), not Voronoi. Land
+  components of a realm that do not contain its capital are folded into
+  the neighbour they touch most (enclave resolution; islands touching only
+  sea keep their realm). Growth runs off-thread.
+- **Shared border arcs**: the label grid becomes arcs between junctions,
+  each simplified once, with the region on either side recorded. Region
+  polygons are assembled from the arcs, so dragging a border vertex moves
+  the boundary of both realms together and a junction never comes apart.
+  Rings assemble with holes (an inland sea) and islands handled even-odd.
+- **Rendering**: a region-id + border-band texture at the working
+  resolution tints each territory lightly and lays a stronger tinted band
+  just inside its border and along its coast, as in a hand-coloured atlas.
+  Border lines are vector strokes over the map (dashed, dash-dot, dotted or
+  solid) in a dark red-brown; the coast-following arcs of grown realms are
+  not drawn, since the coast is already inked.
+- **Region entities**: every realm gets a label entity (auto-named in the
+  current language) centred on its territory; the Name tool selects a
+  realm's label by clicking inside it. A realm label's inspector offers
+  *Rename features inside in this language*: generated names inside the
+  realm are redrawn in the label's culture and tagged `in:<realm>`; names
+  the user typed are kept.
+- Regions and borders are saved in `geometry.json`; every edit (capital,
+  growth, drag, delete, re-route, style) is one undo entry.
+
+Performance (llvmpipe CPU Vulkan, 4 threads, 2048² map):
+
+| Step | Time |
+|---|---|
+| Cost field build, 1024² | 30 ms |
+| Grow three realms + enclave fold + arcs, 1024² | 188 ms (off-thread) |
+| Border brush stroke (route + close) | 5–40 ms |
+| Region texture rasterize + upload, 1024² | 4 ms |
+
+### Deferred within Milestone 6
+
+- Roads do not exist yet, so "cheap along roads" waits for them.
+- A drawn border does not split an existing realm; it is a line (or, when
+  closed, its own region). Splitting a realm along a drawn border is a
+  natural follow-up.
+- Region style is the palette slot only; per-region colour picking and
+  hatched or outlined fills wait for the theme pass (Milestone 8).
+- Regrowing realms resets dragged borders (growth is recomputed from the
+  capitals). Keeping manual edits across a regrow would need the arcs to
+  be diffed rather than replaced.
+
+### Decisions needed
+
+- None blocking. Region fill strength is fixed per style (0.16 parchment,
+  0.20 modern) since appearance controls were removed.
+
+![Symbol and usability pass](docs/milestone5b.png)
 
 ## Symbol and usability pass (after Milestone 5)
 
@@ -421,7 +493,7 @@ cargo run --release                     # new 2048² continent
 cargo run --release -- --size 8192      # bigger field
 cargo run --release -- --open My.isoline
 cargo run --release -- --bench 4096     # headless benchmark, no window needed
-cargo run --release -- --demo --screenshot out.png   # scripted strokes, save, capture, exit
+cargo run --release -- --demo --screenshot out.png   # scripted strokes, symbols, names, realms, save, capture, exit
 cargo run --release -- --theme illuminated           # start with a given theme
 cargo run --release -- --open My.isoline --zoom 1.5 --center 0.6 0.4   # start zoomed on a spot
 cargo test                              # core unit tests

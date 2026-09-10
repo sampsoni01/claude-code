@@ -16,6 +16,7 @@ use isoline_core::brush::Falloff;
 use isoline_core::procedural::{CoastPreset, LandSide};
 use isoline_core::project::Manifest;
 use isoline_core::terrain::{TerrainParams, TerrainPreset};
+use isoline_core::borders::{BorderKind, BorderStyle};
 use isoline_core::theme::{Theme, ThemeStyle};
 use isoline_core::water::RecomputeMode;
 use std::collections::HashMap;
@@ -63,6 +64,18 @@ pub struct Overlay {
     pub sun_azimuth_deg: f32,
     pub ink: egui::Color32,
     pub paper: egui::Color32,
+    pub borders: Vec<BorderDraw>,
+    /// Capital markers with their realm colour (Realms tool only).
+    pub capitals: Vec<(egui::Pos2, egui::Color32)>,
+}
+
+/// A border ready to draw, in screen points.
+pub struct BorderDraw {
+    pub points: Vec<egui::Pos2>,
+    pub style: BorderStyle,
+    pub selected: bool,
+    pub handles: bool,
+    pub color: egui::Color32,
 }
 
 impl Default for Overlay {
@@ -79,6 +92,8 @@ impl Default for Overlay {
             sun_azimuth_deg: 315.0,
             ink: egui::Color32::BLACK,
             paper: egui::Color32::WHITE,
+            borders: Vec::new(),
+            capitals: Vec::new(),
         }
     }
 }
@@ -193,6 +208,15 @@ pub enum UiAction {
     EntityGenerateName(u64),
     DeleteEntity(u64),
     SelectEntity(Option<u64>),
+    /// Naturalness or style changed: re-route the selected drawn border.
+    BorderSettingsChanged,
+    GrowRealms,
+    RemoveRegion(u64),
+    ClearRealms,
+    DeleteSelectedBorder,
+    /// Rename generated features inside the realm labelled by this entity.
+    PropagateRegionNames(u64),
+    SelectRegion(Option<u64>),
 }
 
 #[derive(Default)]
@@ -249,6 +273,9 @@ pub struct UiContext<'a> {
     pub labels: &'a LabelEngine,
     pub cultures: &'a [Culture],
     pub selected_entity: Option<u64>,
+    pub selected_border: Option<u64>,
+    pub selected_region: Option<u64>,
+    pub realms_running: bool,
 }
 
 fn fmt_bytes(b: u64) -> String {
@@ -312,6 +339,35 @@ fn draw_overlay(ctx: &egui::Context, ov: &Overlay) {
     let painter = ctx.layer_painter(egui::LayerId::background());
     if ov.show_ornaments {
         draw_ornaments(&painter, ov);
+    }
+    for b in &ov.borders {
+        if b.selected {
+            painter.add(egui::Shape::line(b.points.clone(), egui::Stroke::new(6.0, egui::Color32::from_rgba_unmultiplied(255, 210, 90, 90))));
+        }
+        let stroke = egui::Stroke::new(1.7, b.color);
+        match b.style {
+            BorderStyle::Solid => {
+                painter.add(egui::Shape::line(b.points.clone(), stroke));
+            }
+            BorderStyle::Dashed => {
+                painter.extend(egui::Shape::dashed_line(&b.points, stroke, 9.0, 5.0));
+            }
+            BorderStyle::DashDot => {
+                painter.extend(egui::Shape::dashed_line_with_offset(&b.points, stroke, &[10.0, 2.0], &[5.0, 5.0], 0.0));
+            }
+            BorderStyle::Dotted => {
+                painter.extend(egui::Shape::dotted_line(&b.points, b.color, 5.0, 1.3));
+            }
+        }
+        if b.handles {
+            for p in &b.points {
+                painter.rect(egui::Rect::from_center_size(*p, egui::vec2(6.0, 6.0)), egui::CornerRadius::ZERO, egui::Color32::from_rgb(250, 240, 210), egui::Stroke::new(1.0, b.color), egui::StrokeKind::Inside);
+            }
+        }
+    }
+    for (p, col) in &ov.capitals {
+        painter.circle(*p, 7.0, *col, egui::Stroke::new(1.5, egui::Color32::from_rgb(40, 30, 20)));
+        painter.text(*p + egui::vec2(0.0, -1.0), egui::Align2::CENTER_CENTER, "★", egui::FontId::proportional(9.0), egui::Color32::from_rgb(250, 240, 210));
     }
     if ov.path.len() >= 2 {
         let col = if ov.path_is_coast { egui::Color32::from_rgb(90, 200, 255) } else { egui::Color32::from_rgb(255, 190, 80) };
@@ -422,6 +478,23 @@ fn tool_button(ui: &mut egui::Ui, tool: Tool, selected: bool, enabled: bool) -> 
         Tool::Name => {
             p.text(c, egui::Align2::CENTER_CENTER, "Aa", serif_italic(u * 1.1), ink);
             p.line_segment([pt(-0.6, 0.55), pt(0.6, 0.55)], egui::Stroke::new(1.2, ink));
+        }
+        Tool::Border => {
+            // A dash-dot frontier with a survey point at each bend.
+            let pts = [pt(-0.75, 0.5), pt(-0.3, 0.1), pt(0.1, 0.25), pt(0.4, -0.3), pt(0.75, -0.55)];
+            p.extend(egui::Shape::dashed_line(&pts, egui::Stroke::new(1.8, egui::Color32::from_rgb(220, 120, 100)), 5.0, 3.5));
+            for q in [pts[1], pts[3]] {
+                p.circle_filled(q, 2.4, ink);
+            }
+        }
+        Tool::Territory => {
+            // Two realms sharing a border, a capital star in each.
+            let a = vec![pt(-0.75, -0.6), pt(0.1, -0.7), pt(-0.05, 0.05), pt(0.15, 0.7), pt(-0.75, 0.6)];
+            let b = vec![pt(0.1, -0.7), pt(0.75, -0.55), pt(0.75, 0.6), pt(0.15, 0.7), pt(-0.05, 0.05)];
+            p.add(egui::Shape::convex_polygon(a, egui::Color32::from_rgba_unmultiplied(210, 110, 95, 110), egui::Stroke::new(1.2, ink)));
+            p.add(egui::Shape::convex_polygon(b, egui::Color32::from_rgba_unmultiplied(105, 150, 200, 110), egui::Stroke::new(1.2, ink)));
+            p.text(pt(-0.38, 0.0), egui::Align2::CENTER_CENTER, "★", egui::FontId::proportional(u * 0.5), ink);
+            p.text(pt(0.42, 0.05), egui::Align2::CENTER_CENTER, "★", egui::FontId::proportional(u * 0.5), ink);
         }
         Tool::Pan => {
             for (dx, dy) in [(0.0f32, -1.0f32), (0.0, 1.0), (-1.0, 0.0), (1.0, 0.0)] {
@@ -816,6 +889,9 @@ pub fn draw(root: &mut egui::Ui, st: &mut UiState, c: UiContext) -> Vec<UiAction
                                     actions.push(UiAction::EntityEdit { before });
                                 }
                             }
+                            if c.doc.regions.iter().any(|r| r.entity == Some(id)) && ui.button("Rename features inside in this language").on_hover_text("Generated names inside the realm are redrawn from this label's language; names you typed are kept").clicked() {
+                                actions.push(UiAction::PropagateRegionNames(id));
+                            }
                             if ui.button("Delete name").clicked() {
                                 actions.push(UiAction::DeleteEntity(id));
                             }
@@ -831,6 +907,82 @@ pub fn draw(root: &mut egui::Ui, st: &mut UiState, c: UiContext) -> Vec<UiAction
                             });
                         }
                     }
+                }
+                Tool::Border => {
+                    ui.heading("Border");
+                    ui.small("Drag a rough line; the border finds its way along rivers, ridges and coasts. End near the start to close a region. Drag a point to adjust; click a border to select it.");
+                    let mut ch = false;
+                    ch |= ui.add(egui::Slider::new(&mut c.tools.border_naturalness, 0.0..=1.0).text("Surveyed ↔ natural")).drag_stopped();
+                    let mut style = c.tools.border_style;
+                    egui::ComboBox::from_label("Line").selected_text(style.label()).show_ui(ui, |ui| {
+                        for st in BorderStyle::ALL {
+                            ui.selectable_value(&mut style, st, st.label());
+                        }
+                    });
+                    if style != c.tools.border_style {
+                        c.tools.border_style = style;
+                        ch = true;
+                    }
+                    if let Some(bid) = c.selected_border {
+                        if let Some(b) = c.doc.borders.iter().find(|b| b.id == bid) {
+                            ui.separator();
+                            ui.label(match b.kind {
+                                BorderKind::Drawn if b.left != 0 => "Selected: drawn region outline",
+                                BorderKind::Drawn => "Selected: drawn border",
+                                BorderKind::Grown => "Selected: realm border",
+                            });
+                            if b.kind == BorderKind::Drawn && ui.button("Delete border").clicked() {
+                                actions.push(UiAction::DeleteSelectedBorder);
+                            }
+                        }
+                    }
+                    if ch && c.selected_border.is_some() {
+                        actions.push(UiAction::BorderSettingsChanged);
+                    }
+                }
+                Tool::Territory => {
+                    ui.heading("Realms");
+                    ui.small("Click the map to place a capital. Each capital grows a realm by travel cost: rivers and coasts carry it far, mountains hold it back. Drag border points to adjust.");
+                    if c.realms_running {
+                        ui.add(egui::ProgressBar::new(0.5).animate(true).text("growing realms"));
+                    }
+                    let regions: Vec<(u64, u32, String)> = c
+                        .doc
+                        .regions
+                        .iter()
+                        .map(|r| (r.id, r.color, r.entity.and_then(|e| c.doc.entity(e)).map(|e| e.name.clone()).unwrap_or_else(|| format!("Realm {}", r.id))))
+                        .collect();
+                    if regions.is_empty() {
+                        ui.label("No realms yet.");
+                    }
+                    let mut remove = None;
+                    for (id, color, name) in &regions {
+                        ui.horizontal(|ui| {
+                            let (rect, _) = ui.allocate_exact_size(egui::vec2(14.0, 14.0), egui::Sense::hover());
+                            ui.painter().rect(rect, egui::CornerRadius::same(3), crate::app::region_color(*color), egui::Stroke::new(1.0, egui::Color32::from_rgb(60, 48, 36)), egui::StrokeKind::Inside);
+                            let sel = c.selected_region == Some(*id);
+                            if ui.selectable_label(sel, name).clicked() {
+                                actions.push(UiAction::SelectRegion(if sel { None } else { Some(*id) }));
+                            }
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                if ui.small_button("✕").on_hover_text("Remove this realm").clicked() {
+                                    remove = Some(*id);
+                                }
+                            });
+                        });
+                    }
+                    if let Some(id) = remove {
+                        actions.push(UiAction::RemoveRegion(id));
+                    }
+                    ui.horizontal(|ui| {
+                        if ui.add_enabled(!regions.is_empty() && !c.realms_running, egui::Button::new("Regrow")).on_hover_text("Grow every realm again from its capital. Dragged borders are reset.").clicked() {
+                            actions.push(UiAction::GrowRealms);
+                        }
+                        if ui.add_enabled(!regions.is_empty(), egui::Button::new("Clear")).clicked() {
+                            actions.push(UiAction::ClearRealms);
+                        }
+                    });
+                    ui.small("Name a realm with the Name tool; its label offers to rename the features inside it.");
                 }
                 Tool::Pan => {
                     ui.label("Drag to pan. Wheel to zoom.");

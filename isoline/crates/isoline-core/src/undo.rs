@@ -5,6 +5,7 @@
 
 use crate::field::{ScalarField, TILE_TEXELS};
 use crate::hydrology::River;
+use crate::borders::{Border, Region};
 use crate::entity::Entity;
 use crate::placement::Placement;
 use crate::water::LakePolygon;
@@ -57,6 +58,21 @@ pub enum UndoOp {
     Placements { before: Vec<Placement>, after: Vec<Placement> },
     /// Named entities (whole list).
     Entities { before: Vec<Entity>, after: Vec<Entity> },
+    /// Regions and their borders (whole lists).
+    Regions { before: RegionSnapshot, after: RegionSnapshot },
+}
+
+/// Regions and borders together: one edit may touch both.
+#[derive(Clone, Debug, PartialEq, Default)]
+pub struct RegionSnapshot {
+    pub regions: Vec<Region>,
+    pub borders: Vec<Border>,
+}
+
+impl RegionSnapshot {
+    fn bytes(&self) -> usize {
+        self.regions.len() * 48 + self.borders.iter().map(|b| 64 + (b.points.len() + b.control.len()) * 8).sum::<usize>()
+    }
 }
 
 impl UndoOp {
@@ -67,6 +83,7 @@ impl UndoOp {
             UndoOp::Geometry { before, after } => before.bytes() + after.bytes(),
             UndoOp::Placements { before, after } => (before.len() + after.len()) * 64,
             UndoOp::Entities { before, after } => (before.len() + after.len()) * 256,
+            UndoOp::Regions { before, after } => before.bytes() + after.bytes(),
             UndoOp::Bake { baked_before, moisture_before, baked_after, moisture_after } => {
                 baked_before.as_ref().map(|g| g.bytes()).unwrap_or(0)
                     + baked_after.as_ref().map(|g| g.bytes()).unwrap_or(0)

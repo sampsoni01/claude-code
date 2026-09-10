@@ -29,7 +29,8 @@ use isoline_core::terrain;
 use isoline_core::theme::{ForestStyle, ReliefStyle, Theme, ThemeStyle};
 use isoline_core::assets::TerrainFilter;
 use isoline_core::tiles::PixelRect;
-use isoline_core::undo::GeometrySnapshot;
+use isoline_core::borders::{self, Border, BorderKind, CostField, CostParams, Seed, REGION_PALETTE};
+use isoline_core::undo::{GeometrySnapshot, RegionSnapshot};
 use isoline_core::water::RecomputeMode;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU32};
@@ -82,30 +83,54 @@ struct DerivedTextures {
     forest: GpuField,
     moisture: GpuField,
     temperature: GpuField,
+    /// Region id + border band at the border working resolution.
+    regions: GpuField,
     uploaded: Option<UploadedDerived>,
     last_upload_tiles: u32,
 }
 
+/// Working resolution of the border cost field and region fill texture.
+fn region_res(w: u32, h: u32) -> (u32, u32) {
+    let cap = CostParams::default().max_size;
+    let scale = (w.max(h) as f32 / cap as f32).max(1.0);
+    (((w as f32 / scale).round() as u32).max(2), ((h as f32 / scale).round() as u32).max(2))
+}
+
 impl DerivedTextures {
     fn new(device: &wgpu::Device, w: u32, h: u32) -> Self {
+        let (rw, rh) = region_res(w, h);
         Self {
             water: GpuField::new_labelled(device, w, h, "water"),
             biome: GpuField::new_labelled(device, w, h, "biome"),
             forest: GpuField::new_labelled(device, w, h, "forest"),
             moisture: GpuField::new_labelled(device, 64, 64, "moisture"),
             temperature: GpuField::new_labelled(device, 64, 64, "temperature"),
+            regions: GpuField::new_labelled(device, rw, rh, "regions"),
             uploaded: None,
             last_upload_tiles: 0,
         }
     }
 
     fn views(&self) -> DerivedViews<'_> {
-        DerivedViews { water: &self.water.view, moisture: &self.moisture.view, temperature: &self.temperature.view, biome: &self.biome.view, forest: &self.forest.view }
+        DerivedViews { water: &self.water.view, moisture: &self.moisture.view, temperature: &self.temperature.view, biome: &self.biome.view, forest: &self.forest.view, regions: &self.regions.view }
     }
 
     fn device_bytes(&self) -> u64 {
-        self.water.device_bytes + self.moisture.device_bytes + self.temperature.device_bytes + self.biome.device_bytes + self.forest.device_bytes
+        self.water.device_bytes + self.moisture.device_bytes + self.temperature.device_bytes + self.biome.device_bytes + self.forest.device_bytes + self.regions.device_bytes
     }
+}
+
+/// A realm's palette colour as an egui colour.
+pub fn region_color(index: u32) -> egui::Color32 {
+    let c = REGION_PALETTE[index as usize % REGION_PALETTE.len()];
+    egui::Color32::from_rgb((c[0] * 255.0) as u8, (c[1] * 255.0) as u8, (c[2] * 255.0) as u8)
+}
+
+/// A border vertex being dragged: every arc vertex that shared the grabbed
+/// point moves together, so junctions stay joined.
+struct BorderDrag {
+    before: RegionSnapshot,
+    targets: Vec<(u64, usize)>,
 }
 
 #[derive(Default)]
@@ -152,6 +177,13 @@ struct AppState {
     sprites: SpritePass,
     atlas_egui: Option<egui::TextureId>,
     symbol_job: Option<Job<(Vec<Placement>, u64)>>,
+    /// Territory growth runs off-thread; the result is the new set of grown arcs.
+    territory_job: Option<Job<Vec<Border>>>,
+    /// Cost field cache keyed by (derived run, sea level).
+    cost_field: Option<(u64, f32, CostField)>,
+    selected_border: Option<u64>,
+    selected_region: Option<u64>,
+    border_drag: Option<BorderDrag>,
     instances_dirty: bool,
     instance_key: (usize, usize),
     selected_placement: Option<u64>,
@@ -316,6 +348,11 @@ impl AppState {
             sprites,
             atlas_egui,
             symbol_job: None,
+            territory_job: None,
+            cost_field: None,
+            selected_border: None,
+            selected_region: None,
+            border_drag: None,
             instances_dirty: true,
             instance_key: (usize::MAX, usize::MAX),
             selected_placement: None,
@@ -417,6 +454,11 @@ impl AppState {
         self.selected_placement = None;
         self.selected_entity = None;
         self.label_drag = None;
+        self.selected_border = None;
+        self.selected_region = None;
+        self.border_drag = None;
+        self.cost_field = None;
+        self.territory_job = None;
         self.instances_dirty = true;
         self.field = GpuField::new(&self.gpu.device, self.doc.width(), self.doc.height());
         self.field.upload_all(&self.gpu.queue, &self.doc.elevation);
@@ -702,6 +744,16 @@ impl AppState {
             self.spawn_derived_job();
         }
 
+        if let Some(job) = &self.territory_job {
+            if let Some(arcs) = job.try_take() {
+                let ms = job.started.elapsed().as_secs_f32() * 1000.0;
+                self.territory_job = None;
+                self.cpu.sections.insert("realms job", ms);
+                log::info!("realms grown in {ms:.0} ms: {} arcs", arcs.len());
+                self.finish_territory_job(arcs);
+            }
+        }
+
         // Symbol layers follow the derived result.
         if let Some(job) = &self.symbol_job {
             if let Some((symbols, next_id)) = job.try_take() {
@@ -812,6 +864,10 @@ impl AppState {
             self.input.stroke = true;
             return;
         }
+        if tool == Tool::Border || tool == Tool::Territory {
+            self.border_press(pos_screen, fp);
+            return;
+        }
         if tool == Tool::WaterEdit {
             self.water_edit_press(pos_screen);
             return;
@@ -839,7 +895,11 @@ impl AppState {
 
     fn continue_stroke(&mut self, pos_screen: Vec2, pressure: f32) {
         let fp = self.camera.screen_to_field(pos_screen, self.screen_size());
-        if self.tools.tool.is_procedural() {
+        if self.border_drag.is_some() {
+            self.border_drag_move(fp);
+            return;
+        }
+        if self.tools.tool.is_procedural() || (self.tools.tool == Tool::Border && self.input.stroke) {
             if let Some(last) = self.tools.path.last() {
                 if (Vec2::from(*last) - fp).length() >= 1.5 {
                     self.tools.path.push(fp.to_array());
@@ -884,6 +944,16 @@ impl AppState {
     fn end_stroke(&mut self) {
         if self.water_edit.dragging {
             self.water_edit_release();
+            return;
+        }
+        if self.border_drag.is_some() {
+            self.border_release();
+            return;
+        }
+        if self.tools.tool == Tool::Border && self.input.stroke {
+            self.input.stroke = false;
+            let path = std::mem::take(&mut self.tools.path);
+            self.apply_border_stroke(path);
             return;
         }
         if let Some(before) = self.place_drag.take() {
@@ -1269,6 +1339,13 @@ impl AppState {
                 return;
             }
         }
+        // Inside a realm: its label.
+        if let Some(eid) = self.doc.region_at(fp.to_array()).and_then(|r| self.doc.regions.iter().find(|x| x.id == r)).and_then(|r| r.entity) {
+            if self.doc.entity(eid).is_some() {
+                self.selected_entity = Some(eid);
+                return;
+            }
+        }
         // Otherwise a marker on the spot (sea → bay/sea style name on water).
         let on_water = self.doc.elevation.sample(fp.x, fp.y) <= self.doc.sea_level;
         let kind = if on_water { EntityKind::Bay } else { EntityKind::Marker };
@@ -1335,6 +1412,357 @@ impl AppState {
             Ok(()) => self.ui.status = format!("Gazetteer written to {}", path.display()),
             Err(e) => self.ui.error = Some(format!("Export failed: {e}")),
         }
+    }
+
+    // ---- borders and realms --------------------------------------------------
+
+    /// The terrain cost field, rebuilt when the water system or sea level changed.
+    fn cost_field(&mut self) -> Option<&CostField> {
+        let key = (self.doc.derived_runs, self.doc.sea_level);
+        let stale = self.cost_field.as_ref().map(|(r, s, _)| (*r, *s) != key).unwrap_or(true);
+        if stale {
+            let t = Instant::now();
+            let water = self.doc.derived.as_ref().map(|d| &d.water);
+            let cf = CostField::build(&self.doc.elevation, self.doc.sea_level, water, &CostParams::default());
+            let ms = t.elapsed().as_secs_f32() * 1000.0;
+            log::info!("cost field {}×{} built in {ms:.0} ms", cf.width, cf.height);
+            self.cpu.sections.insert("cost field", ms);
+            self.cost_field = Some((key.0, key.1, cf));
+        }
+        self.cost_field.as_ref().map(|(_, _, cf)| cf)
+    }
+
+    /// Nearest border vertex within `px` screen pixels.
+    fn border_vertex_under(&self, screen: Vec2, px: f32) -> Option<(u64, usize)> {
+        let ss = self.screen_size();
+        let mut best = px * px;
+        let mut hit = None;
+        for b in &self.doc.borders {
+            for (i, p) in b.points.iter().enumerate() {
+                let d2 = (self.camera.field_to_screen(Vec2::from(*p), ss) - screen).length_squared();
+                if d2 < best {
+                    best = d2;
+                    hit = Some((b.id, i));
+                }
+            }
+        }
+        hit
+    }
+
+    /// Nearest border line within `px` screen pixels.
+    fn border_under(&self, fp: Vec2, px: f32) -> Option<u64> {
+        let tol = px / self.camera.zoom.max(0.01);
+        let mut best = tol * tol;
+        let mut hit = None;
+        for b in &self.doc.borders {
+            for w in b.points.windows(2) {
+                let (d2, _) = isoline_core::geometry::seg_dist2(fp.to_array(), w[0], w[1]);
+                if d2 < best {
+                    best = d2;
+                    hit = Some(b.id);
+                }
+            }
+        }
+        hit
+    }
+
+    fn border_press(&mut self, screen: Vec2, fp: Vec2) {
+        // A vertex: drag it (and every arc that shares the point).
+        if let Some((bid, vi)) = self.border_vertex_under(screen, 9.0) {
+            let p = self.doc.borders.iter().find(|b| b.id == bid).map(|b| b.points[vi]).unwrap();
+            let mut targets = Vec::new();
+            for b in &self.doc.borders {
+                for (i, q) in b.points.iter().enumerate() {
+                    if (q[0] - p[0]).abs() < 0.01 && (q[1] - p[1]).abs() < 0.01 {
+                        targets.push((b.id, i));
+                    }
+                }
+            }
+            self.selected_border = Some(bid);
+            self.border_drag = Some(BorderDrag { before: self.doc.region_snapshot(), targets });
+            self.input.stroke = true;
+            return;
+        }
+        // A line: select it.
+        if let Some(bid) = self.border_under(fp, 7.0) {
+            self.selected_border = Some(bid);
+            return;
+        }
+        match self.tools.tool {
+            Tool::Border => {
+                self.selected_border = None;
+                self.tools.path.clear();
+                self.tools.path.push(fp.to_array());
+                self.input.stroke = true;
+            }
+            Tool::Territory => {
+                self.selected_border = None;
+                self.add_capital(fp.to_array());
+            }
+            _ => {}
+        }
+    }
+
+    fn border_drag_move(&mut self, fp: Vec2) {
+        let Some(d) = &self.border_drag else { return };
+        let w = self.doc.width() as f32 - 1.0;
+        let h = self.doc.height() as f32 - 1.0;
+        let p = [fp.x.clamp(0.0, w), fp.y.clamp(0.0, h)];
+        for (bid, vi) in &d.targets {
+            if let Some(b) = self.doc.borders.iter_mut().find(|b| b.id == *bid) {
+                if let Some(q) = b.points.get_mut(*vi) {
+                    *q = p;
+                }
+            }
+        }
+        self.doc.rebuild_region_rings();
+    }
+
+    fn border_release(&mut self) {
+        self.input.stroke = false;
+        if let Some(d) = self.border_drag.take() {
+            self.doc.commit_regions("Move border", d.before);
+        }
+    }
+
+    /// The border brush: route the stroke over the cost field. A stroke that
+    /// ends near where it began closes into a new region.
+    fn apply_border_stroke(&mut self, path: Vec<[f32; 2]>) {
+        if path.len() < 2 {
+            return;
+        }
+        let naturalness = self.tools.border_naturalness;
+        let style = self.tools.border_style;
+        let Some(cf) = self.cost_field() else { return };
+        let (mut pts, mut control) = borders::border_from_stroke(cf, &path, naturalness);
+        let mut total = 0.0;
+        for w in pts.windows(2) {
+            total += isoline_core::geometry::len(isoline_core::geometry::sub(w[1], w[0]));
+        }
+        let gap = isoline_core::geometry::len(isoline_core::geometry::sub(*pts.last().unwrap(), pts[0]));
+        let closes = pts.len() > 3 && gap < (total * 0.08).max(16.0);
+        let before = self.doc.region_snapshot();
+        let mut left = 0;
+        if closes {
+            // Snap the loop shut through the cost field too.
+            let cf = self.cost_field().unwrap();
+            let last = *pts.last().unwrap();
+            let tail = borders::least_cost_path(cf, last, pts[0], naturalness);
+            pts.extend(tail.into_iter().skip(1));
+            control.push(pts[0]);
+            let id = self.doc.new_region_id();
+            let color = (self.doc.regions.len() as u32) % REGION_PALETTE.len() as u32;
+            let seed = pts.iter().fold([0.0, 0.0], |a, p| [a[0] + p[0] / pts.len() as f32, a[1] + p[1] / pts.len() as f32]);
+            self.doc.regions.push(borders::Region { id, seed, color, entity: None });
+            left = id;
+        }
+        let id = self.doc.new_border_id();
+        self.doc.borders.push(Border { id, left, right: 0, points: pts, kind: BorderKind::Drawn, style, naturalness, control });
+        self.selected_border = Some(id);
+        self.doc.commit_regions(if closes { "Draw region" } else { "Draw border" }, before);
+        if closes {
+            self.ensure_region_entities();
+        }
+    }
+
+    /// Re-route the selected drawn border with the current naturalness and
+    /// style (its control points are kept).
+    fn reroute_selected_border(&mut self) {
+        let Some(bid) = self.selected_border else { return };
+        let Some(b) = self.doc.borders.iter().find(|b| b.id == bid) else { return };
+        if b.kind != BorderKind::Drawn {
+            let before = self.doc.region_snapshot();
+            let style = self.tools.border_style;
+            if let Some(b) = self.doc.borders.iter_mut().find(|b| b.id == bid) {
+                b.style = style;
+            }
+            self.doc.commit_regions("Border style", before);
+            return;
+        }
+        let control = b.control.clone();
+        let n = self.tools.border_naturalness;
+        let style = self.tools.border_style;
+        let Some(cf) = self.cost_field() else { return };
+        let pts = borders::route_control_points(cf, &control, n);
+        let before = self.doc.region_snapshot();
+        if let Some(b) = self.doc.borders.iter_mut().find(|b| b.id == bid) {
+            b.points = pts;
+            b.naturalness = n;
+            b.style = style;
+        }
+        self.doc.commit_regions("Re-route border", before);
+    }
+
+    fn delete_selected_border(&mut self) {
+        let Some(bid) = self.selected_border.take() else { return };
+        let before = self.doc.region_snapshot();
+        let Some(b) = self.doc.borders.iter().find(|b| b.id == bid).cloned() else { return };
+        if b.kind == BorderKind::Grown {
+            self.ui.status = "Realm borders come from the capitals: remove a realm from the list instead".into();
+            self.selected_border = Some(bid);
+            return;
+        }
+        self.doc.borders.retain(|x| x.id != bid);
+        // A closed drawn border owned a region; remove that too.
+        if b.left != 0 {
+            self.remove_region_entity(b.left);
+            self.doc.regions.retain(|r| r.id != b.left);
+        }
+        self.doc.commit_regions("Delete border", before);
+    }
+
+    fn add_capital(&mut self, p: [f32; 2]) {
+        if self.doc.elevation.sample(p[0], p[1]) <= self.doc.sea_level {
+            self.ui.status = "A capital must stand on land".into();
+            return;
+        }
+        let before = self.doc.region_snapshot();
+        let id = self.doc.new_region_id();
+        let color = (self.doc.regions.len() as u32) % REGION_PALETTE.len() as u32;
+        self.doc.regions.push(borders::Region { id, seed: p, color, entity: None });
+        self.selected_region = Some(id);
+        self.doc.commit_regions("Place capital", before);
+        self.grow_realms();
+    }
+
+    fn remove_region_entity(&mut self, region: u64) {
+        if let Some(eid) = self.doc.regions.iter().find(|r| r.id == region).and_then(|r| r.entity) {
+            let before = self.doc.entities.clone();
+            self.doc.entities.retain(|e| e.id != eid);
+            self.doc.commit_entities("Remove realm name", before);
+            if self.selected_entity == Some(eid) {
+                self.selected_entity = None;
+            }
+        }
+    }
+
+    fn remove_region(&mut self, region: u64) {
+        let before = self.doc.region_snapshot();
+        self.remove_region_entity(region);
+        self.doc.regions.retain(|r| r.id != region);
+        // Drawn regions own one closed border; grown ones are regrown.
+        self.doc.borders.retain(|b| !(b.kind == BorderKind::Drawn && b.left == region));
+        if self.selected_region == Some(region) {
+            self.selected_region = None;
+        }
+        self.doc.commit_regions("Remove realm", before);
+        self.grow_realms();
+    }
+
+    fn clear_realms(&mut self) {
+        let before = self.doc.region_snapshot();
+        let ids: Vec<u64> = self.doc.regions.iter().map(|r| r.id).collect();
+        for id in ids {
+            self.remove_region_entity(id);
+        }
+        self.doc.regions.clear();
+        self.doc.borders.clear();
+        self.selected_region = None;
+        self.selected_border = None;
+        self.territory_job = None;
+        self.doc.commit_regions("Clear realms", before);
+    }
+
+    /// Grow every capital's realm over the cost field (off-thread).
+    fn grow_realms(&mut self) {
+        let seeds: Vec<Seed> = self.doc.regions.iter().filter(|r| !self.doc.borders.iter().any(|b| b.kind == BorderKind::Drawn && b.left == r.id)).map(|r| Seed { region: r.id, pos: r.seed }).collect();
+        if seeds.is_empty() {
+            let before = self.doc.region_snapshot();
+            self.doc.borders.retain(|b| b.kind != BorderKind::Grown);
+            self.doc.commit_regions("Grow realms", before);
+            return;
+        }
+        let Some(cf) = self.cost_field() else { return };
+        let cf = cf.clone();
+        self.territory_job = Some(Job::spawn("Growing realms", move |_, _| {
+            let labels = borders::grow_territories(&cf, &seeds);
+            let mut next = 0;
+            borders::arcs_from_labels(&cf, &labels, cf.scale * 1.2, &mut next)
+        }));
+    }
+
+    fn finish_territory_job(&mut self, mut arcs: Vec<Border>) {
+        let before = self.doc.region_snapshot();
+        self.doc.borders.retain(|b| b.kind != BorderKind::Grown);
+        for a in arcs.iter_mut() {
+            a.id = self.doc.new_border_id();
+        }
+        self.doc.borders.extend(arcs);
+        self.doc.commit_regions("Grow realms", before);
+        self.ensure_region_entities();
+    }
+
+    /// Every realm gets a label entity (auto-named in the current language)
+    /// centred on its territory.
+    fn ensure_region_entities(&mut self) {
+        let before = self.doc.entities.clone();
+        let mut changed = false;
+        let ids: Vec<u64> = self.doc.regions.iter().map(|r| r.id).collect();
+        for rid in ids {
+            let existing = self.doc.regions.iter().find(|r| r.id == rid).and_then(|r| r.entity).filter(|eid| self.doc.entities.iter().any(|e| e.id == *eid));
+            let Some((c, radius)) = borders::region_extent(self.doc.region_rings_of(rid)) else { continue };
+            match existing {
+                Some(eid) => {
+                    if let Some(e) = self.doc.entities.iter_mut().find(|e| e.id == eid) {
+                        e.geometry = EntityRef::Area { center: c, radius };
+                    }
+                }
+                None => {
+                    let name = self.generated_name(EntityKind::Region);
+                    let id = self.doc.next_entity_id;
+                    self.doc.next_entity_id += 1;
+                    let mut e = Entity::new(id, EntityKind::Region, name, EntityRef::Area { center: c, radius });
+                    e.culture = self.doc.culture.clone();
+                    e.auto = true;
+                    e.importance = 0.65;
+                    self.doc.entities.push(e);
+                    if let Some(r) = self.doc.regions.iter_mut().find(|r| r.id == rid) {
+                        r.entity = Some(id);
+                    }
+                    changed = true;
+                }
+            }
+        }
+        if changed {
+            self.doc.commit_entities("Name realms", before);
+        }
+    }
+
+    /// Rename the generated features inside a realm in that realm's
+    /// language, so a region reads as one culture.
+    fn propagate_region_names(&mut self, entity_id: u64) {
+        let Some(region) = self.doc.regions.iter().find(|r| r.entity == Some(entity_id)).map(|r| r.id) else { return };
+        let Some(label) = self.doc.entity(entity_id).cloned() else { return };
+        let culture = self.cultures.iter().find(|c| c.id == label.culture).or_else(|| self.culture()).cloned();
+        let Some(culture) = culture else { return };
+        let rings = self.doc.region_rings_of(region).to_vec();
+        let before = self.doc.entities.clone();
+        let mut n = 0;
+        let mut rng = NameRng::new(self.name_rng.below(1 << 30) as u64);
+        for e in self.doc.entities.iter_mut() {
+            if e.id == entity_id || !e.auto || !borders::rings_contain(&rings, e.geometry.anchor()) {
+                continue;
+            }
+            e.name = culture.name_for(e.kind.name_key(), &mut rng);
+            e.culture = culture.id.clone();
+            let tag = format!("in:{}", label.name);
+            if !e.tags.contains(&tag) {
+                e.tags.retain(|t| !t.starts_with("in:"));
+                e.tags.push(tag);
+            }
+            n += 1;
+        }
+        self.doc.commit_entities("Rename features in realm", before);
+        self.ui.status = format!("Renamed {n} features inside {} in the {} tongue", label.name, culture.pack.name);
+    }
+
+    /// Re-rasterize the region fill texture after any region change.
+    fn upload_regions(&mut self) {
+        self.doc.regions_dirty = false;
+        let tex = &self.derived_tex.regions;
+        let scale = self.doc.width() as f32 / tex.width() as f32;
+        let field = borders::rasterize_regions(&self.doc.region_rings, tex.width(), tex.height(), scale, 6);
+        tex.upload_all(&self.gpu.queue, &field);
     }
 
     // ---- water editing -------------------------------------------------------
@@ -1579,8 +2007,25 @@ impl AppState {
                     self.doc.entities.retain(|e| e.id != id);
                     self.doc.commit_entities("Delete name", before);
                     self.selected_entity = None;
+                    for r in self.doc.regions.iter_mut() {
+                        if r.entity == Some(id) {
+                            r.entity = None;
+                        }
+                    }
                 }
                 UiAction::SelectEntity(id) => self.selected_entity = id,
+                UiAction::BorderSettingsChanged => self.reroute_selected_border(),
+                UiAction::GrowRealms => self.grow_realms(),
+                UiAction::RemoveRegion(id) => self.remove_region(id),
+                UiAction::ClearRealms => self.clear_realms(),
+                UiAction::DeleteSelectedBorder => self.delete_selected_border(),
+                UiAction::PropagateRegionNames(id) => self.propagate_region_names(id),
+                UiAction::SelectRegion(id) => {
+                    self.selected_region = id;
+                    if let Some(eid) = id.and_then(|r| self.doc.regions.iter().find(|x| x.id == r)).and_then(|r| r.entity) {
+                        self.selected_entity = Some(eid);
+                    }
+                }
             }
         }
     }
@@ -1773,6 +2218,8 @@ impl AppState {
             KeyCode::Digit9 => self.tools.tool = Tool::Moisture,
             KeyCode::Digit0 => self.tools.tool = Tool::WaterEdit,
             KeyCode::KeyN if !ctrl => self.tools.tool = Tool::Name,
+            KeyCode::KeyB if !ctrl => self.tools.tool = Tool::Border,
+            KeyCode::KeyT if !ctrl => self.tools.tool = Tool::Territory,
             KeyCode::BracketLeft => self.scale_radius(1.0 / 1.2),
             KeyCode::BracketRight => self.scale_radius(1.2),
             KeyCode::Delete | KeyCode::Backspace => {
@@ -1784,11 +2231,13 @@ impl AppState {
                     if let Some(id) = self.selected_entity {
                         self.handle_actions(vec![UiAction::DeleteEntity(id)], event_loop);
                     }
+                } else if self.tools.tool == Tool::Border || self.tools.tool == Tool::Territory {
+                    self.delete_selected_border();
                 }
             }
             KeyCode::Escape => {
                 if self.input.stroke {
-                    if self.tools.tool.is_procedural() {
+                    if self.tools.tool.is_procedural() || self.tools.tool == Tool::Border {
                         self.tools.path.clear();
                         self.input.stroke = false;
                     } else {
@@ -1944,9 +2393,35 @@ impl AppState {
         let paper = self.doc.render.theme.paper;
         ov.ink = egui::Color32::from_rgb((ink[0] * 255.0) as u8, (ink[1] * 255.0) as u8, (ink[2] * 255.0) as u8);
         ov.paper = egui::Color32::from_rgb((paper[0] * 255.0) as u8, (paper[1] * 255.0) as u8, (paper[2] * 255.0) as u8);
-        if self.tools.tool.is_procedural() && !self.tools.path.is_empty() {
+        if (self.tools.tool.is_procedural() || self.tools.tool == Tool::Border) && !self.tools.path.is_empty() {
             ov.path = self.tools.path.iter().map(|p| to(*p)).collect();
             ov.path_is_coast = self.tools.tool == Tool::Coast;
+        }
+        if self.view_mode == ViewMode::Map {
+            let editing = matches!(self.tools.tool, Tool::Border | Tool::Territory);
+            let modern = self.doc.render.theme.style == ThemeStyle::Modern;
+            for b in &self.doc.borders {
+                // Grown arcs along the coast are the coastline itself.
+                if b.points.len() < 2 || (b.kind == BorderKind::Grown && (b.left == 0 || b.right == 0)) {
+                    continue;
+                }
+                let selected = self.selected_border == Some(b.id);
+                let region_sel = self.selected_region.is_some() && (Some(b.left) == self.selected_region || Some(b.right) == self.selected_region);
+                ov.borders.push(ui::BorderDraw {
+                    points: b.points.iter().map(|p| to(*p)).collect(),
+                    style: b.style,
+                    selected: selected || region_sel,
+                    handles: editing && (selected || self.camera.zoom > 1.5),
+                    color: if modern { egui::Color32::from_rgb(96, 52, 120) } else { egui::Color32::from_rgb(112, 38, 32) },
+                });
+            }
+            if editing {
+                for r in &self.doc.regions {
+                    if !self.doc.borders.iter().any(|b| b.kind == BorderKind::Drawn && b.left == r.id) {
+                        ov.capitals.push((to(r.seed), region_color(r.color)));
+                    }
+                }
+            }
         }
         if self.tools.tool == Tool::Place {
             if let Some(id) = self.selected_placement {
@@ -1983,6 +2458,9 @@ impl AppState {
         }
         if self.needs_fit {
             self.fit_view();
+        }
+        if self.doc.regions_dirty {
+            self.upload_regions();
         }
         if self.frames_since_install != u32::MAX {
             self.frames_since_install += 1;
@@ -2029,6 +2507,30 @@ impl AppState {
                 } else if self.demo_stage == 4 && self.symbol_job.is_none() && !self.doc.symbols_stale {
                     self.demo_stage = 5;
                     self.name_everything();
+                    // Three capitals grow realms over the cost field.
+                    let w = self.doc.width() as f32;
+                    let h = self.doc.height() as f32;
+                    for (x, y) in [(0.45, 0.48), (0.62, 0.55), (0.70, 0.40)] {
+                        let before = self.doc.region_snapshot();
+                        let id = self.doc.new_region_id();
+                        let color = (self.doc.regions.len() as u32) % REGION_PALETTE.len() as u32;
+                        self.doc.regions.push(borders::Region { id, seed: [w * x, h * y], color, entity: None });
+                        self.doc.commit_regions("Place capital", before);
+                    }
+                    self.grow_realms();
+                    self.tools.tool = Tool::Territory;
+                } else if self.demo_stage == 5 && self.territory_job.is_none() {
+                    self.demo_stage = 6;
+                    // A hand-drawn border across the south, half natural.
+                    let w = self.doc.width() as f32;
+                    let h = self.doc.height() as f32;
+                    self.tools.border_naturalness = 0.7;
+                    let path: Vec<[f32; 2]> = (0..30).map(|i| {
+                        let k = i as f32 / 29.0;
+                        [w * (0.40 + 0.25 * k), h * (0.62 + 0.06 * (k * 4.0).sin())]
+                    }).collect();
+                    self.apply_border_stroke(path);
+                    self.selected_border = None;
                     self.tools.tool = Tool::Name;
                     let dir = std::env::temp_dir().join("isoline-demo.isoline");
                     self.save_to(dir);
@@ -2119,6 +2621,9 @@ impl AppState {
                 labels: &self.labels,
                 cultures: &self.cultures,
                 selected_entity: self.selected_entity,
+                selected_border: self.selected_border,
+                selected_region: self.selected_region,
+                realms_running: self.territory_job.is_some(),
             });
             ctx.run_ui(raw, |root| {
                 if let Some(uc) = uc.take() {
@@ -2204,6 +2709,11 @@ impl AppState {
         let fw = self.doc.width() as f32;
         let fh = self.doc.height() as f32;
         let th: &Theme = &self.doc.render.theme;
+        let mut region_palette = [[0.0f32; 4]; 32];
+        for r in &self.doc.regions {
+            let c = REGION_PALETTE[r.color as usize % REGION_PALETTE.len()];
+            region_palette[(r.id % 32) as usize] = [c[0], c[1], c[2], 1.0];
+        }
         let view = ViewUniform {
             screen_size: ss.to_array(),
             field_size: [fw, fh],
@@ -2247,8 +2757,11 @@ impl AppState {
             hatch_spacing: th.hatch_spacing,
             forest_scale: th.forest_scale,
             forest_threshold: th.forest_threshold,
-            _pad_b: [0.0; 7],
+            region_fill: if self.doc.regions.is_empty() { 0.0 } else if th.style == ThemeStyle::Modern { 0.2 } else { 0.16 },
+            region_scale: [self.derived_tex.regions.width() as f32 / fw, self.derived_tex.regions.height() as f32 / fh],
+            _pad_b: [0.0; 4],
             palette,
+            region_palette,
         };
         let _ = (ReliefStyle::Shaded, ForestStyle::None);
         self.map.render(&self.gpu.queue, &mut encoder, &target, &view, &mut self.profiler);
@@ -2304,7 +2817,8 @@ impl AppState {
             && !self.doc.symbols_stale
             && !self.doc.derived_stale
             && self.doc.derived.is_some()
-            && (!self.demo || self.demo_stage >= 5)
+            && (!self.demo || self.demo_stage >= 6)
+            && self.territory_job.is_none()
             && self.save_job.is_none();
         if take_shot {
             let path = self.screenshot.take().unwrap();

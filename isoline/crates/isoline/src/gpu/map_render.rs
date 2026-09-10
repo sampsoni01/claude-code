@@ -86,9 +86,14 @@ pub struct ViewUniform {
     pub hatch_spacing: f32,
     pub forest_scale: f32,
     pub forest_threshold: f32,
-    /// WGSL pads to the next 16-byte boundary before the vec3 and the array.
-    pub _pad_b: [f32; 7],
+    /// Region fill strength (0 = no regions) and region texture size / field size.
+    pub region_fill: f32,
+    pub region_scale: [f32; 2],
+    /// WGSL pads to the next 16-byte boundary before the arrays.
+    pub _pad_b: [f32; 4],
     pub palette: [[f32; 4]; 16],
+    /// Region fill colours by region id modulo 32.
+    pub region_palette: [[f32; 4]; 32],
 }
 
 pub struct MapRenderer {
@@ -118,6 +123,7 @@ pub struct DerivedViews<'a> {
     pub temperature: &'a wgpu::TextureView,
     pub biome: &'a wgpu::TextureView,
     pub forest: &'a wgpu::TextureView,
+    pub regions: &'a wgpu::TextureView,
 }
 
 impl MapRenderer {
@@ -146,6 +152,7 @@ impl MapRenderer {
                 tex_entry(4),
                 tex_entry(5),
                 tex_entry(6),
+                tex_entry(7),
             ],
         });
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -202,6 +209,7 @@ impl MapRenderer {
                 wgpu::BindGroupEntry { binding: 4, resource: wgpu::BindingResource::TextureView(derived.temperature) },
                 wgpu::BindGroupEntry { binding: 5, resource: wgpu::BindingResource::TextureView(derived.biome) },
                 wgpu::BindGroupEntry { binding: 6, resource: wgpu::BindingResource::TextureView(derived.forest) },
+                wgpu::BindGroupEntry { binding: 7, resource: wgpu::BindingResource::TextureView(derived.regions) },
             ],
         }));
     }

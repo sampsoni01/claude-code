@@ -13,6 +13,7 @@
 //! on a synchronous read of the whole file.
 
 use crate::derived::DerivedParams;
+use crate::borders::{Border, Region};
 use crate::entity::Entity;
 use crate::field::ScalarField;
 use crate::hydrology::River;
@@ -168,6 +169,11 @@ pub struct Geometry {
     /// Named entities and their labels.
     #[serde(default)]
     pub entities: Vec<Entity>,
+    /// Realms and the borders between them (and borders drawn by hand).
+    #[serde(default)]
+    pub regions: Vec<Region>,
+    #[serde(default)]
+    pub borders: Vec<Border>,
 }
 
 fn now_unix() -> u64 {

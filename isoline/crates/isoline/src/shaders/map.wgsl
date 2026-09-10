@@ -47,8 +47,11 @@ struct View {
     hatch_spacing: f32,
     forest_scale: f32,
     forest_threshold: f32,
-    _pad_b: vec3<f32>,
+    region_fill: f32,
+    region_scale: vec2<f32>,
+    _pad_b: vec4<f32>,
     palette: array<vec4<f32>, 16>,
+    region_palette: array<vec4<f32>, 32>,
 };
 
 const FLAG_CONTOURS: u32 = 1u;
@@ -82,6 +85,7 @@ const FOREST_STIPPLE: u32 = 2u;
 @group(0) @binding(4) var temp_tex: texture_2d<f32>;
 @group(0) @binding(5) var biome_tex: texture_2d<f32>;
 @group(0) @binding(6) var forest_tex: texture_2d<f32>;
+@group(0) @binding(7) var region_tex: texture_2d<f32>;
 
 struct VsOut {
     @builtin(position) pos: vec4<f32>,
@@ -372,6 +376,20 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
                         color = hypso(t_up) * shade;
                     }
                 }
+            }
+        }
+        // Realms: a light wash over the territory and a stronger tinted
+        // band just inside its border, as in a hand-coloured atlas.
+        if view.region_fill > 0.0 && mode == MODE_MAP {
+            let rdims = vec2<i32>(textureDimensions(region_tex));
+            let rc = clamp(vec2<i32>(fp * view.region_scale), vec2<i32>(0), rdims - vec2<i32>(1));
+            let rv = textureLoad(region_tex, rc, 0).r;
+            let rid = u32(floor(rv));
+            if rid > 0u {
+                let band = fract(rv);
+                let tint = view.region_palette[rid % 32u].rgb;
+                let f = view.region_fill * (0.5 + 1.8 * band * band);
+                color = mix(color, tint, min(f, 0.85));
             }
         }
         // Woods.

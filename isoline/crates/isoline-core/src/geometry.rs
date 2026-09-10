@@ -108,6 +108,12 @@ pub struct Polygon {
 
 impl Polygon {
     pub fn area(&self) -> f32 {
+        self.signed_area().abs()
+    }
+
+    /// Shoelace area with its sign, so rings of opposite orientation
+    /// (holes) subtract.
+    pub fn signed_area(&self) -> f32 {
         let n = self.points.len();
         let mut a = 0.0;
         for i in 0..n {
@@ -115,7 +121,7 @@ impl Polygon {
             let q = self.points[(i + 1) % n];
             a += p[0] * q[1] - q[0] * p[1];
         }
-        a.abs() * 0.5
+        a * 0.5
     }
 
     pub fn bbox(&self) -> ([f32; 2], [f32; 2]) {

@@ -1,6 +1,7 @@
 //! Tool selection and per-stroke state.
 
 use isoline_core::brush::{BlendMode, BrushSettings, Dab, StrokeSampler};
+use isoline_core::borders::BorderStyle;
 use isoline_core::procedural::{CoastParams, RidgeParams};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -16,11 +17,13 @@ pub enum Tool {
     Place,
     Scatter,
     Name,
+    Border,
+    Territory,
     Pan,
 }
 
 impl Tool {
-    pub const ALL: [Tool; 12] = [
+    pub const ALL: [Tool; 14] = [
         Tool::Raise,
         Tool::Lower,
         Tool::Smooth,
@@ -30,6 +33,8 @@ impl Tool {
         Tool::Place,
         Tool::Scatter,
         Tool::Name,
+        Tool::Border,
+        Tool::Territory,
         Tool::Moisture,
         Tool::WaterEdit,
         Tool::Pan,
@@ -48,6 +53,8 @@ impl Tool {
             Tool::Place => "Place symbol",
             Tool::Scatter => "Scatter symbols",
             Tool::Name => "Name & label",
+            Tool::Border => "Border",
+            Tool::Territory => "Realms",
             Tool::Pan => "Pan",
         }
     }
@@ -63,6 +70,8 @@ impl Tool {
             Tool::Place => "7",
             Tool::Scatter => "8",
             Tool::Name => "N",
+            Tool::Border => "B",
+            Tool::Territory => "T",
             Tool::Moisture => "9 (baked water only)",
             Tool::WaterEdit => "0 (baked water only)",
             Tool::Pan => "Space",
@@ -145,6 +154,9 @@ pub struct ToolState {
     pub selected_assets: Vec<String>,
     pub place_size: f32,
     pub scatter: ScatterSettings,
+    /// Border brush: 0 = straight surveyed segments, 1 = follows terrain.
+    pub border_naturalness: f32,
+    pub border_style: BorderStyle,
 }
 
 impl Default for ToolState {
@@ -164,6 +176,8 @@ impl Default for ToolState {
             selected_assets: Vec::new(),
             place_size: 0.0,
             scatter: ScatterSettings::default(),
+            border_naturalness: 0.8,
+            border_style: BorderStyle::Dashed,
         }
     }
 }
@@ -196,7 +210,7 @@ impl ToolState {
             Tool::Ridge => self.ridge.width,
             Tool::Coast => self.coast.band,
             Tool::Scatter => self.scatter.radius,
-            Tool::Place | Tool::Name => 0.0,
+            Tool::Place | Tool::Name | Tool::Border | Tool::Territory => 0.0,
             _ => self.brush.radius,
         }
     }

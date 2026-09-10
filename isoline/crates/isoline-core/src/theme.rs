@@ -120,7 +120,7 @@ impl Default for LabelClasses {
             peak: LabelClass::new(10.0, true, false, false, 0.3, false, 0.6),
             forest: LabelClass::new(13.0, true, false, false, 1.5, true, 0.2),
             sea: LabelClass::new(22.0, true, false, true, 6.0, true, 0.0),
-            region: LabelClass::new(20.0, false, true, true, 5.0, true, 0.0),
+            region: LabelClass::new(15.0, false, true, true, 4.0, true, 0.0),
             marker: LabelClass::new(11.0, false, false, false, 0.3, false, 0.5),
             bay: LabelClass::new(12.0, true, false, false, 1.2, true, 0.25),
             title: LabelClass::new(30.0, true, true, false, 1.0, false, 0.0),

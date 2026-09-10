@@ -16,11 +16,14 @@
 //! * [`stats`]   — incremental per-tile field statistics.
 //! * [`water`]   — the water system boundary: moisture + hydrology at a capped
 //!   simulation resolution, exposing rivers, lake polygons and moisture only.
+//! * [`borders`] — terrain cost field, least-cost border routing, territory
+//!   growth from capital seeds, and shared border arcs that build region polygons.
 //! * [`hydrology`], [`climate`], [`biome`], [`derived`] — fill/flow/lakes/rivers
 //!   (internal), moisture and temperature, biome classification, and the chain.
 
 pub mod assets;
 pub mod biome;
+pub mod borders;
 pub mod brush;
 pub mod climate;
 pub mod derived;
