@@ -18,6 +18,8 @@
 //!   simulation resolution, exposing rivers, lake polygons and moisture only.
 //! * [`borders`] — terrain cost field, least-cost border routing, territory
 //!   growth from capital seeds, and shared border arcs that build region polygons.
+//! * [`settlement`] — town layout generator: roads, lots, districts, walls,
+//!   docks and bridges on the live terrain; editable geometry.
 //! * [`hydrology`], [`climate`], [`biome`], [`derived`] — fill/flow/lakes/rivers
 //!   (internal), moisture and temperature, biome classification, and the chain.
 
@@ -37,6 +39,7 @@ pub mod names;
 pub mod noise;
 pub mod placement;
 pub mod procedural;
+pub mod settlement;
 pub mod project;
 pub mod stats;
 pub mod terrain;

@@ -18,6 +18,7 @@ use crate::entity::Entity;
 use crate::field::ScalarField;
 use crate::hydrology::River;
 use crate::placement::{ForestParams, MountainParams, Placement};
+use crate::settlement::Settlement;
 use crate::theme::Theme;
 use crate::water::LakePolygon;
 use anyhow::{bail, Context, Result};
@@ -174,6 +175,9 @@ pub struct Geometry {
     pub regions: Vec<Region>,
     #[serde(default)]
     pub borders: Vec<Border>,
+    /// Towns with their generated, editable layouts.
+    #[serde(default)]
+    pub settlements: Vec<Settlement>,
 }
 
 fn now_unix() -> u64 {

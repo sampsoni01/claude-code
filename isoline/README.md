@@ -7,6 +7,58 @@ climate, biomes, forests, settlements) is *derived* from those fields, live.
 
 The coastline is literally the isoline `elevation == seaLevel`, hence the name.
 
+![Milestone 7](docs/milestone7-city.png)
+
+## Status: Milestone 7 — settlement layouts
+
+Towns are generated as geometry on the terrain they stand on and stay
+editable. Per the direction given, buildings are ornamental: nothing
+downstream reads them.
+
+- **Generator** (`isoline-core::settlement`): the centre snaps to the
+  flattest buildable ground nearby; primary roads grow outward by growth
+  model (organic, radial rings, grid, coastal strip, hybrid), steered off
+  water and slopes above 28 m/texel, and a road that meets a narrow river
+  gets a bridge; secondary streets are rings, grid lines or wandering
+  connectors; lots line every street on both sides with one or two rows,
+  sized and typed by district (market, temple precinct, docks, craft
+  quarter, noble estates, slums, garrison, farmland, residential) from
+  position, height and distance to water; walls are the offset convex hull
+  of the built core, smoothed, with towers at intervals and gates where
+  primary roads cross, one or two rings; plus a plaza, a keep on the
+  highest ground, piers where the water is wide, fields on the fringe and a
+  cemetery. Every building's placement is hashed per district seed, street
+  and lot; *re-roll district* regenerates one district and merges only its
+  buildings back, so the rest of the town is untouched.
+- **Zoom-linked display**: below 80% zoom a town is its symbol (village,
+  town or city); across 64–96% it crossfades into the layout drawn as
+  simplified filled blocks, walls and main streets; above 140% full detail
+  with ink strokes, towers, gates, pier posts and cemetery crosses.
+- **Towns tool** (`S`): click open land to found a town with the panel's
+  kind, model and size (density, irregularity, walls, inner ring and seed
+  under *More…*); click a town to select it, and changing a setting
+  rebuilds it with its seed. Above 140% zoom drag street and wall vertices;
+  click a building to select it, drag to move it, Delete to remove it, or
+  change its district; *Paint district* drags a district over buildings;
+  *Re-roll* takes a new seed; *Re-roll district* redoes one district.
+- Each town gets a label entity named in the current language and
+  centred on its layout; peaks, hills and trees keep clear of towns.
+- Towns are saved in `geometry.json`; every edit is one undo entry.
+
+Performance (llvmpipe, 4 threads): a city of ~350 buildings generates in
+3–6 ms; drawing a city at full detail costs ~2 ms of egui tessellation.
+
+### Deferred within Milestone 7
+
+- Block subdivision is by lots along streets rather than a recursive OBB
+  split of enclosed blocks; streets do not yet form closed blocks with
+  interior alleys.
+- Mills and a temple building are typed districts, not distinct shapes;
+  wall lines are dragged vertex by vertex rather than redrawn as a stroke.
+- Roads between towns (and their effect on borders) wait for a road
+  network, the natural next step.
+- Docks and bridges are drawn but not styled per theme.
+
 ![Milestone 6](docs/milestone6.png)
 
 ## Status: Milestone 6 — borders and regions

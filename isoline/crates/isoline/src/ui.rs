@@ -17,6 +17,7 @@ use isoline_core::procedural::{CoastPreset, LandSide};
 use isoline_core::project::Manifest;
 use isoline_core::terrain::{TerrainParams, TerrainPreset};
 use isoline_core::borders::{BorderKind, BorderStyle};
+use isoline_core::settlement::{District, GrowthModel, SettlementKind};
 use isoline_core::theme::{Theme, ThemeStyle};
 use isoline_core::water::RecomputeMode;
 use std::collections::HashMap;
@@ -67,6 +68,29 @@ pub struct Overlay {
     pub borders: Vec<BorderDraw>,
     /// Capital markers with their realm colour (Realms tool only).
     pub capitals: Vec<(egui::Pos2, egui::Color32)>,
+    pub settlements: Vec<SettlementDraw>,
+}
+
+/// A town layout in screen points, ready to draw.
+pub struct SettlementDraw {
+    pub center: egui::Pos2,
+    pub radius_px: f32,
+    pub alpha: f32,
+    /// Full detail (strokes, towers, handles) rather than the simplified look.
+    pub detail: bool,
+    pub selected: bool,
+    pub handles: bool,
+    pub roads: Vec<(Vec<egui::Pos2>, bool)>,
+    pub buildings: Vec<(Vec<egui::Pos2>, District, bool)>,
+    pub walls: Vec<(Vec<egui::Pos2>, Vec<egui::Pos2>, Vec<egui::Pos2>)>,
+    pub plaza: Option<Vec<egui::Pos2>>,
+    pub keep: Option<(egui::Pos2, f32)>,
+    pub docks: Vec<[egui::Pos2; 2]>,
+    pub bridges: Vec<[egui::Pos2; 2]>,
+    pub fields: Vec<Vec<egui::Pos2>>,
+    pub cemetery: Option<Vec<egui::Pos2>>,
+    /// Screen points per texel.
+    pub scale: f32,
 }
 
 /// A border ready to draw, in screen points.
@@ -94,6 +118,140 @@ impl Default for Overlay {
             paper: egui::Color32::WHITE,
             borders: Vec::new(),
             capitals: Vec::new(),
+            settlements: Vec::new(),
+        }
+    }
+}
+
+fn district_fill(d: District, paper: egui::Color32) -> egui::Color32 {
+    let k = |c: egui::Color32, m: f32| egui::Color32::from_rgb((c.r() as f32 * m) as u8, (c.g() as f32 * m) as u8, (c.b() as f32 * m) as u8);
+    match d {
+        District::Market => k(paper, 0.93),
+        District::Temple => k(paper, 1.0),
+        District::Docks => egui::Color32::from_rgb((paper.r() as f32 * 0.84) as u8, (paper.g() as f32 * 0.86) as u8, (paper.b() as f32 * 0.9) as u8),
+        District::Craft => egui::Color32::from_rgb((paper.r() as f32 * 0.9) as u8, (paper.g() as f32 * 0.84) as u8, (paper.b() as f32 * 0.78) as u8),
+        District::Noble => k(paper, 0.97),
+        District::Slums => k(paper, 0.78),
+        District::Garrison => k(paper, 0.82),
+        District::Farmland => paper,
+        District::Residential => k(paper, 0.88),
+    }
+}
+
+fn draw_settlement(painter: &egui::Painter, ov: &Overlay, t: &SettlementDraw) {
+    let a = |c: egui::Color32, m: f32| c.gamma_multiply(t.alpha * m);
+    let ink = a(ov.ink, 1.0);
+    let paper = ov.paper;
+    let s = t.scale;
+    // Fields: hatched rectangles on the fringe.
+    for f in &t.fields {
+        if f.len() == 4 {
+            painter.add(egui::Shape::closed_line(f.clone(), egui::Stroke::new(0.6, a(ov.ink, 0.5))));
+            for k in 1..4 {
+                let u = k as f32 / 4.0;
+                let p0 = f[0] + (f[3] - f[0]) * u;
+                let p1 = f[1] + (f[2] - f[1]) * u;
+                painter.line_segment([p0, p1], egui::Stroke::new(0.5, a(ov.ink, 0.35)));
+            }
+        }
+    }
+    if let Some(p) = &t.plaza {
+        painter.add(egui::Shape::convex_polygon(p.clone(), a(paper, 1.0), egui::Stroke::new(0.7, a(ov.ink, 0.6))));
+    }
+    // Roads: primary as a paper strip edged in ink, secondary as a thin line.
+    for (pts, primary) in &t.roads {
+        if pts.len() < 2 {
+            continue;
+        }
+        if *primary {
+            painter.add(egui::Shape::line(pts.clone(), egui::Stroke::new((2.6 * s).clamp(2.0, 6.0), ink)));
+            painter.add(egui::Shape::line(pts.clone(), egui::Stroke::new((1.6 * s).clamp(1.0, 4.0), a(paper, 1.0))));
+        } else if t.detail {
+            painter.add(egui::Shape::line(pts.clone(), egui::Stroke::new(0.9, a(ov.ink, 0.8))));
+        } else {
+            painter.add(egui::Shape::line(pts.clone(), egui::Stroke::new(0.7, a(ov.ink, 0.5))));
+        }
+    }
+    for b in &t.bridges {
+        let d = (b[1] - b[0]).normalized();
+        let n = egui::vec2(-d.y, d.x) * (1.6 * s).max(1.5);
+        painter.line_segment([b[0] + n, b[1] + n], egui::Stroke::new(1.2, ink));
+        painter.line_segment([b[0] - n, b[1] - n], egui::Stroke::new(1.2, ink));
+    }
+    // Buildings.
+    for (q, district, sel) in &t.buildings {
+        let fill = a(district_fill(*district, paper), 1.0);
+        let stroke = if t.detail { egui::Stroke::new(0.8, ink) } else { egui::Stroke::new(0.4, a(ov.ink, 0.7)) };
+        painter.add(egui::Shape::convex_polygon(q.clone(), fill, stroke));
+        if *sel {
+            painter.add(egui::Shape::closed_line(q.clone(), egui::Stroke::new(2.0, egui::Color32::from_rgb(255, 210, 90))));
+        }
+    }
+    if let Some(c) = &t.cemetery {
+        painter.add(egui::Shape::closed_line(c.clone(), egui::Stroke::new(0.8, a(ov.ink, 0.8))));
+        if t.detail && c.len() == 4 {
+            for i in 0..3 {
+                for j in 0..2 {
+                    let u = (i as f32 + 0.5) / 3.0;
+                    let v = (j as f32 + 0.5) / 2.0;
+                    let p = c[0] + (c[1] - c[0]) * u + (c[3] - c[0]) * v;
+                    let h = (1.2 * s).max(2.0);
+                    painter.line_segment([p + egui::vec2(0.0, -h), p + egui::vec2(0.0, h)], egui::Stroke::new(0.8, ink));
+                    painter.line_segment([p + egui::vec2(-h * 0.6, -h * 0.4), p + egui::vec2(h * 0.6, -h * 0.4)], egui::Stroke::new(0.8, ink));
+                }
+            }
+        }
+    }
+    // Piers: a narrow outlined deck on posts.
+    for d in &t.docks {
+        let dir = (d[1] - d[0]).normalized();
+        let n = egui::vec2(-dir.y, dir.x) * (1.4 * s).clamp(1.2, 4.0);
+        painter.add(egui::Shape::convex_polygon(vec![d[0] + n, d[1] + n, d[1] - n, d[0] - n], a(paper, 1.0), egui::Stroke::new(1.0, ink)));
+        if t.detail {
+            let len = (d[1] - d[0]).length();
+            let step = (3.0 * s).max(4.0);
+            let mut k = step;
+            while k < len {
+                let p = d[0] + dir * k;
+                painter.line_segment([p + n, p - n], egui::Stroke::new(0.7, ink));
+                k += step;
+            }
+        }
+    }
+    // Walls with towers and gates.
+    for (ring, towers, gates) in &t.walls {
+        if ring.len() < 3 {
+            continue;
+        }
+        painter.add(egui::Shape::closed_line(ring.clone(), egui::Stroke::new((2.4 * s).clamp(2.0, 7.0), ink)));
+        painter.add(egui::Shape::closed_line(ring.clone(), egui::Stroke::new((0.8 * s).clamp(0.6, 2.5), a(paper, 0.9))));
+        let tw = (3.2 * s).clamp(3.0, 10.0);
+        for p in towers {
+            painter.rect(egui::Rect::from_center_size(*p, egui::vec2(tw, tw)), egui::CornerRadius::ZERO, ink, egui::Stroke::new(0.8, a(paper, 1.0)), egui::StrokeKind::Inside);
+        }
+        for p in gates {
+            painter.rect(egui::Rect::from_center_size(*p, egui::vec2(tw * 1.3, tw * 0.9)), egui::CornerRadius::ZERO, a(paper, 1.0), egui::Stroke::new(1.0, ink), egui::StrokeKind::Inside);
+        }
+    }
+    if let Some((p, r)) = t.keep {
+        let r = r.max(4.0);
+        let sq = vec![p + egui::vec2(-r, -r * 0.7), p + egui::vec2(r, -r * 0.7), p + egui::vec2(r, r * 0.7), p + egui::vec2(-r, r * 0.7)];
+        painter.add(egui::Shape::convex_polygon(sq, a(district_fill(District::Garrison, paper), 1.0), egui::Stroke::new(1.4, ink)));
+        painter.rect(egui::Rect::from_center_size(p + egui::vec2(0.0, -r * 0.4), egui::vec2(r * 0.7, r * 1.1)), egui::CornerRadius::ZERO, ink, egui::Stroke::NONE, egui::StrokeKind::Inside);
+    }
+    if t.selected {
+        painter.circle_stroke(t.center, t.radius_px * 1.15, egui::Stroke::new(1.5, egui::Color32::from_rgba_unmultiplied(255, 210, 90, 160)));
+    }
+    if t.handles {
+        for (pts, _) in &t.roads {
+            for p in pts {
+                painter.rect(egui::Rect::from_center_size(*p, egui::vec2(5.0, 5.0)), egui::CornerRadius::ZERO, egui::Color32::from_rgb(250, 240, 210), egui::Stroke::new(1.0, ink), egui::StrokeKind::Inside);
+            }
+        }
+        for (ring, _, _) in &t.walls {
+            for p in ring {
+                painter.circle(*p, 2.6, egui::Color32::from_rgb(250, 240, 210), egui::Stroke::new(1.0, ink));
+            }
         }
     }
 }
@@ -217,6 +375,14 @@ pub enum UiAction {
     /// Rename generated features inside the realm labelled by this entity.
     PropagateRegionNames(u64),
     SelectRegion(Option<u64>),
+    /// Town parameters changed: rebuild the selected town with its seed.
+    SettlementParamsChanged,
+    RerollSettlement,
+    RerollDistrict(District),
+    DeleteSettlement,
+    DeleteBuilding,
+    SetBuildingDistrict(District),
+    SelectSettlement(Option<u64>),
 }
 
 #[derive(Default)]
@@ -276,6 +442,8 @@ pub struct UiContext<'a> {
     pub selected_border: Option<u64>,
     pub selected_region: Option<u64>,
     pub realms_running: bool,
+    pub selected_settlement: Option<u64>,
+    pub selected_building: Option<u32>,
 }
 
 fn fmt_bytes(b: u64) -> String {
@@ -339,6 +507,9 @@ fn draw_overlay(ctx: &egui::Context, ov: &Overlay) {
     let painter = ctx.layer_painter(egui::LayerId::background());
     if ov.show_ornaments {
         draw_ornaments(&painter, ov);
+    }
+    for t in &ov.settlements {
+        draw_settlement(&painter, ov, t);
     }
     for b in &ov.borders {
         if b.selected {
@@ -495,6 +666,18 @@ fn tool_button(ui: &mut egui::Ui, tool: Tool, selected: bool, enabled: bool) -> 
             p.add(egui::Shape::convex_polygon(b, egui::Color32::from_rgba_unmultiplied(105, 150, 200, 110), egui::Stroke::new(1.2, ink)));
             p.text(pt(-0.38, 0.0), egui::Align2::CENTER_CENTER, "★", egui::FontId::proportional(u * 0.5), ink);
             p.text(pt(0.42, 0.05), egui::Align2::CENTER_CENTER, "★", egui::FontId::proportional(u * 0.5), ink);
+        }
+        Tool::Settlement => {
+            // A row of gabled houses behind a wall line.
+            for (x, w, h) in [(-0.55, 0.32, 0.3), (-0.12, 0.28, 0.42), (0.3, 0.34, 0.34)] {
+                let base = 0.35;
+                let body = vec![pt(x - w / 2.0, base), pt(x + w / 2.0, base), pt(x + w / 2.0, base - h), pt(x, base - h - w * 0.55), pt(x - w / 2.0, base - h)];
+                p.add(egui::Shape::closed_line(body, egui::Stroke::new(1.5, ink)));
+            }
+            p.line_segment([pt(-0.8, 0.55), pt(0.8, 0.55)], egui::Stroke::new(2.2, ink));
+            for x in [-0.7, -0.35, 0.0, 0.35, 0.7] {
+                p.rect_filled(egui::Rect::from_center_size(pt(x, 0.55), egui::vec2(4.0, 6.0)), 0.0, ink);
+            }
         }
         Tool::Pan => {
             for (dx, dy) in [(0.0f32, -1.0f32), (0.0, 1.0), (-1.0, 0.0), (1.0, 0.0)] {
@@ -983,6 +1166,103 @@ pub fn draw(root: &mut egui::Ui, st: &mut UiState, c: UiContext) -> Vec<UiAction
                         }
                     });
                     ui.small("Name a realm with the Name tool; its label offers to rename the features inside it.");
+                }
+                Tool::Settlement => {
+                    ui.heading("Towns");
+                    ui.small("Click open land to found a town. Click a town to select it. Zoom in past 140% to drag streets and walls; click a building to move or delete it.");
+                    let sp = &mut c.tools.settlement;
+                    let has_sel = c.selected_settlement.is_some();
+                    let mut ch = false;
+                    let mut kind = sp.kind;
+                    egui::ComboBox::from_id_salt("town_kind").selected_text(kind.label()).show_ui(ui, |ui| {
+                        for k in SettlementKind::ALL {
+                            ui.selectable_value(&mut kind, k, k.label());
+                        }
+                    });
+                    if kind != sp.kind {
+                        sp.kind = kind;
+                        ch = true;
+                    }
+                    let mut model = sp.model;
+                    egui::ComboBox::from_id_salt("town_model").selected_text(model.label()).show_ui(ui, |ui| {
+                        for m in GrowthModel::ALL {
+                            ui.selectable_value(&mut model, m, m.label());
+                        }
+                    });
+                    if model != sp.model {
+                        sp.model = model;
+                        ch = true;
+                    }
+                    ch |= ui.add(egui::Slider::new(&mut sp.size, 0.4..=2.5).text("Size")).drag_stopped();
+                    more(ui, "town_more", |ui| {
+                        ch |= ui.add(egui::Slider::new(&mut sp.density, 0.1..=1.0).text("Density")).drag_stopped();
+                        ch |= ui.add(egui::Slider::new(&mut sp.irregularity, 0.0..=1.0).text("Irregularity")).drag_stopped();
+                        ch |= ui.checkbox(&mut sp.walls, "Walls").changed();
+                        if sp.walls {
+                            let mut two = sp.rings >= 2;
+                            if ui.checkbox(&mut two, "Older inner wall").changed() {
+                                sp.rings = if two { 2 } else { 1 };
+                                ch = true;
+                            }
+                        }
+                        let mut seed = sp.seed as i64;
+                        if ui.add(egui::DragValue::new(&mut seed).prefix("Seed ")).drag_stopped() {
+                            ch = true;
+                        }
+                        sp.seed = seed.max(0) as u64;
+                    });
+                    if ch && has_sel {
+                        actions.push(UiAction::SettlementParamsChanged);
+                    }
+                    if has_sel {
+                        ui.separator();
+                        if let Some(st) = c.selected_settlement.and_then(|id| c.doc.settlement(id)) {
+                            let name = st.entity.and_then(|e| c.doc.entity(e)).map(|e| e.name.clone()).unwrap_or_else(|| "Town".into());
+                            ui.label(egui::RichText::new(format!("{name} · {} buildings", st.layout.buildings.len())).font(serif_italic(16.0)));
+                        }
+                        ui.horizontal(|ui| {
+                            if ui.button("Re-roll").on_hover_text("New seed, same settings").clicked() {
+                                actions.push(UiAction::RerollSettlement);
+                            }
+                            if ui.button("Delete town").clicked() {
+                                actions.push(UiAction::DeleteSettlement);
+                            }
+                        });
+                        ui.horizontal(|ui| {
+                            egui::ComboBox::from_id_salt("paint_kind").selected_text(c.tools.paint_kind.label()).show_ui(ui, |ui| {
+                                for d in District::ALL {
+                                    ui.selectable_value(&mut c.tools.paint_kind, d, d.label());
+                                }
+                            });
+                            if ui.button("Re-roll district").on_hover_text("Regenerate only this district's buildings").clicked() {
+                                actions.push(UiAction::RerollDistrict(c.tools.paint_kind));
+                            }
+                        });
+                        ui.checkbox(&mut c.tools.paint_district, "Paint district").on_hover_text("Drag over buildings to give them the district chosen above");
+                        if c.tools.paint_district {
+                            ui.add(egui::Slider::new(&mut c.tools.paint_radius, 4.0..=120.0).logarithmic(true).text("Brush"));
+                        }
+                        if let Some(bid) = c.selected_building {
+                            if let Some(b) = c.selected_settlement.and_then(|id| c.doc.settlement(id)).and_then(|s| s.layout.buildings.iter().find(|b| b.id == bid)) {
+                                ui.separator();
+                                let mut d = b.district;
+                                egui::ComboBox::from_label("Building").selected_text(d.label()).show_ui(ui, |ui| {
+                                    for k in District::ALL {
+                                        ui.selectable_value(&mut d, k, k.label());
+                                    }
+                                });
+                                if d != b.district {
+                                    actions.push(UiAction::SetBuildingDistrict(d));
+                                }
+                                if ui.button("Delete building").clicked() {
+                                    actions.push(UiAction::DeleteBuilding);
+                                }
+                            }
+                        }
+                        if ui.small_button("Deselect").clicked() {
+                            actions.push(UiAction::SelectSettlement(None));
+                        }
+                    }
                 }
                 Tool::Pan => {
                     ui.label("Drag to pan. Wheel to zoom.");

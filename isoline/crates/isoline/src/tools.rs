@@ -3,6 +3,7 @@
 use isoline_core::brush::{BlendMode, BrushSettings, Dab, StrokeSampler};
 use isoline_core::borders::BorderStyle;
 use isoline_core::procedural::{CoastParams, RidgeParams};
+use isoline_core::settlement::{District, SettlementParams};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Tool {
@@ -19,11 +20,12 @@ pub enum Tool {
     Name,
     Border,
     Territory,
+    Settlement,
     Pan,
 }
 
 impl Tool {
-    pub const ALL: [Tool; 14] = [
+    pub const ALL: [Tool; 15] = [
         Tool::Raise,
         Tool::Lower,
         Tool::Smooth,
@@ -35,6 +37,7 @@ impl Tool {
         Tool::Name,
         Tool::Border,
         Tool::Territory,
+        Tool::Settlement,
         Tool::Moisture,
         Tool::WaterEdit,
         Tool::Pan,
@@ -55,6 +58,7 @@ impl Tool {
             Tool::Name => "Name & label",
             Tool::Border => "Border",
             Tool::Territory => "Realms",
+            Tool::Settlement => "Towns",
             Tool::Pan => "Pan",
         }
     }
@@ -72,6 +76,7 @@ impl Tool {
             Tool::Name => "N",
             Tool::Border => "B",
             Tool::Territory => "T",
+            Tool::Settlement => "S",
             Tool::Moisture => "9 (baked water only)",
             Tool::WaterEdit => "0 (baked water only)",
             Tool::Pan => "Space",
@@ -157,6 +162,12 @@ pub struct ToolState {
     /// Border brush: 0 = straight surveyed segments, 1 = follows terrain.
     pub border_naturalness: f32,
     pub border_style: BorderStyle,
+    /// Settings for the next town placed (and edits to the selected one).
+    pub settlement: SettlementParams,
+    /// District painting over a selected town's buildings.
+    pub paint_district: bool,
+    pub paint_kind: District,
+    pub paint_radius: f32,
 }
 
 impl Default for ToolState {
@@ -178,6 +189,10 @@ impl Default for ToolState {
             scatter: ScatterSettings::default(),
             border_naturalness: 0.8,
             border_style: BorderStyle::Dashed,
+            settlement: SettlementParams::default(),
+            paint_district: false,
+            paint_kind: District::Craft,
+            paint_radius: 18.0,
         }
     }
 }
@@ -211,6 +226,7 @@ impl ToolState {
             Tool::Coast => self.coast.band,
             Tool::Scatter => self.scatter.radius,
             Tool::Place | Tool::Name | Tool::Border | Tool::Territory => 0.0,
+            Tool::Settlement => if self.paint_district { self.paint_radius } else { 0.0 },
             _ => self.brush.radius,
         }
     }

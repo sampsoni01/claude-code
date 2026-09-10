@@ -8,6 +8,7 @@ use isoline_core::geometry::Polygon;
 use isoline_core::field::ScalarField;
 use isoline_core::graph::{DepGraph, Edge, NodeId, Reach};
 use isoline_core::placement::Placement;
+use isoline_core::settlement::Settlement;
 use isoline_core::project::{Geometry, Manifest, ProjectData, RenderSettings, SymbolParams, ViewState};
 use isoline_core::stats::FieldStats;
 use isoline_core::tiles::{PixelRect, TileSet};
@@ -108,6 +109,8 @@ pub struct Document {
     pub region_rings: Vec<(u64, Vec<Polygon>)>,
     /// The region fill texture needs re-rasterizing.
     pub regions_dirty: bool,
+    pub settlements: Vec<Settlement>,
+    pub next_settlement_id: u64,
 }
 
 pub const UNDO_RAM_BUDGET: usize = 512 << 20;
@@ -187,6 +190,8 @@ impl Document {
             next_border_id: 1,
             region_rings: Vec::new(),
             regions_dirty: true,
+            settlements: Vec::new(),
+            next_settlement_id: 1,
         }
     }
 
@@ -217,6 +222,8 @@ impl Document {
         doc.next_region_id = doc.regions.iter().map(|r| r.id).max().unwrap_or(0) + 1;
         doc.next_border_id = doc.borders.iter().map(|b| b.id).max().unwrap_or(0) + 1;
         doc.rebuild_region_rings();
+        doc.settlements = geometry.settlements.clone();
+        doc.next_settlement_id = doc.settlements.iter().map(|s| s.id).max().unwrap_or(0) + 1;
         doc.path = path;
         if geometry.baked {
             let moisture = moisture.unwrap_or_else(|| ScalarField::new(doc.width(), doc.height(), 0.5));
@@ -247,6 +254,7 @@ impl Document {
         geometry.entities = self.entities.clone();
         geometry.regions = self.regions.clone();
         geometry.borders = self.borders.clone();
+        geometry.settlements = self.settlements.clone();
         ProjectData { manifest: m, fields, geometry }
     }
 
@@ -441,6 +449,11 @@ impl Document {
                 self.modified = true;
                 None
             }
+            UndoOp::Settlements { before, after } => {
+                self.settlements = if forward { after.clone() } else { before.clone() };
+                self.modified = true;
+                None
+            }
             UndoOp::Bake { baked_before, moisture_before, baked_after, moisture_after } => {
                 let (g, m) = if forward { (baked_after, moisture_after) } else { (baked_before, moisture_before) };
                 self.baked = match (g, m) {
@@ -615,6 +628,27 @@ impl Document {
     /// The region under a point, if any.
     pub fn region_at(&self, p: [f32; 2]) -> Option<u64> {
         self.region_rings.iter().find(|(_, rings)| borders::rings_contain(rings, p)).map(|(id, _)| *id)
+    }
+
+    /// Commit a change to the settlement list as one undo entry.
+    pub fn commit_settlements(&mut self, label: &str, before: Vec<Settlement>) {
+        if before == self.settlements {
+            return;
+        }
+        self.undo.push(label, UndoOp::Settlements { before, after: self.settlements.clone() });
+        self.modified = true;
+    }
+
+    pub fn settlement(&self, id: u64) -> Option<&Settlement> {
+        self.settlements.iter().find(|s| s.id == id)
+    }
+    pub fn settlement_mut(&mut self, id: u64) -> Option<&mut Settlement> {
+        self.settlements.iter_mut().find(|s| s.id == id)
+    }
+    pub fn new_settlement_id(&mut self) -> u64 {
+        let id = self.next_settlement_id;
+        self.next_settlement_id += 1;
+        id
     }
 
     pub fn new_region_id(&mut self) -> u64 {

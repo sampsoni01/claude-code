@@ -30,6 +30,7 @@ use isoline_core::theme::{ForestStyle, ReliefStyle, Theme, ThemeStyle};
 use isoline_core::assets::TerrainFilter;
 use isoline_core::tiles::PixelRect;
 use isoline_core::borders::{self, Border, BorderKind, CostField, CostParams, Seed, REGION_PALETTE};
+use isoline_core::settlement::{self, District, Settlement, SettlementKind, Site, VertexRef};
 use isoline_core::undo::{GeometrySnapshot, RegionSnapshot};
 use isoline_core::water::RecomputeMode;
 use std::path::{Path, PathBuf};
@@ -126,6 +127,22 @@ pub fn region_color(index: u32) -> egui::Color32 {
     egui::Color32::from_rgb((c[0] * 255.0) as u8, (c[1] * 255.0) as u8, (c[2] * 255.0) as u8)
 }
 
+/// Zoom below which towns show as their symbol only.
+const TOWN_ICON_ZOOM: f32 = 0.8;
+
+enum SettleDragKind {
+    Vertex(VertexRef),
+    /// Building id and the grab offset from its centre.
+    Building(u32, [f32; 2]),
+    Paint,
+}
+
+struct SettleDrag {
+    before: Vec<Settlement>,
+    settlement: u64,
+    kind: SettleDragKind,
+}
+
 /// A border vertex being dragged: every arc vertex that shared the grabbed
 /// point moves together, so junctions stay joined.
 struct BorderDrag {
@@ -184,6 +201,10 @@ struct AppState {
     selected_border: Option<u64>,
     selected_region: Option<u64>,
     border_drag: Option<BorderDrag>,
+    selected_settlement: Option<u64>,
+    selected_building: Option<u32>,
+    settle_drag: Option<SettleDrag>,
+    town_icons_visible: bool,
     instances_dirty: bool,
     instance_key: (usize, usize),
     selected_placement: Option<u64>,
@@ -353,6 +374,10 @@ impl AppState {
             selected_border: None,
             selected_region: None,
             border_drag: None,
+            selected_settlement: None,
+            selected_building: None,
+            settle_drag: None,
+            town_icons_visible: true,
             instances_dirty: true,
             instance_key: (usize::MAX, usize::MAX),
             selected_placement: None,
@@ -457,6 +482,9 @@ impl AppState {
         self.selected_border = None;
         self.selected_region = None;
         self.border_drag = None;
+        self.selected_settlement = None;
+        self.selected_building = None;
+        self.settle_drag = None;
         self.cost_field = None;
         self.territory_job = None;
         self.instances_dirty = true;
@@ -777,10 +805,12 @@ impl AppState {
                 params.forest.enabled = params.forest.enabled && self.doc.render.theme.forest == ForestStyle::Symbols;
                 let sets = self.library.symbol_sets(self.doc.render.theme.style == ThemeStyle::ParchmentInk);
                 let mut next_id = self.doc.next_placement_id + 1_000_000;
+                // Towns keep a clearing around them.
+                let clearings: Vec<([f32; 2], f32)> = self.doc.settlements.iter().map(|s| (s.layout.center, s.layout.radius * 1.15)).collect();
                 self.symbol_job = Some(Job::spawn("Placing symbols", move |_, _| {
                     let t = Terrain { elevation: &elev, sea_level: sea, biome: Some(&biome), water: Some(&water) };
-                    let (mut out, peaks) = placement::place_mountains(&t, &params.mountains, &sets, Some(&temperature), Some(&forest), &mut next_id);
-                    out.extend(placement::place_forest(&t, &forest, Some(&temperature), &params.forest, &sets, &peaks, &mut next_id));
+                    let (mut out, peaks) = placement::place_mountains(&t, &params.mountains, &sets, Some(&temperature), Some(&forest), &clearings, &mut next_id);
+                    out.extend(placement::place_forest(&t, &forest, Some(&temperature), &params.forest, &sets, &peaks, &clearings, &mut next_id));
                     (out, next_id)
                 }));
             }
@@ -868,6 +898,10 @@ impl AppState {
             self.border_press(pos_screen, fp);
             return;
         }
+        if tool == Tool::Settlement {
+            self.settlement_press(pos_screen, fp);
+            return;
+        }
         if tool == Tool::WaterEdit {
             self.water_edit_press(pos_screen);
             return;
@@ -897,6 +931,10 @@ impl AppState {
         let fp = self.camera.screen_to_field(pos_screen, self.screen_size());
         if self.border_drag.is_some() {
             self.border_drag_move(fp);
+            return;
+        }
+        if self.settle_drag.is_some() {
+            self.settlement_drag_move(fp);
             return;
         }
         if self.tools.tool.is_procedural() || (self.tools.tool == Tool::Border && self.input.stroke) {
@@ -948,6 +986,10 @@ impl AppState {
         }
         if self.border_drag.is_some() {
             self.border_release();
+            return;
+        }
+        if self.settle_drag.is_some() {
+            self.settlement_release();
             return;
         }
         if self.tools.tool == Tool::Border && self.input.stroke {
@@ -1235,6 +1277,22 @@ impl AppState {
                 tint: [p.tint[0], p.tint[1], p.tint[2] * if sel { 0.6 } else { 1.0 }, 1.0],
             });
         }
+        if self.town_icons_visible {
+            for st in &self.doc.settlements {
+                let qid = match st.params.kind {
+                    SettlementKind::Village => "default/village",
+                    SettlementKind::Town => "default/town",
+                    SettlementKind::City => "default/city",
+                };
+                let Some(a) = self.library.get(qid) else { continue };
+                let Some(rect) = a.rect else { continue };
+                let (uv0, uv1) = rect.uv();
+                let size = (st.layout.radius * 0.75).max(30.0);
+                let h = size / rect.aspect().max(0.05);
+                let sel = self.selected_settlement == Some(st.id);
+                inst.push(SpriteInstance { pos: st.layout.center, size: [size, h], pivot: [0.5, 0.6], uv0, uv1, rot_flip: [0.0, 0.0], tint: [1.0, 1.0, if sel { 0.6 } else { 1.0 }, 1.0] });
+            }
+        }
         self.sprites.set_instances(&self.gpu.device, &self.gpu.queue, &inst);
         self.instances_dirty = false;
         self.instance_key = (self.doc.placements.len(), self.doc.auto_symbols.len());
@@ -1336,6 +1394,13 @@ impl AppState {
                 } else {
                     self.create_entity(EntityKind::River, EntityRef::Path(pts));
                 }
+                return;
+            }
+        }
+        // A town: its label.
+        if let Some(eid) = self.settlement_under(fp).and_then(|id| self.doc.settlement(id)).and_then(|s| s.entity) {
+            if self.doc.entity(eid).is_some() {
+                self.selected_entity = Some(eid);
                 return;
             }
         }
@@ -1765,6 +1830,250 @@ impl AppState {
         tex.upload_all(&self.gpu.queue, &field);
     }
 
+    // ---- towns -----------------------------------------------------------------
+
+    fn river_paths(&self) -> Vec<Vec<[f32; 2]>> {
+        match (&self.doc.baked, &self.doc.derived) {
+            (Some(b), _) => b.rivers.iter().map(|r| r.points.clone()).collect(),
+            (None, Some(d)) => d.water.rivers.iter().map(|r| r.points.clone()).collect(),
+            _ => Vec::new(),
+        }
+    }
+
+    fn generate_layout(&self, pos: [f32; 2], params: &settlement::SettlementParams) -> settlement::Layout {
+        let rivers = self.river_paths();
+        let water = self.doc.derived.as_ref().map(|d| &d.water_cov);
+        let site = Site { elevation: &self.doc.elevation, sea_level: self.doc.sea_level, water, rivers: &rivers };
+        settlement::generate(&site, pos, params)
+    }
+
+    fn settlement_under(&self, fp: Vec2) -> Option<u64> {
+        let mut best: Option<(f32, u64)> = None;
+        for st in &self.doc.settlements {
+            let d = (Vec2::from(st.layout.center) - fp).length();
+            if d <= st.layout.radius * 1.15 && best.map(|b| d < b.0).unwrap_or(true) {
+                best = Some((d, st.id));
+            }
+        }
+        best.map(|b| b.1)
+    }
+
+    fn place_settlement(&mut self, fp: Vec2) {
+        if self.doc.elevation.sample(fp.x, fp.y) <= self.doc.sea_level {
+            self.ui.status = "A town needs dry land".into();
+            return;
+        }
+        let mut params = self.tools.settlement.clone();
+        params.seed = self.name_rng.below(1 << 30) as u64;
+        let layout = self.generate_layout(fp.to_array(), &params);
+        let before = self.doc.settlements.clone();
+        let id = self.doc.new_settlement_id();
+        self.doc.settlements.push(Settlement { id, pos: fp.to_array(), params, layout, entity: None });
+        self.doc.commit_settlements("Place town", before);
+        self.selected_settlement = Some(id);
+        self.selected_building = None;
+        self.instances_dirty = true;
+        self.doc.symbols_changed();
+        self.ensure_settlement_entity(id);
+    }
+
+    /// Rebuild the selected town from the tool's parameters (seed kept).
+    fn regenerate_selected_settlement(&mut self, new_seed: bool) {
+        let Some(id) = self.selected_settlement else { return };
+        let Some(st) = self.doc.settlement(id).cloned() else { return };
+        let mut params = self.tools.settlement.clone();
+        params.seed = if new_seed { self.name_rng.below(1 << 30) as u64 } else { st.params.seed };
+        params.district_seeds = st.params.district_seeds;
+        let t = Instant::now();
+        let layout = self.generate_layout(st.pos, &params);
+        self.cpu.sections.insert("town generate", t.elapsed().as_secs_f32() * 1000.0);
+        let before = self.doc.settlements.clone();
+        if let Some(s) = self.doc.settlement_mut(id) {
+            s.params = params;
+            s.layout = layout;
+        }
+        self.doc.commit_settlements(if new_seed { "Re-roll town" } else { "Edit town" }, before);
+        self.selected_building = None;
+        self.instances_dirty = true;
+        self.doc.symbols_changed();
+        self.ensure_settlement_entity(id);
+    }
+
+    fn reroll_district(&mut self, district: District) {
+        let Some(id) = self.selected_settlement else { return };
+        let Some(mut st) = self.doc.settlement(id).cloned() else { return };
+        {
+            let rivers = self.river_paths();
+            let water = self.doc.derived.as_ref().map(|d| &d.water_cov);
+            let site = Site { elevation: &self.doc.elevation, sea_level: self.doc.sea_level, water, rivers: &rivers };
+            settlement::reroll_district(&site, &mut st, district);
+        }
+        let before = self.doc.settlements.clone();
+        if let Some(s) = self.doc.settlement_mut(id) {
+            *s = st;
+        }
+        self.doc.commit_settlements("Re-roll district", before);
+        self.selected_building = None;
+    }
+
+    fn delete_selected_settlement(&mut self) {
+        let Some(id) = self.selected_settlement.take() else { return };
+        if let Some(eid) = self.doc.settlement(id).and_then(|s| s.entity) {
+            let before = self.doc.entities.clone();
+            self.doc.entities.retain(|e| e.id != eid);
+            self.doc.commit_entities("Remove town name", before);
+            if self.selected_entity == Some(eid) {
+                self.selected_entity = None;
+            }
+        }
+        let before = self.doc.settlements.clone();
+        self.doc.settlements.retain(|s| s.id != id);
+        self.doc.commit_settlements("Delete town", before);
+        self.selected_building = None;
+        self.instances_dirty = true;
+        self.doc.symbols_changed();
+    }
+
+    fn delete_selected_building(&mut self) {
+        let (Some(id), Some(bid)) = (self.selected_settlement, self.selected_building.take()) else { return };
+        let before = self.doc.settlements.clone();
+        if let Some(s) = self.doc.settlement_mut(id) {
+            s.layout.buildings.retain(|b| b.id != bid);
+        }
+        self.doc.commit_settlements("Delete building", before);
+    }
+
+    fn set_building_district(&mut self, district: District) {
+        let (Some(id), Some(bid)) = (self.selected_settlement, self.selected_building) else { return };
+        let before = self.doc.settlements.clone();
+        if let Some(b) = self.doc.settlement_mut(id).and_then(|s| s.layout.buildings.iter_mut().find(|b| b.id == bid)) {
+            b.district = district;
+        }
+        self.doc.commit_settlements("Repaint district", before);
+    }
+
+    /// A town's label entity, created on first need and kept on its centre.
+    fn ensure_settlement_entity(&mut self, id: u64) {
+        let Some(st) = self.doc.settlement(id).cloned() else { return };
+        let before = self.doc.entities.clone();
+        match st.entity.filter(|e| self.doc.entities.iter().any(|x| x.id == *e)) {
+            Some(eid) => {
+                if let Some(e) = self.doc.entity_mut(eid) {
+                    e.geometry = EntityRef::Point(st.layout.center);
+                    e.importance = st.params.kind.importance();
+                }
+                self.doc.commit_entities("Move town name", before);
+            }
+            None => {
+                let name = self.generated_name(EntityKind::Settlement);
+                let eid = self.doc.next_entity_id;
+                self.doc.next_entity_id += 1;
+                let mut e = Entity::new(eid, EntityKind::Settlement, name, EntityRef::Point(st.layout.center));
+                e.culture = self.doc.culture.clone();
+                e.auto = true;
+                e.importance = st.params.kind.importance();
+                self.doc.entities.push(e);
+                if let Some(s) = self.doc.settlement_mut(id) {
+                    s.entity = Some(eid);
+                }
+                self.doc.commit_entities("Name town", before);
+            }
+        }
+    }
+
+    fn settlement_press(&mut self, _screen: Vec2, fp: Vec2) {
+        let zoom = self.camera.zoom;
+        // Inside the selected town at detail zoom: grab a vertex, a building, or paint.
+        if let Some(id) = self.selected_settlement {
+            if let Some(st) = self.doc.settlement(id) {
+                if (Vec2::from(st.layout.center) - fp).length() <= st.layout.radius * 1.3 {
+                    if self.tools.paint_district {
+                        self.settle_drag = Some(SettleDrag { before: self.doc.settlements.clone(), settlement: id, kind: SettleDragKind::Paint });
+                        self.input.stroke = true;
+                        self.settlement_drag_move(fp);
+                        return;
+                    }
+                    let tol = 7.0 / zoom.max(0.05);
+                    if zoom >= 1.2 {
+                        if let Some(v) = st.layout.vertex_near(fp.to_array(), tol) {
+                            self.settle_drag = Some(SettleDrag { before: self.doc.settlements.clone(), settlement: id, kind: SettleDragKind::Vertex(v) });
+                            self.input.stroke = true;
+                            return;
+                        }
+                    }
+                    if let Some(bid) = st.layout.building_at(fp.to_array()) {
+                        let c = st.layout.buildings.iter().find(|b| b.id == bid).map(|b| b.centre()).unwrap();
+                        self.selected_building = Some(bid);
+                        self.settle_drag = Some(SettleDrag { before: self.doc.settlements.clone(), settlement: id, kind: SettleDragKind::Building(bid, [c[0] - fp.x, c[1] - fp.y]) });
+                        self.input.stroke = true;
+                        return;
+                    }
+                    self.selected_building = None;
+                    return;
+                }
+            }
+        }
+        // Another town: select it. Empty land: a new town.
+        match self.settlement_under(fp) {
+            Some(id) => {
+                self.selected_settlement = Some(id);
+                self.selected_building = None;
+                if let Some(st) = self.doc.settlement(id) {
+                    self.tools.settlement = st.params.clone();
+                }
+            }
+            None => self.place_settlement(fp),
+        }
+    }
+
+    fn settlement_drag_move(&mut self, fp: Vec2) {
+        let Some(d) = &self.settle_drag else { return };
+        let id = d.settlement;
+        match d.kind {
+            SettleDragKind::Vertex(v) => {
+                if let Some(s) = self.doc.settlement_mut(id) {
+                    s.layout.move_vertex(v, fp.to_array());
+                }
+            }
+            SettleDragKind::Building(bid, off) => {
+                if let Some(b) = self.doc.settlement_mut(id).and_then(|s| s.layout.buildings.iter_mut().find(|b| b.id == bid)) {
+                    let c = b.centre();
+                    let target = [fp.x + off[0], fp.y + off[1]];
+                    let dx = target[0] - c[0];
+                    let dy = target[1] - c[1];
+                    for q in b.quad.iter_mut() {
+                        q[0] += dx;
+                        q[1] += dy;
+                    }
+                }
+            }
+            SettleDragKind::Paint => {
+                let r = self.tools.paint_radius;
+                let kind = self.tools.paint_kind;
+                if let Some(s) = self.doc.settlement_mut(id) {
+                    for b in s.layout.buildings.iter_mut() {
+                        let c = b.centre();
+                        if (c[0] - fp.x).powi(2) + (c[1] - fp.y).powi(2) <= r * r {
+                            b.district = kind;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fn settlement_release(&mut self) {
+        self.input.stroke = false;
+        if let Some(d) = self.settle_drag.take() {
+            let label = match d.kind {
+                SettleDragKind::Vertex(_) => "Move street",
+                SettleDragKind::Building(..) => "Move building",
+                SettleDragKind::Paint => "Paint district",
+            };
+            self.doc.commit_settlements(label, d.before);
+        }
+    }
+
     // ---- water editing -------------------------------------------------------
 
     fn water_edit_press(&mut self, pos_screen: Vec2) {
@@ -2020,6 +2329,20 @@ impl AppState {
                 UiAction::ClearRealms => self.clear_realms(),
                 UiAction::DeleteSelectedBorder => self.delete_selected_border(),
                 UiAction::PropagateRegionNames(id) => self.propagate_region_names(id),
+                UiAction::SettlementParamsChanged => self.regenerate_selected_settlement(false),
+                UiAction::RerollSettlement => self.regenerate_selected_settlement(true),
+                UiAction::RerollDistrict(d) => self.reroll_district(d),
+                UiAction::DeleteSettlement => self.delete_selected_settlement(),
+                UiAction::DeleteBuilding => self.delete_selected_building(),
+                UiAction::SetBuildingDistrict(d) => self.set_building_district(d),
+                UiAction::SelectSettlement(id) => {
+                    self.selected_settlement = id;
+                    self.selected_building = None;
+                    self.instances_dirty = true;
+                    if let Some(st) = id.and_then(|i| self.doc.settlement(i)) {
+                        self.tools.settlement = st.params.clone();
+                    }
+                }
                 UiAction::SelectRegion(id) => {
                     self.selected_region = id;
                     if let Some(eid) = id.and_then(|r| self.doc.regions.iter().find(|x| x.id == r)).and_then(|r| r.entity) {
@@ -2220,6 +2543,7 @@ impl AppState {
             KeyCode::KeyN if !ctrl => self.tools.tool = Tool::Name,
             KeyCode::KeyB if !ctrl => self.tools.tool = Tool::Border,
             KeyCode::KeyT if !ctrl => self.tools.tool = Tool::Territory,
+            KeyCode::KeyS if !ctrl => self.tools.tool = Tool::Settlement,
             KeyCode::BracketLeft => self.scale_radius(1.0 / 1.2),
             KeyCode::BracketRight => self.scale_radius(1.2),
             KeyCode::Delete | KeyCode::Backspace => {
@@ -2233,6 +2557,12 @@ impl AppState {
                     }
                 } else if self.tools.tool == Tool::Border || self.tools.tool == Tool::Territory {
                     self.delete_selected_border();
+                } else if self.tools.tool == Tool::Settlement {
+                    if self.selected_building.is_some() {
+                        self.delete_selected_building();
+                    } else {
+                        self.delete_selected_settlement();
+                    }
                 }
             }
             KeyCode::Escape => {
@@ -2415,6 +2745,42 @@ impl AppState {
                     color: if modern { egui::Color32::from_rgb(96, 52, 120) } else { egui::Color32::from_rgb(112, 38, 32) },
                 });
             }
+            // Towns: symbol below TOWN_ICON_ZOOM, streets above; a short crossfade.
+            let z = self.camera.zoom;
+            if z >= TOWN_ICON_ZOOM * 0.8 {
+                let alpha = ((z - TOWN_ICON_ZOOM * 0.8) / (TOWN_ICON_ZOOM * 0.4)).clamp(0.0, 1.0);
+                let detail = z >= 1.4;
+                let town_tool = self.tools.tool == Tool::Settlement;
+                let view = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(ss.x / ppp, ss.y / ppp)).expand(40.0);
+                for st in &self.doc.settlements {
+                    let c = to(st.layout.center);
+                    let rp = st.layout.radius * z / ppp;
+                    if !view.intersects(egui::Rect::from_center_size(c, egui::vec2(rp * 3.4, rp * 3.4))) {
+                        continue;
+                    }
+                    let l = &st.layout;
+                    let selected = town_tool && self.selected_settlement == Some(st.id);
+                    let pts = |v: &[[f32; 2]]| v.iter().map(|p| to(*p)).collect::<Vec<_>>();
+                    ov.settlements.push(ui::SettlementDraw {
+                        center: c,
+                        radius_px: rp,
+                        alpha,
+                        detail,
+                        selected,
+                        handles: selected && detail,
+                        roads: l.roads.iter().map(|r| (pts(&r.points), r.primary)).collect(),
+                        buildings: l.buildings.iter().map(|b| (pts(&b.quad), b.district, selected && self.selected_building == Some(b.id))).collect(),
+                        walls: l.walls.iter().map(|w| (pts(&w.points), pts(&w.towers), pts(&w.gates))).collect(),
+                        plaza: l.plaza.as_ref().map(|p| pts(&p.points)),
+                        keep: l.keep.map(|(p, r)| (to(p), r * z / ppp)),
+                        docks: l.docks.iter().map(|d| [to(d[0]), to(d[1])]).collect(),
+                        bridges: l.bridges.iter().map(|d| [to(d[0]), to(d[1])]).collect(),
+                        fields: l.fields.iter().map(|f| pts(f)).collect(),
+                        cemetery: l.cemetery.map(|q| pts(&q)),
+                        scale: z / ppp,
+                    });
+                }
+            }
             if editing {
                 for r in &self.doc.regions {
                     if !self.doc.borders.iter().any(|b| b.kind == BorderKind::Drawn && b.left == r.id) {
@@ -2451,6 +2817,11 @@ impl AppState {
         if self.library.poll() {
             self.reload_library();
         }
+        let icons = self.camera.zoom < TOWN_ICON_ZOOM;
+        if icons != self.town_icons_visible {
+            self.town_icons_visible = icons;
+            self.instances_dirty = true;
+        }
         if self.instances_dirty || self.instance_key != (self.doc.placements.len(), self.doc.auto_symbols.len()) {
             let t = Instant::now();
             self.rebuild_instances();
@@ -2473,7 +2844,7 @@ impl AppState {
                     let w = self.doc.width() as f32;
                     let h = self.doc.height() as f32;
                     let before = self.doc.placements.clone();
-                    for (qid, x, y, size) in [("default/city", 0.62, 0.55, 150.0), ("default/castle", 0.45, 0.48, 110.0), ("default/village", 0.70, 0.40, 80.0), ("default/ship", 0.15, 0.30, 90.0), ("default/sea_serpent", 0.82, 0.78, 120.0), ("default/ruins", 0.36, 0.72, 80.0)] {
+                    for (qid, x, y, size) in [("default/castle", 0.45, 0.48, 110.0), ("default/ship", 0.15, 0.30, 90.0), ("default/sea_serpent", 0.82, 0.78, 120.0), ("default/ruins", 0.36, 0.72, 80.0)] {
                         if let Some(p) = self.make_placement(qid, [w * x, h * y], size, PlacementLayer::Manual) {
                             self.doc.placements.push(p);
                         }
@@ -2531,6 +2902,13 @@ impl AppState {
                     }).collect();
                     self.apply_border_stroke(path);
                     self.selected_border = None;
+                    // A city and a village with generated layouts.
+                    for (x, y, kind, model) in [(0.62, 0.55, SettlementKind::City, settlement::GrowthModel::Organic), (0.70, 0.40, SettlementKind::Village, settlement::GrowthModel::Organic)] {
+                        self.tools.settlement = settlement::SettlementParams { kind, model, ..Default::default() };
+                        self.place_settlement(Vec2::new(w * x, h * y));
+                    }
+                    self.selected_settlement = None;
+                    self.instances_dirty = true;
                     self.tools.tool = Tool::Name;
                     let dir = std::env::temp_dir().join("isoline-demo.isoline");
                     self.save_to(dir);
@@ -2624,6 +3002,8 @@ impl AppState {
                 selected_border: self.selected_border,
                 selected_region: self.selected_region,
                 realms_running: self.territory_job.is_some(),
+                selected_settlement: self.selected_settlement,
+                selected_building: self.selected_building,
             });
             ctx.run_ui(raw, |root| {
                 if let Some(uc) = uc.take() {

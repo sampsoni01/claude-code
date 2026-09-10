@@ -287,7 +287,8 @@ fn relief(e: &ScalarField, p: [f32; 2], r: f32) -> f32 {
 /// Automatic mountain and hill symbols: candidates on a jittered grid, kept
 /// where local relief is high and the point is a local maximum. Bigger,
 /// snow-capped symbols for taller peaks. Sorted back to front (by y).
-pub fn place_mountains(t: &Terrain<'_>, p: &MountainParams, sets: &SymbolSets, temperature: Option<&ScalarField>, forest: Option<&ScalarField>, next_id: &mut u64) -> (Vec<Placement>, SpatialHash) {
+/// `clearings` are discs (centre, radius) kept free of symbols: towns.
+pub fn place_mountains(t: &Terrain<'_>, p: &MountainParams, sets: &SymbolSets, temperature: Option<&ScalarField>, forest: Option<&ScalarField>, clearings: &[([f32; 2], f32)], next_id: &mut u64) -> (Vec<Placement>, SpatialHash) {
     let mut out = Vec::new();
     let mut hash = SpatialHash::new(p.spacing.max(4.0) * 2.0);
     if !p.enabled || (sets.mountains.is_empty() && sets.hills.is_empty()) {
@@ -363,8 +364,8 @@ pub fn place_mountains(t: &Terrain<'_>, p: &MountainParams, sets: &SymbolSets, t
             continue;
         }
         // Never stand a peak or hill in a lake or the sea, or so close that
-        // its footprint would cover the shore.
-        if t.is_water(pt) || t.water_distance(pt, size * 0.45) < size * 0.4 {
+        // its footprint would cover the shore; never inside a town.
+        if t.is_water(pt) || t.water_distance(pt, size * 0.45) < size * 0.4 || in_clearing(clearings, pt, size * 0.4) {
             continue;
         }
         hash.insert(pt, r);
@@ -386,7 +387,7 @@ pub fn place_mountains(t: &Terrain<'_>, p: &MountainParams, sets: &SymbolSets, t
                 }
                 let ssize = size * rng.range(0.5, 0.75);
                 let sr = ssize * 0.24;
-                if hash.collides(q, sr) || t.is_water(q) || t.water_distance(q, ssize * 0.45) < ssize * 0.4 {
+                if hash.collides(q, sr) || t.is_water(q) || t.water_distance(q, ssize * 0.45) < ssize * 0.4 || in_clearing(clearings, q, ssize * 0.4) {
                     continue;
                 }
                 hash.insert(q, sr);
@@ -405,7 +406,12 @@ pub fn place_mountains(t: &Terrain<'_>, p: &MountainParams, sets: &SymbolSets, t
 /// Automatic tree symbols from the forest-density field: spacing shrinks
 /// with density, species follow biome and temperature, never in water or
 /// on steep ground, thinning toward the treeline.
-pub fn place_forest(t: &Terrain<'_>, forest: &ScalarField, temperature: Option<&ScalarField>, p: &ForestParams, sets: &SymbolSets, avoid: &SpatialHash, next_id: &mut u64) -> Vec<Placement> {
+fn in_clearing(clearings: &[([f32; 2], f32)], p: [f32; 2], margin: f32) -> bool {
+    clearings.iter().any(|(c, r)| (c[0] - p[0]).powi(2) + (c[1] - p[1]).powi(2) < (r + margin) * (r + margin))
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn place_forest(t: &Terrain<'_>, forest: &ScalarField, temperature: Option<&ScalarField>, p: &ForestParams, sets: &SymbolSets, avoid: &SpatialHash, clearings: &[([f32; 2], f32)], next_id: &mut u64) -> Vec<Placement> {
     let mut out = Vec::new();
     if !p.enabled || (sets.conifers.is_empty() && sets.broadleaf.is_empty()) {
         return out;
@@ -431,7 +437,7 @@ pub fn place_forest(t: &Terrain<'_>, forest: &ScalarField, temperature: Option<&
                 if d < p.threshold || rng.f32() > (d - p.threshold) / (1.0 - p.threshold).max(0.05) * 1.3 {
                     continue;
                 }
-                if t.is_water(pt) || t.slope(pt) > 60.0 || avoid.collides(pt, 4.0) {
+                if t.is_water(pt) || t.slope(pt) > 60.0 || avoid.collides(pt, 4.0) || in_clearing(clearings, pt, 6.0) {
                     continue;
                 }
                 let temp = temperature.map(|tf| tf.sample(pt[0] * tf.width() as f32 / w, pt[1] * tf.height() as f32 / h)).unwrap_or(12.0);
@@ -491,7 +497,7 @@ mod tests {
         let t = Terrain { elevation: &e, sea_level: 0.0, biome: None, water: None };
         let sets = SymbolSets { mountains: vec![("default/mountain_1".into(), 90.0)], hills: vec![("default/hill_1".into(), 60.0)], ..Default::default() };
         let mut id = 0;
-        let (m, _) = place_mountains(&t, &MountainParams::default(), &sets, None, None, &mut id);
+        let (m, _) = place_mountains(&t, &MountainParams::default(), &sets, None, None, &[], &mut id);
         assert!(!m.is_empty());
         for pl in &m {
             let d = ((pl.pos[0] - 128.0).powi(2) + (pl.pos[1] - 128.0).powi(2)).sqrt();

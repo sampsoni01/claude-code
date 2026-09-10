@@ -8,6 +8,7 @@ use crate::hydrology::River;
 use crate::borders::{Border, Region};
 use crate::entity::Entity;
 use crate::placement::Placement;
+use crate::settlement::Settlement;
 use crate::water::LakePolygon;
 use std::collections::VecDeque;
 use std::fs;
@@ -60,6 +61,8 @@ pub enum UndoOp {
     Entities { before: Vec<Entity>, after: Vec<Entity> },
     /// Regions and their borders (whole lists).
     Regions { before: RegionSnapshot, after: RegionSnapshot },
+    /// Settlements with their layouts (whole list).
+    Settlements { before: Vec<Settlement>, after: Vec<Settlement> },
 }
 
 /// Regions and borders together: one edit may touch both.
@@ -84,6 +87,7 @@ impl UndoOp {
             UndoOp::Placements { before, after } => (before.len() + after.len()) * 64,
             UndoOp::Entities { before, after } => (before.len() + after.len()) * 256,
             UndoOp::Regions { before, after } => before.bytes() + after.bytes(),
+            UndoOp::Settlements { before, after } => before.iter().chain(after.iter()).map(|s| 128 + s.layout.buildings.len() * 40 + s.layout.roads.iter().map(|r| r.points.len() * 8).sum::<usize>()).sum(),
             UndoOp::Bake { baked_before, moisture_before, baked_after, moisture_after } => {
                 baked_before.as_ref().map(|g| g.bytes()).unwrap_or(0)
                     + baked_after.as_ref().map(|g| g.bytes()).unwrap_or(0)
