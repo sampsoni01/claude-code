@@ -21,3 +21,5 @@ uuid.workspace = true
 image.workspace = true
 resvg.workspace = true
 walkdir.workspace = true
+include_dir.workspace = true
+dirs.workspace = true

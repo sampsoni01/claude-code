@@ -9,6 +9,21 @@ The coastline is literally the isoline `elevation == seaLevel`, hence the name.
 
 ![Milestone 8](docs/milestone8.png)
 
+## Shipping fixes (after Milestone 8)
+
+- The default symbol pack, name languages and example themes are built into
+  the executable and extracted to the user's local data folder on first
+  run, so the program works with nothing beside it (running it straight
+  out of a zip viewer used to leave it with no symbols and every name
+  "Nameless"). An `assets/` folder next to the executable still adds packs.
+- The dark parchment UI is applied whatever the operating system's theme
+  preference is; Windows in light mode used to get egui's default grey.
+- The compass rose and cartouche stay inside the visible part of the sheet
+  instead of following the sheet's corner off-screen when zoomed in.
+- Town buildings whose footprint would be only a few pixels are drawn as
+  small ink houses, the name hangs below the town, and trees keep a wider
+  clearing around it.
+
 ## Status: Milestone 8 — themes, export, polish
 
 - **Raster export** (File → Export image…): any resolution as pixels per

@@ -72,6 +72,9 @@ pub struct Overlay {
     pub settlements: Vec<SettlementDraw>,
     /// Grid overlay: (hex?, cell size in points, screen origin of field (0,0), points per texel).
     pub grid: Option<(bool, f32, egui::Pos2, f32)>,
+    /// The part of the window showing the map (between the panels). The
+    /// compass and cartouche stay inside the visible part of the sheet.
+    pub view_rect: Option<egui::Rect>,
 }
 
 /// A town layout in screen points, ready to draw.
@@ -123,6 +126,7 @@ impl Default for Overlay {
             capitals: Vec::new(),
             settlements: Vec::new(),
             grid: None,
+            view_rect: None,
         }
     }
 }
@@ -219,10 +223,8 @@ fn draw_settlement(painter: &egui::Painter, ov: &Overlay, t: &SettlementDraw) {
         if *primary {
             painter.add(egui::Shape::line(pts.clone(), egui::Stroke::new((2.6 * s).clamp(2.0, 6.0), ink)));
             painter.add(egui::Shape::line(pts.clone(), egui::Stroke::new((1.6 * s).clamp(1.0, 4.0), a(paper, 1.0))));
-        } else if t.detail {
-            painter.add(egui::Shape::line(pts.clone(), egui::Stroke::new(0.9, a(ov.ink, 0.8))));
         } else {
-            painter.add(egui::Shape::line(pts.clone(), egui::Stroke::new(0.7, a(ov.ink, 0.5))));
+            painter.add(egui::Shape::line(pts.clone(), egui::Stroke::new(0.9, a(ov.ink, 0.8))));
         }
     }
     for b in &t.bridges {
@@ -231,10 +233,24 @@ fn draw_settlement(painter: &egui::Painter, ov: &Overlay, t: &SettlementDraw) {
         painter.line_segment([b[0] + n, b[1] + n], egui::Stroke::new(1.2, ink));
         painter.line_segment([b[0] - n, b[1] - n], egui::Stroke::new(1.2, ink));
     }
-    // Buildings.
+    // Buildings. A footprint smaller than a few points on screen is drawn
+    // as a little ink house instead, so a village reads as a cluster of
+    // houses at any zoom rather than a smear of specks.
     for (q, district, sel) in &t.buildings {
         let fill = a(district_fill(*district, paper), 1.0);
-        let stroke = if t.detail { egui::Stroke::new(0.8, ink) } else { egui::Stroke::new(0.4, a(ov.ink, 0.7)) };
+        let extent = if q.len() == 4 { (q[0] - q[2]).length().max((q[1] - q[3]).length()) } else { 0.0 };
+        if extent < 9.0 && q.len() == 4 {
+            let c = egui::pos2((q[0].x + q[1].x + q[2].x + q[3].x) * 0.25, (q[0].y + q[1].y + q[2].y + q[3].y) * 0.25);
+            let w = extent.clamp(5.0, 9.0);
+            let h = w * 0.6;
+            let house = vec![c + egui::vec2(-w * 0.5, h * 0.5), c + egui::vec2(w * 0.5, h * 0.5), c + egui::vec2(w * 0.5, -h * 0.3), c + egui::vec2(0.0, -h * 0.9), c + egui::vec2(-w * 0.5, -h * 0.3)];
+            painter.add(egui::Shape::convex_polygon(house.clone(), a(paper, 1.0), egui::Stroke::new(1.0, ink)));
+            if *sel {
+                painter.add(egui::Shape::closed_line(house, egui::Stroke::new(2.0, egui::Color32::from_rgb(255, 210, 90))));
+            }
+            continue;
+        }
+        let stroke = if t.detail { egui::Stroke::new(0.8, ink) } else { egui::Stroke::new(0.6, a(ov.ink, 0.9)) };
         painter.add(egui::Shape::convex_polygon(q.clone(), fill, stroke));
         if *sel {
             painter.add(egui::Shape::closed_line(q.clone(), egui::Stroke::new(2.0, egui::Color32::from_rgb(255, 210, 90))));
@@ -372,7 +388,11 @@ pub fn apply_style(ctx: &egui::Context) {
     for w in [&mut v.widgets.noninteractive, &mut v.widgets.inactive, &mut v.widgets.hovered, &mut v.widgets.active, &mut v.widgets.open] {
         w.corner_radius = CornerRadius::same(6);
     }
-    ctx.set_visuals(v);
+    // The look is the same whatever the OS theme says: egui keeps one style
+    // per theme and follows the system preference unless told otherwise.
+    ctx.set_theme(egui::Theme::Dark);
+    ctx.set_visuals_of(egui::Theme::Light, v.clone());
+    ctx.set_visuals_of(egui::Theme::Dark, v);
     ctx.all_styles_mut(|style| {
         style.spacing.item_spacing = egui::vec2(8.0, 6.0);
         style.spacing.slider_width = 130.0;
@@ -465,6 +485,8 @@ pub struct UiState {
     pub export: ExportSettings,
     /// Snapshot taken when an inspector edit starts, committed on release.
     pub entity_edit_before: Option<Vec<Entity>>,
+    /// The map area left between the panels after the last frame.
+    pub map_view_rect: Option<egui::Rect>,
 }
 
 pub struct UiContext<'a> {
@@ -520,8 +542,11 @@ fn fmt_bytes(b: u64) -> String {
 }
 
 fn draw_ornaments(painter: &egui::Painter, ov: &Overlay) {
-    let r = ov.map_rect;
-    if r.width() < 200.0 || r.height() < 200.0 {
+    let r = match ov.view_rect {
+        Some(v) => ov.map_rect.intersect(v),
+        None => ov.map_rect,
+    };
+    if !r.is_positive() || r.width() < 200.0 || r.height() < 200.0 {
         return;
     }
     let ink = ov.ink;
@@ -1987,5 +2012,6 @@ pub fn draw(root: &mut egui::Ui, st: &mut UiState, c: UiContext) -> Vec<UiAction
         st.show_about = open;
     }
 
+    st.map_view_rect = Some(root.available_rect_before_wrap());
     actions
 }

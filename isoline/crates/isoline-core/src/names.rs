@@ -202,9 +202,15 @@ pub fn builtin_culture_dirs() -> Vec<std::path::PathBuf> {
             }
         }
     }
-    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/cultures");
-    if src.is_dir() {
-        out.push(src);
+    #[cfg(debug_assertions)]
+    {
+        let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/cultures");
+        if src.is_dir() {
+            out.push(src);
+        }
+    }
+    if let Some(e) = crate::assets::embedded_assets_dir() {
+        out.push(e.join("cultures"));
     }
     let mut seen = std::collections::HashSet::new();
     out.into_iter().filter_map(|p| p.canonicalize().ok()).filter(|p| seen.insert(p.clone())).collect()

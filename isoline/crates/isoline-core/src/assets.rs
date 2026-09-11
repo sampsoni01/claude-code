@@ -379,6 +379,66 @@ pub fn fit_within(b: &Bitmap, max_edge: u32) -> Bitmap {
 }
 
 /// Where to look for the packs that ship with the app.
+/// The default symbol pack, name languages and example themes, built into
+/// the executable so the program never depends on a folder beside it.
+static EMBEDDED_ASSETS: include_dir::Dir<'_> = include_dir::include_dir!("$CARGO_MANIFEST_DIR/../../assets");
+
+fn embedded_stamp() -> u64 {
+    // FNV over every embedded path and size: a new build with changed
+    // assets gets a fresh extraction folder.
+    fn walk(d: &include_dir::Dir<'_>, h: &mut u64) {
+        for f in d.files() {
+            for b in f.path().to_string_lossy().bytes().chain(f.contents().len().to_le_bytes()) {
+                *h ^= b as u64;
+                *h = h.wrapping_mul(0x0000_0100_0000_01B3);
+            }
+        }
+        for sub in d.dirs() {
+            walk(sub, h);
+        }
+    }
+    let mut h = 0xcbf2_9ce4_8422_2325u64;
+    walk(&EMBEDDED_ASSETS, &mut h);
+    h
+}
+
+/// Where the built-in assets live on disk: extracted from the executable
+/// into the user's local data folder on first run (and again whenever the
+/// build's assets change). Returns the folder holding `packs/`, `cultures/`
+/// and `themes/`.
+pub fn embedded_assets_dir() -> Option<PathBuf> {
+    static DIR: std::sync::OnceLock<Option<PathBuf>> = std::sync::OnceLock::new();
+    DIR.get_or_init(|| {
+        let base = dirs::data_local_dir().or_else(|| dirs::cache_dir()).or_else(|| Some(std::env::temp_dir()))?;
+        let dir = base.join("isoline").join("builtin-assets").join(format!("{:016x}", embedded_stamp()));
+        let marker = dir.join(".complete");
+        if !marker.is_file() {
+            fn extract(d: &include_dir::Dir<'_>, root: &Path) -> std::io::Result<()> {
+                for f in d.files() {
+                    let target = root.join(f.path());
+                    if let Some(parent) = target.parent() {
+                        std::fs::create_dir_all(parent)?;
+                    }
+                    std::fs::write(&target, f.contents())?;
+                }
+                for sub in d.dirs() {
+                    extract(sub, root)?;
+                }
+                Ok(())
+            }
+            if let Err(e) = extract(&EMBEDDED_ASSETS, &dir).and_then(|_| std::fs::write(&marker, b"ok")) {
+                log::warn!("could not extract built-in assets to {}: {e}", dir.display());
+                return None;
+            }
+            log::info!("built-in assets extracted to {}", dir.display());
+        }
+        Some(dir)
+    })
+    .clone()
+}
+
+/// Folders holding asset packs: next to the executable, in the source tree
+/// during development, and the built-in copy.
 pub fn builtin_pack_dirs() -> Vec<PathBuf> {
     let mut out = Vec::new();
     if let Ok(p) = std::env::var("ISOLINE_ASSETS") {
@@ -392,9 +452,15 @@ pub fn builtin_pack_dirs() -> Vec<PathBuf> {
             }
         }
     }
-    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/packs");
-    if src.is_dir() {
-        out.push(src);
+    #[cfg(debug_assertions)]
+    {
+        let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/packs");
+        if src.is_dir() {
+            out.push(src);
+        }
+    }
+    if let Some(e) = embedded_assets_dir() {
+        out.push(e.join("packs"));
     }
     let mut seen = std::collections::HashSet::new();
     out.into_iter().filter_map(|p| p.canonicalize().ok()).filter(|p| seen.insert(p.clone())).collect()

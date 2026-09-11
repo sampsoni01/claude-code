@@ -821,7 +821,7 @@ impl AppState {
                 let sets = self.library.symbol_sets(self.doc.render.theme.style == ThemeStyle::ParchmentInk);
                 let mut next_id = self.doc.next_placement_id + 1_000_000;
                 // Towns keep a clearing around them.
-                let clearings: Vec<([f32; 2], f32)> = self.doc.settlements.iter().map(|s| (s.layout.center, s.layout.radius * 1.15)).collect();
+                let clearings: Vec<([f32; 2], f32)> = self.doc.settlements.iter().map(|s| (s.layout.center, s.layout.radius * 1.3 + 8.0)).collect();
                 self.symbol_job = Some(Job::spawn("Placing symbols", move |_, _| {
                     let t = Terrain { elevation: &elev, sea_level: sea, biome: Some(&biome), water: Some(&water) };
                     let (mut out, peaks) = placement::place_mountains(&t, &params.mountains, &sets, Some(&temperature), Some(&forest), &clearings, &mut next_id);
@@ -1990,6 +1990,8 @@ impl AppState {
                 e.culture = self.doc.culture.clone();
                 e.auto = true;
                 e.importance = st.params.kind.importance();
+                // The name hangs below the town rather than across its houses.
+                e.label.offset = [0.0, st.layout.radius * 0.9 + 3.0];
                 self.doc.entities.push(e);
                 if let Some(s) = self.doc.settlement_mut(id) {
                     s.entity = Some(eid);
@@ -3165,6 +3167,7 @@ impl AppState {
         let a = to([0.0, 0.0]);
         let b = to([self.doc.width() as f32, self.doc.height() as f32]);
         ov.map_rect = egui::Rect::from_two_pos(a, b);
+        ov.view_rect = if export { None } else { self.ui.map_view_rect };
         ov.title = self.doc.name.clone();
         if self.doc.render.grid.kind != isoline_core::project::GridKind::None && self.view_mode == ViewMode::Map {
             ov.grid = Some((self.doc.render.grid.kind == isoline_core::project::GridKind::Hex, self.doc.render.grid.spacing, a, camera.zoom / ppp));

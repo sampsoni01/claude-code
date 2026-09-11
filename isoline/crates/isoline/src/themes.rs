@@ -23,9 +23,15 @@ fn theme_dirs() -> Vec<PathBuf> {
             }
         }
     }
-    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/themes");
-    if src.is_dir() {
-        out.push(src);
+    #[cfg(debug_assertions)]
+    {
+        let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/themes");
+        if src.is_dir() {
+            out.push(src);
+        }
+    }
+    if let Some(e) = isoline_core::assets::embedded_assets_dir() {
+        out.push(e.join("themes"));
     }
     if let Some(u) = user_dir() {
         out.push(u);
