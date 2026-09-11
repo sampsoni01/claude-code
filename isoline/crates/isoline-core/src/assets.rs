@@ -409,7 +409,7 @@ fn embedded_stamp() -> u64 {
 pub fn embedded_assets_dir() -> Option<PathBuf> {
     static DIR: std::sync::OnceLock<Option<PathBuf>> = std::sync::OnceLock::new();
     DIR.get_or_init(|| {
-        let base = dirs::data_local_dir().or_else(|| dirs::cache_dir()).or_else(|| Some(std::env::temp_dir()))?;
+        let base = dirs::data_local_dir().or_else(dirs::cache_dir).or_else(|| Some(std::env::temp_dir()))?;
         let dir = base.join("isoline").join("builtin-assets").join(format!("{:016x}", embedded_stamp()));
         let marker = dir.join(".complete");
         if !marker.is_file() {
