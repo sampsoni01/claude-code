@@ -83,4 +83,4 @@ jobs:
 
           If it crashes or refuses to start, it shows the reason in a dialog and writes \`isoline-crash.log\` and \`isoline.log\` next to the program (or in \`%LOCALAPPDATA%\\isoline\` when that folder is read-only). Send those files when reporting a problem.
 
-The program is not code-signed. Windows shows a blue \"Windows protected your PC\" box: click More info, then Run anyway. macOS says it cannot verify the developer: right-click the program, choose Open, then Open again."
+          The program is not code-signed. Windows shows a blue \"Windows protected your PC\" box: click More info, then Run anyway. macOS says it cannot verify the developer: right-click the program, choose Open, then Open again."
