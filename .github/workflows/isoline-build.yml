@@ -60,6 +60,7 @@ jobs:
     name: Publish downloads
     needs: build
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: write
     steps:
@@ -67,20 +68,33 @@ jobs:
         with:
           path: dist
           merge-multiple: true
+      - name: Write release notes
+        run: |
+          cat > notes.md <<'NOTES'
+          Desktop builds of the Isoline fantasy map maker.
+
+          Download the zip for your system, unzip it, and run the `isoline` program inside. Keep the `assets` folder next to it.
+
+          If it crashes or refuses to start, it shows the reason in a dialog and writes `isoline-crash.log` and `isoline.log` next to the program (or in `%LOCALAPPDATA%\isoline` when that folder is read-only). Send those files when reporting a problem.
+
+          The program is not code-signed. Windows shows a blue "Windows protected your PC" box: click More info, then Run anyway. macOS says it cannot verify the developer: right-click the program, choose Open, then Open again.
+          NOTES
       - name: Publish or refresh the "latest" release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           ls -la dist
-          gh release delete isoline-latest --yes --cleanup-tag --repo "$GITHUB_REPOSITORY" || true
-          gh release create isoline-latest dist/*.zip \
+          # Remove every earlier release with this tag, drafts included, and the tag itself.
+          for id in $(gh api "repos/$GITHUB_REPOSITORY/releases" --paginate --jq '.[] | select(.tag_name == "isoline-latest") | .id'); do
+            gh api -X DELETE "repos/$GITHUB_REPOSITORY/releases/$id" || true
+          done
+          gh api -X DELETE "repos/$GITHUB_REPOSITORY/git/refs/tags/isoline-latest" || true
+          gh release create isoline-latest \
             --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \
             --title "Isoline map maker (latest build)" \
-            --notes "Desktop builds of the Isoline fantasy map maker.
-
-          Download the zip for your system, unzip it, and run the \`isoline\` program inside. Keep the \`assets\` folder next to it.
-
-          If it crashes or refuses to start, it shows the reason in a dialog and writes \`isoline-crash.log\` and \`isoline.log\` next to the program (or in \`%LOCALAPPDATA%\\isoline\` when that folder is read-only). Send those files when reporting a problem.
-
-          The program is not code-signed. Windows shows a blue \"Windows protected your PC\" box: click More info, then Run anyway. macOS says it cannot verify the developer: right-click the program, choose Open, then Open again."
+            --notes-file notes.md
+          for f in dist/*.zip; do
+            timeout 300 gh release upload isoline-latest "$f" --clobber --repo "$GITHUB_REPOSITORY"
+          done
+          gh release view isoline-latest --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[] | "\(.name) \(.size)"'
