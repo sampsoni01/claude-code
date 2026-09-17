@@ -68,11 +68,44 @@ impl Gpu {
     }
 
     pub fn new_instance() -> wgpu::Instance {
+        Self::new_instance_with(wgpu::Backends::PRIMARY)
+    }
+
+    fn new_instance_with(backends: wgpu::Backends) -> wgpu::Instance {
         let mut desc = wgpu::InstanceDescriptor::new_without_display_handle_from_env();
         if wgpu::Backends::from_env().is_none() {
-            desc.backends = wgpu::Backends::PRIMARY;
+            desc.backends = backends;
         }
         wgpu::Instance::new(desc)
+    }
+
+    /// Create a surface for `window` and a device that can present to it.
+    /// The main backends (Vulkan, DirectX 12, Metal) are tried first; if
+    /// none of them offers a usable adapter, OpenGL is tried as a fallback.
+    pub fn new_for_window(window: Arc<winit::window::Window>) -> Result<(wgpu::Surface<'static>, Self)> {
+        let mut last_err = None;
+        for (name, backends) in [("primary", wgpu::Backends::PRIMARY), ("OpenGL", wgpu::Backends::GL)] {
+            let instance = Self::new_instance_with(backends);
+            let surface = match instance.create_surface(window.clone()) {
+                Ok(s) => s,
+                Err(e) => {
+                    log::warn!("{name} backends: cannot create a surface: {e}");
+                    last_err = Some(anyhow!("create surface ({name}): {e}"));
+                    continue;
+                }
+            };
+            match Self::new(instance, Some(&surface)) {
+                Ok(gpu) => return Ok((surface, gpu)),
+                Err(e) => {
+                    log::warn!("{name} backends: {e:#}");
+                    last_err = Some(e);
+                }
+            }
+            if wgpu::Backends::from_env().is_some() {
+                break;
+            }
+        }
+        Err(last_err.unwrap_or_else(|| anyhow!("no graphics backend available")))
     }
 
     pub fn max_field_dim(&self) -> u32 {

@@ -4,6 +4,7 @@ mod app;
 mod autoname;
 mod bench;
 mod camera;
+mod diagnostics;
 mod document;
 mod export;
 mod svg;
@@ -29,8 +30,7 @@ fn usage() {
 }
 
 fn main() {
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info,wgpu_core=warn,wgpu_hal=warn,naga=warn"))
-        .init();
+    diagnostics::install();
 
     let mut args = std::env::args().skip(1);
     let mut opts = app::StartupOptions::default();
@@ -52,6 +52,10 @@ fn main() {
             "--export-scale" => opts.export_scale = args.next().and_then(|s| s.parse().ok()).unwrap_or(2.0),
             "--bench" => {
                 bench = Some(args.next().and_then(|s| s.parse().ok()).unwrap_or(2048));
+            }
+            "--crash-test" => {
+                diagnostics::set_dialogs(true);
+                panic!("crash test requested from the command line");
             }
             "-h" | "--help" => {
                 usage();
@@ -77,8 +81,9 @@ fn main() {
         return;
     }
 
+    diagnostics::set_dialogs(opts.screenshot.is_none() && opts.export.is_none());
     if let Err(e) = app::run(opts) {
-        eprintln!("fatal: {e:#}");
+        diagnostics::fatal("The window or graphics device could not be created.", &format!("{e:#}"));
         std::process::exit(1);
     }
 }

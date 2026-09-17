@@ -710,3 +710,9 @@ restored the original field bit-exactly on both sides.
 See the spec: 3 procedural coastline and ridge brushes, 4 assets, 5 naming
 and labels, 6 borders and regions, 7 settlement layouts, 8 themes, export,
 polish.
+
+## Troubleshooting a crash
+
+Every run writes `isoline.log` next to the executable (or under the per-user data folder, `%LOCALAPPDATA%\isoline` on Windows, when that folder is not writable). A panic or a failed start additionally writes `isoline-crash.log` with the message, the source location and a backtrace, and shows the same message in an error dialog. Send both files when reporting a problem.
+
+If the main graphics backends (Vulkan, DirectX 12, Metal) offer no usable adapter, the program falls back to OpenGL. `WGPU_BACKEND=gl` forces that path; `--crash-test` exercises the crash reporting.

@@ -278,8 +278,7 @@ impl ApplicationHandler for App {
         match AppState::new(event_loop, &self.opts) {
             Ok(s) => self.state = Some(s),
             Err(e) => {
-                log::error!("failed to initialise: {e:#}");
-                eprintln!("failed to initialise: {e:#}");
+                crate::diagnostics::fatal("Isoline could not initialise its window or graphics device.", &format!("{e:#}"));
                 event_loop.exit();
             }
         }
@@ -305,12 +304,14 @@ impl AppState {
     fn new(event_loop: &ActiveEventLoop, opts: &StartupOptions) -> Result<Self> {
         let attrs = Window::default_attributes().with_title("Isoline").with_inner_size(winit::dpi::LogicalSize::new(1480.0, 920.0));
         let window = Arc::new(event_loop.create_window(attrs).context("create window")?);
-        let instance = Gpu::new_instance();
-        let surface = instance.create_surface(window.clone()).context("create surface")?;
-        let gpu = Gpu::new(instance, Some(&surface))?;
+        log::info!("window created ({}x{}, scale {})", window.inner_size().width, window.inner_size().height, window.scale_factor());
+        let (surface, gpu) = Gpu::new_for_window(window.clone())?;
+        log::info!("graphics device ready");
 
         let caps = surface.get_capabilities(&gpu.adapter);
-        let format = caps.formats.iter().copied().find(|f| !f.is_srgb()).unwrap_or(caps.formats[0]);
+        let format = caps.formats.iter().copied().find(|f| !f.is_srgb()).or_else(|| caps.formats.first().copied()).context("the surface offers no texture formats")?;
+        let alpha_mode = caps.alpha_modes.first().copied().context("the surface offers no alpha modes")?;
+        log::info!("surface format {format:?}, present modes {:?}", caps.present_modes);
         let size = window.inner_size();
         let surface_copyable = caps.usages.contains(wgpu::TextureUsages::COPY_SRC);
         let config = wgpu::SurfaceConfiguration {
@@ -319,11 +320,12 @@ impl AppState {
             width: size.width.max(1),
             height: size.height.max(1),
             present_mode: if caps.present_modes.contains(&wgpu::PresentMode::Mailbox) { wgpu::PresentMode::Mailbox } else { wgpu::PresentMode::AutoVsync },
-            alpha_mode: caps.alpha_modes[0],
+            alpha_mode,
             view_formats: vec![],
             desired_maximum_frame_latency: 2,
         };
         surface.configure(&gpu.device, &config);
+        log::info!("surface configured");
 
         let egui_ctx = egui::Context::default();
         ui::install_fonts(&egui_ctx);
@@ -337,6 +339,7 @@ impl AppState {
             Some(gpu.limits.max_texture_dimension_2d as usize),
         );
         let egui_renderer = egui_wgpu::Renderer::new(&gpu.device, format, egui_wgpu::RendererOptions { msaa_samples: 1, ..Default::default() });
+        log::info!("ui ready");
 
         let placeholder = terrain::generate(
             256,
@@ -355,8 +358,10 @@ impl AppState {
         map.bind(&gpu.device, &field, derived_tex.views());
         let profiler = GpuProfiler::new(&gpu.device, &gpu.queue, gpu.has_timestamps());
         let mut atlas = Atlas::new(&gpu.device);
+        log::info!("map pipelines ready");
         let mut library = Library::new();
         library.reload(&mut atlas, &gpu.queue);
+        log::info!("symbol library: {} symbols", library.assets.len());
         let mut sprites = SpritePass::new(&gpu.device, format);
         sprites.bind(&gpu.device, &atlas);
         let mut egui_renderer = egui_renderer;
