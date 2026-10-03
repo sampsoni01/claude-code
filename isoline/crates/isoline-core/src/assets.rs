@@ -6,6 +6,7 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 pub const PACK_MANIFEST: &str = "pack.json";
 pub const IMAGE_EXTENSIONS: [&str; 5] = ["png", "jpg", "jpeg", "webp", "svg"];
@@ -130,9 +131,21 @@ pub struct PackManifest {
     pub assets: Vec<AssetDef>,
 }
 
-/// A loaded pack: manifest plus every image file found in the folder.
+/// Where a pack's files come from.
+#[derive(Clone, Debug)]
+pub enum PackFiles {
+    /// A folder on disk.
+    Dir(PathBuf),
+    /// Files held in memory, keyed by path relative to the pack root: the
+    /// built-in pack, and project assets in the browser.
+    Memory(Vec<(String, Arc<[u8]>)>),
+}
+
+/// A loaded pack: manifest plus every image file found in it.
 #[derive(Clone, Debug)]
 pub struct Pack {
+    pub files: PackFiles,
+    /// Display path (the folder, or a pseudo path for in-memory packs).
     pub root: PathBuf,
     pub manifest: PackManifest,
     /// Assets keyed by qualified id `pack/asset`.
@@ -144,6 +157,26 @@ impl Pack {
     pub fn asset_path(&self, a: &AssetDef) -> PathBuf {
         self.root.join(&a.file)
     }
+
+    /// The bytes of a file in the pack (path relative to the pack root).
+    pub fn read(&self, file: &str) -> Result<Vec<u8>> {
+        let file = file.replace('\\', "/");
+        match &self.files {
+            PackFiles::Dir(d) => {
+                let p = d.join(&file);
+                std::fs::read(&p).with_context(|| format!("read {}", p.display()))
+            }
+            PackFiles::Memory(v) => v.iter().find(|(n, _)| *n == file).map(|(_, b)| b.to_vec()).with_context(|| format!("{file} is not in pack {}", self.pack_id)),
+        }
+    }
+
+    pub fn read_asset(&self, a: &AssetDef) -> Result<Vec<u8>> {
+        self.read(&a.file)
+    }
+
+    pub fn is_memory(&self) -> bool {
+        matches!(self.files, PackFiles::Memory(_))
+    }
 }
 
 /// Qualified id for an asset in a pack.
@@ -151,39 +184,34 @@ pub fn qualified_id(pack_id: &str, asset_id: &str) -> String {
     format!("{pack_id}/{asset_id}")
 }
 
-/// Load a pack folder. Listed assets keep their manifest settings; other
-/// image files are added with defaults and tags from their sub-folder.
-pub fn load_pack(dir: &Path) -> Result<Pack> {
-    let manifest_path = dir.join(PACK_MANIFEST);
-    let mut manifest: PackManifest = if manifest_path.exists() {
-        let text = std::fs::read_to_string(&manifest_path).with_context(|| format!("read {}", manifest_path.display()))?;
-        serde_json::from_str(&text).with_context(|| format!("parse {}", manifest_path.display()))?
-    } else {
-        PackManifest::default()
-    };
-    // The folder name is the pack id: it is what users see and what asset
-    // references in projects are keyed by.
-    let pack_id = slug(&dir.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "pack".into()));
-    if manifest.name.is_empty() {
-        manifest.name = pack_id.clone();
+fn parse_manifest(text: Option<&str>) -> Result<PackManifest> {
+    match text {
+        Some(t) => serde_json::from_str(t).context("parse pack.json"),
+        None => Ok(PackManifest::default()),
     }
+}
+
+/// Build the asset list from a manifest and the relative paths of every
+/// file in the pack. Listed assets keep their manifest settings; other image
+/// files are added with defaults and tags from their sub-folder.
+fn assemble(pack_id: &str, mut manifest: PackManifest, mut rel_paths: Vec<String>) -> (PackManifest, Vec<AssetDef>) {
+    if manifest.name.is_empty() {
+        manifest.name = pack_id.to_string();
+    }
+    rel_paths.sort();
     let mut by_file: HashMap<String, AssetDef> = manifest.assets.iter().map(|a| (a.file.replace('\\', "/"), a.clone())).collect();
     let mut assets = Vec::new();
-    for entry in walkdir::WalkDir::new(dir).min_depth(1).max_depth(4).sort_by_file_name().into_iter().flatten() {
-        let p = entry.path();
-        if !p.is_file() {
+    for rel in rel_paths {
+        let ext = rel.rsplit('.').next().map(|e| e.to_ascii_lowercase()).unwrap_or_default();
+        if !IMAGE_EXTENSIONS.contains(&ext.as_str()) || rel.matches('/').count() > 3 {
             continue;
         }
-        let ext = p.extension().and_then(|e| e.to_str()).map(|e| e.to_ascii_lowercase()).unwrap_or_default();
-        if !IMAGE_EXTENSIONS.contains(&ext.as_str()) {
-            continue;
-        }
-        let rel = p.strip_prefix(dir).unwrap_or(p).to_string_lossy().replace('\\', "/");
         if let Some(a) = by_file.remove(&rel) {
             assets.push(a);
             continue;
         }
-        let stem = p.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| "asset".into());
+        let file_name = rel.rsplit('/').next().unwrap_or(&rel);
+        let stem = file_name.rsplit_once('.').map(|(s, _)| s.to_string()).unwrap_or_else(|| file_name.to_string());
         let mut tags: Vec<String> = rel.split('/').take(rel.matches('/').count()).map(|s| s.to_ascii_lowercase()).collect();
         tags.push(stem.replace(['_', '-'], " ").to_ascii_lowercase());
         let category = tags.first().cloned().unwrap_or_else(|| "imported".into());
@@ -198,7 +226,38 @@ pub fn load_pack(dir: &Path) -> Result<Pack> {
             behavior: AssetBehavior::default(),
         });
     }
-    Ok(Pack { root: dir.to_path_buf(), manifest, assets, pack_id })
+    (manifest, assets)
+}
+
+/// Load a pack folder.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn load_pack(dir: &Path) -> Result<Pack> {
+    let manifest_path = dir.join(PACK_MANIFEST);
+    let text = if manifest_path.exists() { Some(std::fs::read_to_string(&manifest_path).with_context(|| format!("read {}", manifest_path.display()))?) } else { None };
+    let manifest = parse_manifest(text.as_deref()).with_context(|| format!("in {}", manifest_path.display()))?;
+    // The folder name is the pack id: it is what users see and what asset
+    // references in projects are keyed by.
+    let pack_id = slug(&dir.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "pack".into()));
+    let mut rel_paths = Vec::new();
+    for entry in walkdir::WalkDir::new(dir).min_depth(1).max_depth(4).into_iter().flatten() {
+        let p = entry.path();
+        if p.is_file() {
+            rel_paths.push(p.strip_prefix(dir).unwrap_or(p).to_string_lossy().replace('\\', "/"));
+        }
+    }
+    let (manifest, assets) = assemble(&pack_id, manifest, rel_paths);
+    Ok(Pack { files: PackFiles::Dir(dir.to_path_buf()), root: dir.to_path_buf(), manifest, assets, pack_id })
+}
+
+/// Load a pack from files held in memory (paths relative to the pack root).
+pub fn load_pack_from_memory(pack_id: &str, files: Vec<(String, Arc<[u8]>)>) -> Result<Pack> {
+    let files: Vec<(String, Arc<[u8]>)> = files.into_iter().map(|(n, b)| (n.replace('\\', "/"), b)).collect();
+    let text = files.iter().find(|(n, _)| n == PACK_MANIFEST).map(|(_, b)| String::from_utf8_lossy(b).into_owned());
+    let manifest = parse_manifest(text.as_deref()).with_context(|| format!("in pack {pack_id}"))?;
+    let pack_id = slug(pack_id);
+    let rel_paths = files.iter().map(|(n, _)| n.clone()).collect();
+    let (manifest, assets) = assemble(&pack_id, manifest, rel_paths);
+    Ok(Pack { root: PathBuf::from(format!("memory://{pack_id}")), files: PackFiles::Memory(files), manifest, assets, pack_id })
 }
 
 pub fn slug(s: &str) -> String {
@@ -234,16 +293,22 @@ impl Bitmap {
     }
 }
 
-/// Decode a PNG / JPG / WebP / SVG into RGBA. SVGs are rasterised with the
-/// longest edge at `SVG_RASTER_PX`.
-pub fn load_bitmap(path: &Path) -> Result<Bitmap> {
-    let ext = path.extension().and_then(|e| e.to_str()).map(|e| e.to_ascii_lowercase()).unwrap_or_default();
-    let data = std::fs::read(path).with_context(|| format!("read {}", path.display()))?;
+/// Decode a PNG / JPG / WebP / SVG into RGBA from bytes. `name` only
+/// supplies the extension. SVGs are rasterised with the longest edge at
+/// `SVG_RASTER_PX`.
+pub fn decode_bitmap(name: &str, data: &[u8]) -> Result<Bitmap> {
+    let ext = name.rsplit('.').next().map(|e| e.to_ascii_lowercase()).unwrap_or_default();
     if ext == "svg" {
-        return rasterize_svg(&data, SVG_RASTER_PX);
+        return rasterize_svg(data, SVG_RASTER_PX);
     }
-    let img = image::load_from_memory(&data).with_context(|| format!("decode {}", path.display()))?.to_rgba8();
+    let img = image::load_from_memory(data).with_context(|| format!("decode {name}"))?.to_rgba8();
     Ok(Bitmap { width: img.width(), height: img.height(), rgba: img.into_raw() })
+}
+
+/// Decode an image file on disk.
+pub fn load_bitmap(path: &Path) -> Result<Bitmap> {
+    let data = std::fs::read(path).with_context(|| format!("read {}", path.display()))?;
+    decode_bitmap(&path.to_string_lossy(), &data)
 }
 
 static SERIF_FONT: &[u8] = include_bytes!("../../isoline/assets/fonts/LiberationSerif-Regular.ttf");
@@ -378,67 +443,54 @@ pub fn fit_within(b: &Bitmap, max_edge: u32) -> Bitmap {
     out
 }
 
-/// Where to look for the packs that ship with the app.
 /// The default symbol pack, name languages and example themes, built into
 /// the executable so the program never depends on a folder beside it.
 static EMBEDDED_ASSETS: include_dir::Dir<'_> = include_dir::include_dir!("$CARGO_MANIFEST_DIR/../../assets");
 
-fn embedded_stamp() -> u64 {
-    // FNV over every embedded path and size: a new build with changed
-    // assets gets a fresh extraction folder.
-    fn walk(d: &include_dir::Dir<'_>, h: &mut u64) {
-        for f in d.files() {
-            for b in f.path().to_string_lossy().bytes().chain(f.contents().len().to_le_bytes()) {
-                *h ^= b as u64;
-                *h = h.wrapping_mul(0x0000_0100_0000_01B3);
-            }
-        }
-        for sub in d.dirs() {
-            walk(sub, h);
+fn collect_files(d: &include_dir::Dir<'static>, strip: &str, out: &mut Vec<(String, &'static [u8])>) {
+    for f in d.files() {
+        let p = f.path().to_string_lossy().replace('\\', "/");
+        let rel = p.strip_prefix(strip).map(|r| r.trim_start_matches('/').to_string()).unwrap_or(p);
+        out.push((rel, f.contents()));
+    }
+    for sub in d.dirs() {
+        collect_files(sub, strip, out);
+    }
+}
+
+/// Every file under one top-level folder of the built-in assets
+/// (`packs`, `cultures`, `themes`), with paths relative to that folder.
+pub fn embedded_files(folder: &str) -> Vec<(String, &'static [u8])> {
+    let mut out = Vec::new();
+    if let Some(d) = EMBEDDED_ASSETS.get_dir(folder) {
+        collect_files(d, &d.path().to_string_lossy().replace('\\', "/"), &mut out);
+    }
+    out.sort_by(|a, b| a.0.cmp(&b.0));
+    out
+}
+
+/// The packs that ship with the app, loaded from memory.
+pub fn embedded_packs() -> Vec<Pack> {
+    let mut out = Vec::new();
+    let Some(packs) = EMBEDDED_ASSETS.get_dir("packs") else { return out };
+    let mut dirs: Vec<&include_dir::Dir<'static>> = packs.dirs().collect();
+    dirs.sort_by_key(|d| d.path().to_path_buf());
+    for d in dirs {
+        let id = d.path().file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "pack".into());
+        let mut files = Vec::new();
+        collect_files(d, &d.path().to_string_lossy().replace('\\', "/"), &mut files);
+        let files = files.into_iter().map(|(n, b)| (n, Arc::<[u8]>::from(b))).collect();
+        match load_pack_from_memory(&id, files) {
+            Ok(p) => out.push(p),
+            Err(e) => log::warn!("built-in pack {id}: {e:#}"),
         }
     }
-    let mut h = 0xcbf2_9ce4_8422_2325u64;
-    walk(&EMBEDDED_ASSETS, &mut h);
-    h
+    out
 }
 
-/// Where the built-in assets live on disk: extracted from the executable
-/// into the user's local data folder on first run (and again whenever the
-/// build's assets change). Returns the folder holding `packs/`, `cultures/`
-/// and `themes/`.
-pub fn embedded_assets_dir() -> Option<PathBuf> {
-    static DIR: std::sync::OnceLock<Option<PathBuf>> = std::sync::OnceLock::new();
-    DIR.get_or_init(|| {
-        let base = dirs::data_local_dir().or_else(dirs::cache_dir).or_else(|| Some(std::env::temp_dir()))?;
-        let dir = base.join("isoline").join("builtin-assets").join(format!("{:016x}", embedded_stamp()));
-        let marker = dir.join(".complete");
-        if !marker.is_file() {
-            fn extract(d: &include_dir::Dir<'_>, root: &Path) -> std::io::Result<()> {
-                for f in d.files() {
-                    let target = root.join(f.path());
-                    if let Some(parent) = target.parent() {
-                        std::fs::create_dir_all(parent)?;
-                    }
-                    std::fs::write(&target, f.contents())?;
-                }
-                for sub in d.dirs() {
-                    extract(sub, root)?;
-                }
-                Ok(())
-            }
-            if let Err(e) = extract(&EMBEDDED_ASSETS, &dir).and_then(|_| std::fs::write(&marker, b"ok")) {
-                log::warn!("could not extract built-in assets to {}: {e}", dir.display());
-                return None;
-            }
-            log::info!("built-in assets extracted to {}", dir.display());
-        }
-        Some(dir)
-    })
-    .clone()
-}
-
-/// Folders holding asset packs: next to the executable, in the source tree
-/// during development, and the built-in copy.
+/// Extra pack folders on disk: `$ISOLINE_ASSETS/packs`, an `assets/packs`
+/// folder next to the executable, and the source tree in debug builds.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn builtin_pack_dirs() -> Vec<PathBuf> {
     let mut out = Vec::new();
     if let Ok(p) = std::env::var("ISOLINE_ASSETS") {
@@ -459,9 +511,6 @@ pub fn builtin_pack_dirs() -> Vec<PathBuf> {
             out.push(src);
         }
     }
-    if let Some(e) = embedded_assets_dir() {
-        out.push(e.join("packs"));
-    }
     let mut seen = std::collections::HashSet::new();
     out.into_iter().filter_map(|p| p.canonicalize().ok()).filter(|p| seen.insert(p.clone())).collect()
 }
@@ -472,13 +521,12 @@ mod tests {
 
     #[test]
     fn default_pack_loads_and_rasterises() {
-        let dirs = builtin_pack_dirs();
-        let dir = dirs.iter().map(|d| d.join("default")).find(|d| d.is_dir()).expect("default pack present");
-        let pack = load_pack(&dir).unwrap();
+        let packs = embedded_packs();
+        let pack = packs.iter().find(|p| p.pack_id == "default").expect("default pack present");
         assert!(pack.assets.len() >= 40, "{} assets", pack.assets.len());
         assert!(pack.assets.iter().any(|a| a.id == "mountain_1"));
         let a = pack.assets.iter().find(|a| a.id == "conifer_1").unwrap();
-        let bm = load_bitmap(&pack.asset_path(a)).unwrap();
+        let bm = decode_bitmap(&a.file, &pack.read_asset(a).unwrap()).unwrap();
         assert_eq!(bm.height, SVG_RASTER_PX);
         let opaque = bm.rgba.chunks_exact(4).filter(|p| p[3] > 0).count();
         assert!(opaque > 100);

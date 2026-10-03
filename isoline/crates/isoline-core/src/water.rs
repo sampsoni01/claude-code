@@ -10,7 +10,7 @@ use crate::hydrology::{self, HydrologyParams, River};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Instant;
+use web_time::Instant;
 
 /// When hydrology recomputes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

@@ -298,7 +298,10 @@ impl GpuField {
     pub fn flush(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, field: &mut ScalarField, pending: &mut TileSet) -> Vec<u32> {
         let mut landed = Vec::new();
         let mut guard = 0;
-        while (!pending.is_empty() || self.has_in_flight()) && guard < 64 {
+        // The browser cannot wait for the GPU inside a frame: encode what is
+        // pending and let the regular per-frame collection land it.
+        let max_rounds = if cfg!(target_arch = "wasm32") { 1 } else { 64 };
+        while (!pending.is_empty() || self.has_in_flight()) && guard < max_rounds {
             guard += 1;
             if !pending.is_empty() {
                 let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("flush readback") });

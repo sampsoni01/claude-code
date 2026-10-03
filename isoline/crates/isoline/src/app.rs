@@ -20,6 +20,8 @@ use crate::jobs::Job;
 use crate::tools::{Tool, ToolState};
 use crate::ui::{self, NewProjectParams, Overlay, RecoveryPrompt, UiAction, UiContext, UiState, WaterSel};
 use anyhow::{Context, Result};
+#[cfg(not(target_arch = "wasm32"))]
+use anyhow::bail;
 use glam::Vec2;
 use isoline_core::biome::Biome;
 use isoline_core::brush::{StrokeInput, StrokeSampler};
@@ -36,10 +38,13 @@ use isoline_core::borders::{self, Border, BorderKind, CostField, CostParams, See
 use isoline_core::settlement::{self, District, Settlement, SettlementKind, Site, VertexRef};
 use isoline_core::undo::{GeometrySnapshot, RegionSnapshot};
 use isoline_core::water::RecomputeMode;
+use crate::platform::{self, PickedFile, PlatformEvent, Purpose};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU32};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+use web_time::Instant;
+use winit::event_loop::EventLoopProxy;
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, MouseButton, MouseScrollDelta, TouchPhase, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
@@ -181,7 +186,7 @@ struct WaterEdit {
     before: Option<GeometrySnapshot>,
 }
 
-struct AppState {
+pub struct AppState {
     window: Arc<Window>,
     surface: wgpu::Surface<'static>,
     config: wgpu::SurfaceConfiguration,
@@ -248,38 +253,109 @@ struct AppState {
     startup_theme: Option<ThemeStyle>,
     startup_view: (Option<f32>, Option<(f32, f32)>),
     screenshot: Option<PathBuf>,
+    proxy: EventLoopProxy<UserEvent>,
     /// Headless export requested from the command line (path, scale).
     startup_export: Option<(PathBuf, f32)>,
     export: Option<ExportJob>,
     /// Quit once the command-line export has been written.
     exit_after_export: bool,
     frames_since_install: u32,
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     surface_copyable: bool,
+}
+
+/// Events sent into the loop from outside: the finished asynchronous start
+/// (the browser cannot block on the graphics device) and platform results.
+pub enum UserEvent {
+    Ready(Box<Result<AppState>>),
+    Platform(PlatformEvent),
 }
 
 pub struct App {
     opts: StartupOptions,
     state: Option<AppState>,
+    proxy: EventLoopProxy<UserEvent>,
+    starting: bool,
 }
 
 pub fn run(opts: StartupOptions) -> Result<()> {
-    let event_loop = EventLoop::new().context("create event loop")?;
+    let event_loop = EventLoop::<UserEvent>::with_user_event().build().context("create event loop")?;
     event_loop.set_control_flow(ControlFlow::Wait);
-    let mut app = App { opts, state: None };
-    event_loop.run_app(&mut app).context("event loop")?;
+    let proxy = event_loop.create_proxy();
+    let app = App { opts, state: None, proxy, starting: false };
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let mut app = app;
+        event_loop.run_app(&mut app).context("event loop")?;
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        use winit::platform::web::EventLoopExtWebSys;
+        event_loop.spawn_app(app);
+    }
     Ok(())
 }
 
-impl ApplicationHandler for App {
+impl ApplicationHandler<UserEvent> for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        if self.state.is_some() {
+        if self.state.is_some() || self.starting {
             return;
         }
-        match AppState::new(event_loop, &self.opts) {
+        self.starting = true;
+        let attrs = Window::default_attributes().with_title("Isoline").with_inner_size(winit::dpi::LogicalSize::new(1480.0, 920.0));
+        #[cfg(target_arch = "wasm32")]
+        let attrs = {
+            use wasm_bindgen::JsCast;
+            use winit::platform::web::WindowAttributesExtWebSys;
+            let canvas = web_sys::window()
+                .and_then(|w| w.document())
+                .and_then(|d| d.get_element_by_id("isoline"))
+                .and_then(|e| e.dyn_into::<web_sys::HtmlCanvasElement>().ok());
+            attrs.with_canvas(canvas).with_prevent_default(true).with_focusable(true)
+        };
+        let window = match event_loop.create_window(attrs) {
+            Ok(w) => Arc::new(w),
+            Err(e) => {
+                crate::diagnostics::fatal("Isoline could not create its window.", &format!("{e:#}"));
+                event_loop.exit();
+                return;
+            }
+        };
+        log::info!("window created ({}x{}, scale {})", window.inner_size().width, window.inner_size().height, window.scale_factor());
+        let opts = self.opts.clone();
+        let proxy = self.proxy.clone();
+        #[cfg(not(target_arch = "wasm32"))]
+        match pollster::block_on(AppState::new(window, &opts, proxy)) {
             Ok(s) => self.state = Some(s),
             Err(e) => {
                 crate::diagnostics::fatal("Isoline could not initialise its window or graphics device.", &format!("{e:#}"));
                 event_loop.exit();
+            }
+        }
+        #[cfg(target_arch = "wasm32")]
+        wasm_bindgen_futures::spawn_local(async move {
+            let r = AppState::new(window, &opts, proxy.clone()).await;
+            let _ = proxy.send_event(UserEvent::Ready(Box::new(r)));
+        });
+    }
+
+    fn user_event(&mut self, event_loop: &ActiveEventLoop, event: UserEvent) {
+        match event {
+            UserEvent::Ready(r) => match *r {
+                Ok(s) => {
+                    s.window.request_redraw();
+                    self.state = Some(s);
+                }
+                Err(e) => {
+                    crate::diagnostics::fatal("Isoline could not initialise its graphics device.", &format!("{e:#}"));
+                    event_loop.exit();
+                }
+            },
+            UserEvent::Platform(ev) => {
+                if let Some(s) = self.state.as_mut() {
+                    s.handle_platform_event(ev);
+                    s.window.request_redraw();
+                }
             }
         }
     }
@@ -301,11 +377,8 @@ impl ApplicationHandler for App {
 }
 
 impl AppState {
-    fn new(event_loop: &ActiveEventLoop, opts: &StartupOptions) -> Result<Self> {
-        let attrs = Window::default_attributes().with_title("Isoline").with_inner_size(winit::dpi::LogicalSize::new(1480.0, 920.0));
-        let window = Arc::new(event_loop.create_window(attrs).context("create window")?);
-        log::info!("window created ({}x{}, scale {})", window.inner_size().width, window.inner_size().height, window.scale_factor());
-        let (surface, gpu) = Gpu::new_for_window(window.clone())?;
+    async fn new(window: Arc<Window>, opts: &StartupOptions, proxy: EventLoopProxy<UserEvent>) -> Result<Self> {
+        let (surface, gpu) = Gpu::new_for_window(window.clone()).await?;
         log::info!("graphics device ready");
 
         let caps = surface.get_capabilities(&gpu.adapter);
@@ -399,7 +472,7 @@ impl AppState {
             selected_placement: None,
             place_drag: None,
             labels: LabelEngine::default(),
-            cultures: names::load_cultures(&names::builtin_culture_dirs()),
+            cultures: names::load_all_cultures(),
             themes: ThemeLibrary::load(),
             selected_entity: None,
             label_drag: None,
@@ -436,6 +509,7 @@ impl AppState {
             }),
             startup_view: (opts.zoom, opts.center),
             screenshot: opts.screenshot.clone(),
+            proxy,
             startup_export: opts.export.clone().map(|p| (p, opts.export_scale)),
             export: None,
             exit_after_export: false,
@@ -444,14 +518,20 @@ impl AppState {
         };
 
         match &opts.open {
+            #[cfg(not(target_arch = "wasm32"))]
             Some(p) => st.open_path(p.clone()),
+            #[cfg(target_arch = "wasm32")]
+            Some(_) => {}
             None => {
                 let params = NewProjectParams { size: opts.size.clamp(64, st.gpu.max_field_dim()) / 64 * 64, ..NewProjectParams::default() };
                 st.ui.new_params = params.clone();
                 st.start_generation(params);
+                #[cfg(not(target_arch = "wasm32"))]
                 if let Some((dir, m)) = project::pending_untitled_recovery() {
-                    st.ui.recovery = Some(RecoveryPrompt { autosave_dir: dir, manifest: m, project_dir: None });
+                    st.ui.recovery = Some(RecoveryPrompt { autosave_dir: dir, manifest: m, project_dir: None, archive: None });
                 }
+                #[cfg(target_arch = "wasm32")]
+                platform::store_get(platform::AUTOSAVE_KEY, &st.proxy);
             }
         }
         st.ui.status = format!("{} · {:?}", st.gpu.info.name, st.gpu.info.backend);
@@ -563,6 +643,7 @@ impl AppState {
         }));
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     fn open_path(&mut self, dir: PathBuf) {
         let d = dir.clone();
         self.load_job = Some(Job::spawn("Opening project", move |_, _| {
@@ -571,38 +652,158 @@ impl AppState {
         }));
     }
 
-    fn save_to(&mut self, dir: PathBuf) {
+    /// Everything the project file holds, including in-memory assets.
+    fn project_data_for_save(&mut self) -> ProjectData {
         self.finish_stroke_now();
         let view = ViewState { center: self.camera.center.to_array(), zoom: self.camera.zoom };
-        let data = self.doc.to_project_data(view);
+        let mut data = self.doc.to_project_data(view);
+        data.assets = self.library.project_files_for_save();
+        data
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn save_to(&mut self, dir: PathBuf) {
+        let data = self.project_data_for_save();
         let d = dir.clone();
         self.save_job = Some(Job::spawn("Saving", move |_, _| (d.clone(), project::save(&d, &data))));
     }
 
     fn save(&mut self) {
+        #[cfg(not(target_arch = "wasm32"))]
         match self.doc.path.clone() {
             Some(p) => self.save_to(p),
             None => self.save_as(),
         }
+        #[cfg(target_arch = "wasm32")]
+        self.download_project();
     }
 
     fn save_as(&mut self) {
-        let mut dlg = rfd::FileDialog::new().set_title("Save map as").set_file_name(format!("{}.{}", self.doc.name, project::PROJECT_EXTENSION));
-        if let Some(p) = self.doc.path.as_ref().and_then(|p| p.parent()) {
-            dlg = dlg.set_directory(p);
-        }
-        if let Some(mut p) = dlg.save_file() {
-            if p.extension().map(|e| e != project::PROJECT_EXTENSION).unwrap_or(true) {
-                p.set_extension(project::PROJECT_EXTENSION);
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let mut dlg = rfd::FileDialog::new().set_title("Save map as").set_file_name(format!("{}.{}", self.doc.name, project::PROJECT_EXTENSION));
+            if let Some(p) = self.doc.path.as_ref().and_then(|p| p.parent()) {
+                dlg = dlg.set_directory(p);
             }
-            self.doc.name = p.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| "Untitled".into());
-            self.save_to(p);
+            if let Some(mut p) = dlg.save_file() {
+                if p.extension().map(|e| e != project::PROJECT_EXTENSION).unwrap_or(true) {
+                    p.set_extension(project::PROJECT_EXTENSION);
+                }
+                self.doc.name = p.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| "Untitled".into());
+                self.save_to(p);
+            }
+        }
+        #[cfg(target_arch = "wasm32")]
+        self.download_project();
+    }
+
+    /// The browser's save: the project becomes one downloaded archive.
+    #[cfg(target_arch = "wasm32")]
+    fn download_project(&mut self) {
+        let data = self.project_data_for_save();
+        let name = format!("{}.{}", self.doc.name, project::ARCHIVE_EXTENSION);
+        match project::pack_archive(&data, true).and_then(|bytes| platform::save_file("Save map", &name, &[("Isoline project", &["zip"])], "application/zip", &bytes)) {
+            Ok(Some(_)) => {
+                self.doc.modified = false;
+                self.doc.last_autosave = Instant::now();
+                platform::store_delete(platform::AUTOSAVE_KEY);
+                self.ui.status = format!("Downloaded {name}. Keep that file: it is your saved map.");
+            }
+            Ok(None) => {}
+            Err(e) => self.ui.error = Some(format!("Save failed: {e:#}")),
         }
     }
 
     fn open_dialog(&mut self) {
-        if let Some(p) = rfd::FileDialog::new().set_title("Open map (choose the .isoline folder)").pick_folder() {
-            self.open_path(p);
+        platform::pick_project(&self.proxy);
+    }
+
+    /// Install a loaded project: its assets go to the library, the rest
+    /// becomes the document.
+    fn install_project_data(&mut self, mut data: ProjectData, path: Option<PathBuf>) -> Result<()> {
+        let assets = std::mem::take(&mut data.assets);
+        let doc = Document::from_project(data, path)?;
+        self.library.set_project_files(assets);
+        self.install_document(doc);
+        Ok(())
+    }
+
+    /// Results of file dialogs and storage reads.
+    fn handle_platform_event(&mut self, ev: PlatformEvent) {
+        match ev {
+            PlatformEvent::ProjectFolder(p) => {
+                #[cfg(not(target_arch = "wasm32"))]
+                self.open_path(p);
+                #[cfg(target_arch = "wasm32")]
+                let _ = p;
+            }
+            PlatformEvent::Files { purpose, files } => self.handle_files(purpose, files),
+            PlatformEvent::Stored { key, bytes } => {
+                if key == platform::AUTOSAVE_KEY {
+                    if let Some(bytes) = bytes {
+                        match project::unpack_archive(&bytes) {
+                            Ok(data) if !self.doc.modified => {
+                                self.ui.recovery = Some(RecoveryPrompt { autosave_dir: PathBuf::from("browser storage"), manifest: data.manifest.clone(), project_dir: None, archive: Some(Arc::new(bytes)) });
+                            }
+                            Ok(_) => {}
+                            Err(e) => log::warn!("stored autosave unreadable: {e:#}"),
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fn handle_files(&mut self, purpose: Purpose, files: Vec<PickedFile>) {
+        let mut images = Vec::new();
+        for f in files {
+            let ext = f.extension();
+            let is_project = ext == "zip";
+            let is_theme = ext == "json";
+            match purpose {
+                Purpose::OpenProject => self.open_archive(&f),
+                Purpose::ImportTheme => self.import_theme(&f),
+                Purpose::ImportImages => images.push(f),
+                Purpose::Dropped if is_project => self.open_archive(&f),
+                Purpose::Dropped if is_theme => self.import_theme(&f),
+                Purpose::Dropped => {
+                    #[cfg(not(target_arch = "wasm32"))]
+                    if let Some(p) = &f.path {
+                        if p.join("manifest.json").exists() {
+                            self.open_path(p.clone());
+                            continue;
+                        }
+                    }
+                    images.push(f);
+                }
+            }
+        }
+        if !images.is_empty() {
+            self.import_files(images);
+        }
+    }
+
+    fn open_archive(&mut self, f: &PickedFile) {
+        match project::unpack_archive(&f.bytes).and_then(|data| self.install_project_data(data, None)) {
+            Ok(()) => {
+                self.doc.name = f.stem().trim_end_matches(".isoline").to_string();
+                self.doc.modified = false;
+                self.ui.status = format!("Opened {}", f.name);
+                self.window.set_title(&format!("Isoline — {}", self.doc.name));
+            }
+            Err(e) => self.ui.error = Some(format!("Could not open {}: {e:#}", f.name)),
+        }
+    }
+
+    fn import_theme(&mut self, f: &PickedFile) {
+        match self.themes.import_bytes(&f.name, &f.bytes) {
+            Ok(t) => {
+                self.doc.render.theme = t;
+                self.doc.modified = true;
+                self.doc.symbols_changed();
+                self.ui.status = format!("Theme \"{}\" imported", self.doc.render.theme.name);
+            }
+            Err(e) => self.ui.error = Some(format!("Theme import failed: {e:#}")),
         }
     }
 
@@ -696,12 +897,12 @@ impl AppState {
         if let Some(job) = &self.load_job {
             if let Some((path, result)) = job.try_take() {
                 self.load_job = None;
-                match result.and_then(|d| Document::from_project(d, path.clone())) {
-                    Ok(doc) => {
-                        self.install_document(doc);
+                match result.and_then(|d| self.install_project_data(d, path.clone())) {
+                    Ok(()) => {
+                        #[cfg(not(target_arch = "wasm32"))]
                         if let Some(p) = &path {
                             if let Some((dir, m)) = project::pending_recovery(p) {
-                                self.ui.recovery = Some(RecoveryPrompt { autosave_dir: dir, manifest: m, project_dir: Some(p.clone()) });
+                                self.ui.recovery = Some(RecoveryPrompt { autosave_dir: dir, manifest: m, project_dir: Some(p.clone()), archive: None });
                             }
                         }
                         self.ui.status = format!("Opened {}", path.as_ref().map(|p| p.display().to_string()).unwrap_or_default());
@@ -719,8 +920,11 @@ impl AppState {
                         self.library.set_project_dir(Some(path.clone()));
                         self.doc.modified = false;
                         self.doc.last_autosave = Instant::now();
-                        project::discard_autosave(Some(&path));
-                        project::discard_autosave(None);
+                        #[cfg(not(target_arch = "wasm32"))]
+                        {
+                            project::discard_autosave(Some(&path));
+                            project::discard_autosave(None);
+                        }
                         self.ui.status = format!("Saved {}", path.display());
                         self.window.set_title(&format!("Isoline — {}", self.doc.name));
                     }
@@ -838,10 +1042,17 @@ impl AppState {
 
         if self.doc.modified && self.autosave_job.is_none() && self.save_job.is_none() && self.doc.last_autosave.elapsed() >= AUTOSAVE_INTERVAL && !self.input.stroke {
             self.doc.last_autosave = Instant::now();
-            let view = ViewState { center: self.camera.center.to_array(), zoom: self.camera.zoom };
-            let data = self.doc.to_project_data(view);
-            let path = self.doc.path.clone();
-            self.autosave_job = Some(Job::spawn("Autosaving", move |_, _| project::autosave(path.as_deref(), &data)));
+            let data = self.project_data_for_save();
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                let path = self.doc.path.clone();
+                self.autosave_job = Some(Job::spawn("Autosaving", move |_, _| project::autosave(path.as_deref(), &data)));
+            }
+            #[cfg(target_arch = "wasm32")]
+            match project::pack_archive(&data, false) {
+                Ok(bytes) => platform::store_put(platform::AUTOSAVE_KEY, &bytes),
+                Err(e) => log::warn!("autosave: {e:#}"),
+            }
         }
     }
 
@@ -870,6 +1081,9 @@ impl AppState {
                 };
                 gpu_field.flush(device, queue, mirror, &mut pending)
             };
+            if !pending.is_empty() {
+                self.doc.pending_readback_mut(kind).union_with(&pending);
+            }
             if !landed.is_empty() {
                 self.doc.on_tiles_landed(kind, &landed);
             }
@@ -1332,20 +1546,25 @@ impl AppState {
         self.ui.status = format!("Library: {} symbols in {} packs", self.library.assets.len(), self.library.packs.len());
     }
 
-    fn import_files(&mut self, files: Vec<PathBuf>) {
+    fn import_files(&mut self, files: Vec<PickedFile>) {
+        if !platform::IS_WEB && self.doc.path.is_none() {
+            self.ui.error = Some("Save the project first: imported images are copied into its assets folder.".into());
+            return;
+        }
         let mut n = 0;
         for f in files {
-            let ext = f.extension().and_then(|e| e.to_str()).map(|e| e.to_ascii_lowercase()).unwrap_or_default();
+            let ext = f.extension();
             if !isoline_core::assets::IMAGE_EXTENSIONS.contains(&ext.as_str()) {
                 continue;
             }
-            match self.library.import_image(&f, true, ext == "jpg" || ext == "jpeg", 0.12) {
+            match self.library.import_image_bytes(&f.name, &f.bytes, true, ext == "jpg" || ext == "jpeg", 0.12) {
                 Ok(_) => n += 1,
                 Err(e) => self.ui.error = Some(format!("Import failed: {e:#}")),
             }
         }
         if n > 0 {
-            self.ui.status = format!("Imported {n} image(s) into the project's assets folder");
+            self.doc.modified = true;
+            self.ui.status = format!("Imported {n} image(s) into the project's assets");
             self.tools.tool = Tool::Place;
         }
     }
@@ -1493,11 +1712,13 @@ impl AppState {
 
     fn export_gazetteer(&mut self, json: bool) {
         let ext = if json { "json" } else { "csv" };
-        let Some(path) = rfd::FileDialog::new().set_title("Export gazetteer").set_file_name(format!("{}-gazetteer.{ext}", self.doc.name)).save_file() else { return };
         let text = if json { isoline_core::entity::gazetteer_json(&self.doc.entities) } else { isoline_core::entity::gazetteer_csv(&self.doc.entities) };
-        match std::fs::write(&path, text) {
-            Ok(()) => self.ui.status = format!("Gazetteer written to {}", path.display()),
-            Err(e) => self.ui.error = Some(format!("Export failed: {e}")),
+        let name = format!("{}-gazetteer.{ext}", self.doc.name);
+        let (label, mime) = if json { ("JSON", "application/json") } else { ("CSV", "text/csv") };
+        match platform::save_file("Export gazetteer", &name, &[(label, &[ext])], mime, text.as_bytes()) {
+            Ok(Some(w)) => self.ui.status = format!("Gazetteer written to {w}"),
+            Ok(None) => {}
+            Err(e) => self.ui.error = Some(format!("Export failed: {e:#}")),
         }
     }
 
@@ -2251,22 +2472,40 @@ impl AppState {
                 UiAction::Undo => self.undo(),
                 UiAction::Redo => self.redo(),
                 UiAction::Quit => {
+                    #[cfg(not(target_arch = "wasm32"))]
                     project::discard_autosave(None);
                     event_loop.exit();
                 }
                 UiAction::FitView => self.fit_view(),
                 UiAction::Recover(rp) => {
-                    let dir = rp.autosave_dir.clone();
-                    let target = rp.project_dir.clone();
-                    self.load_job = Some(Job::spawn("Recovering autosave", move |_, _| {
-                        let r = project::load(&dir);
-                        (target, r)
-                    }));
-                    self.doc.modified = true;
+                    if let Some(archive) = rp.archive.clone() {
+                        match project::unpack_archive(&archive).and_then(|data| self.install_project_data(data, None)) {
+                            Ok(()) => {
+                                self.doc.modified = true;
+                                self.ui.status = "Recovered the autosaved map".into();
+                            }
+                            Err(e) => self.ui.error = Some(format!("Could not recover: {e:#}")),
+                        }
+                    } else {
+                        #[cfg(not(target_arch = "wasm32"))]
+                        {
+                            let dir = rp.autosave_dir.clone();
+                            let target = rp.project_dir.clone();
+                            self.load_job = Some(Job::spawn("Recovering autosave", move |_, _| {
+                                let r = project::load(&dir);
+                                (target, r)
+                            }));
+                            self.doc.modified = true;
+                        }
+                    }
                 }
                 UiAction::DiscardRecovery => {
-                    project::discard_autosave(self.doc.path.as_deref());
-                    project::discard_autosave(None);
+                    #[cfg(not(target_arch = "wasm32"))]
+                    {
+                        project::discard_autosave(self.doc.path.as_deref());
+                        project::discard_autosave(None);
+                    }
+                    platform::store_delete(platform::AUTOSAVE_KEY);
                 }
                 UiAction::SeaLevelCommit { from, to } => self.doc.commit_sea_level(from, to),
                 UiAction::SettingsChanged => self.doc.settings_changed(),
@@ -2306,13 +2545,14 @@ impl AppState {
                 }
                 UiAction::ToggleFavorite(qid) => self.library.toggle_favorite(&qid),
                 UiAction::ImportImages => {
-                    if self.doc.path.is_none() {
+                    if !platform::IS_WEB && self.doc.path.is_none() {
                         self.ui.error = Some("Save the project first: imported images are copied into its assets folder.".into());
-                    } else if let Some(files) = rfd::FileDialog::new().set_title("Import images").add_filter("Images", &["png", "jpg", "jpeg", "webp", "svg"]).pick_files() {
-                        self.import_files(files);
+                    } else {
+                        platform::pick_files(Purpose::ImportImages, "Import images", &[("Images", &["png", "jpg", "jpeg", "webp", "svg"])], true, &self.proxy);
                     }
                 }
                 UiAction::AddPackDir => {
+                    #[cfg(not(target_arch = "wasm32"))]
                     if let Some(dir) = rfd::FileDialog::new().set_title("Add an asset pack folder").pick_folder() {
                         self.library.register_pack_dir(dir);
                     }
@@ -2357,34 +2597,20 @@ impl AppState {
                 UiAction::ExportImage(settings) => {
                     let name = crate::export::default_name(&self.doc.name, &settings);
                     let filter = if settings.jpeg { ("JPEG image", &["jpg", "jpeg"][..]) } else { ("PNG image", &["png"][..]) };
-                    if let Some(path) = rfd::FileDialog::new().set_title("Export image").add_filter(filter.0, filter.1).set_file_name(name).save_file() {
+                    if let Some(path) = platform::choose_export_path("Export image", &name, &[filter]) {
                         self.start_export(settings, path);
                     }
                 }
                 UiAction::ImportTheme => {
-                    if let Some(path) = rfd::FileDialog::new().set_title("Import theme").add_filter("Theme JSON", &["json"]).pick_file() {
-                        match self.themes.import(&path) {
-                            Ok(t) => {
-                                self.doc.render.theme = t;
-                                self.doc.modified = true;
-                                self.doc.symbols_changed();
-                                self.ui.status = format!("Theme \"{}\" imported", self.doc.render.theme.name);
-                            }
-                            Err(e) => self.ui.error = Some(format!("Theme import failed: {e:#}")),
-                        }
-                    }
+                    platform::pick_files(Purpose::ImportTheme, "Import theme", &[("Theme JSON", &["json"])], false, &self.proxy);
                 }
                 UiAction::ExportTheme => {
                     let name = format!("{}.json", self.doc.render.theme.name.to_lowercase().replace(' ', "-").replace('&', "and"));
-                    if let Some(path) = rfd::FileDialog::new().set_title("Export theme").add_filter("Theme JSON", &["json"]).set_file_name(name).save_file() {
-                        let mut t = self.doc.render.theme.clone();
-                        if let Some(stem) = path.file_stem() {
-                            t.name = stem.to_string_lossy().replace(['-', '_'], " ");
-                        }
-                        match crate::themes::write_theme(&path, &t) {
-                            Ok(()) => self.ui.status = format!("Theme written to {}", path.display()),
-                            Err(e) => self.ui.error = Some(format!("Theme export failed: {e:#}")),
-                        }
+                    let t = self.doc.render.theme.clone();
+                    match serde_json::to_vec_pretty(&t).context("encode theme").and_then(|bytes| platform::save_file("Export theme", &name, &[("Theme JSON", &["json"])], "application/json", &bytes)) {
+                        Ok(Some(w)) => self.ui.status = format!("Theme written to {w}"),
+                        Ok(None) => {}
+                        Err(e) => self.ui.error = Some(format!("Theme export failed: {e:#}")),
                     }
                 }
                 UiAction::ApplyTheme(name) => {
@@ -2395,7 +2621,7 @@ impl AppState {
                     }
                 }
                 UiAction::ExportSvg => {
-                    if let Some(path) = rfd::FileDialog::new().set_title("Export vector").add_filter("SVG", &["svg"]).set_file_name(format!("{}.svg", self.doc.name)).save_file() {
+                    if let Some(path) = platform::choose_export_path("Export vector", &format!("{}.svg", self.doc.name), &[("SVG", &["svg"])]) {
                         self.export_svg(path);
                     }
                 }
@@ -2431,6 +2657,7 @@ impl AppState {
         let egui_wants_keys = self.egui_ctx.egui_wants_keyboard_input();
         match event {
             WindowEvent::CloseRequested => {
+                #[cfg(not(target_arch = "wasm32"))]
                 project::discard_autosave(None);
                 return true;
             }
@@ -2442,6 +2669,7 @@ impl AppState {
                 }
             }
             WindowEvent::RedrawRequested => self.frame(event_loop),
+            #[cfg(not(target_arch = "wasm32"))]
             WindowEvent::DroppedFile(path) => {
                 if path.join("manifest.json").exists() {
                     self.open_path(path);
@@ -2451,10 +2679,14 @@ impl AppState {
                     }
                 } else if path.join("pack.json").exists() {
                     self.library.register_pack_dir(path);
-                } else if self.doc.path.is_none() {
-                    self.ui.error = Some("Save the project first: dropped images are copied into its assets folder.".into());
                 } else {
-                    self.import_files(vec![path]);
+                    match std::fs::read(&path) {
+                        Ok(bytes) => {
+                            let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+                            self.handle_files(Purpose::Dropped, vec![PickedFile { name, bytes, path: Some(path) }]);
+                        }
+                        Err(e) => self.ui.error = Some(format!("Could not read {}: {e}", path.display())),
+                    }
                 }
             }
             WindowEvent::ModifiersChanged(m) => {
@@ -2593,7 +2825,8 @@ impl AppState {
             }
             KeyCode::KeyO if ctrl && !repeat => self.open_dialog(),
             KeyCode::KeyN if ctrl && !repeat => self.ui.show_new = true,
-            KeyCode::KeyQ if ctrl => {
+            KeyCode::KeyQ if ctrl && !platform::IS_WEB => {
+                #[cfg(not(target_arch = "wasm32"))]
                 project::discard_autosave(None);
                 event_loop.exit();
             }
@@ -2721,11 +2954,12 @@ impl AppState {
         self.redo();
         self.tools.tool = Tool::Coast;
         self.ui.status = format!("demo: {} undo entries", self.doc.undo.len());
-        let dir = std::env::temp_dir().join("isoline-demo.isoline");
         self.doc.name = "isoline-demo".into();
-        self.save_to(dir);
+        #[cfg(not(target_arch = "wasm32"))]
+        self.save_to(std::env::temp_dir().join("isoline-demo.isoline"));
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     fn save_screenshot(&mut self, texture: &wgpu::Texture, path: &Path) -> Result<()> {
         let (w, h) = (self.config.width, self.config.height);
         let bpr = (w * 4).div_ceil(256) * 256;
@@ -2929,7 +3163,10 @@ impl AppState {
     /// Vector export: a terrain raster is rendered first (one band per
     /// frame), then embedded under the vector layers.
     fn export_svg(&mut self, path: PathBuf) {
+        #[cfg(not(target_arch = "wasm32"))]
         let tmp = std::env::temp_dir().join(format!("isoline-svg-terrain-{}.png", std::process::id()));
+        #[cfg(target_arch = "wasm32")]
+        let tmp = PathBuf::from("terrain.png");
         self.start_export(ExportSettings { scale: 1.0, terrain_only: true, ..Default::default() }, tmp);
         if let Some(job) = self.export.as_mut() {
             job.svg_after = Some(path);
@@ -3009,9 +3246,27 @@ impl AppState {
             .collect();
         // Symbols: placed and automatic, plus town icons at this zoom.
         let mut symbols: Vec<SvgSymbol> = Vec::new();
+        let mut bytes_cache: std::collections::HashMap<String, Arc<Vec<u8>>> = std::collections::HashMap::new();
+        let mut symbol_data = |lib: &Library, qid: &str| -> Option<Arc<Vec<u8>>> {
+            if let Some(b) = bytes_cache.get(qid) {
+                return Some(b.clone());
+            }
+            match lib.asset_bytes(qid) {
+                Ok(b) => {
+                    let b = Arc::new(b);
+                    bytes_cache.insert(qid.to_string(), b.clone());
+                    Some(b)
+                }
+                Err(e) => {
+                    log::warn!("svg export: {qid}: {e:#}");
+                    None
+                }
+            }
+        };
         for p in self.doc.all_symbols() {
             if let Some(a) = self.library.get(&p.asset) {
-                symbols.push(SvgSymbol { path: a.path.clone(), pos: p.pos, size: p.size, aspect: a.aspect, pivot: a.def.pivot, rotation: p.rotation, flip: p.flip });
+                let Some(data) = symbol_data(&self.library, &a.qid) else { continue };
+                symbols.push(SvgSymbol { key: a.qid.clone(), name: a.def.file.clone(), data, pos: p.pos, size: p.size, aspect: a.aspect, pivot: a.def.pivot, rotation: p.rotation, flip: p.flip });
             }
         }
         if ref_zoom < TOWN_ICON_ZOOM {
@@ -3024,7 +3279,8 @@ impl AppState {
                     SettlementKind::City => "default/city",
                 };
                 if let Some(a) = self.library.get(qid) {
-                    symbols.push(SvgSymbol { path: a.path.clone(), pos: st.layout.center, size: (st.layout.radius * 1.1).max(24.0), aspect: a.aspect, pivot: [0.5, 0.6], rotation: 0.0, flip: false });
+                    let Some(data) = symbol_data(&self.library, &a.qid) else { continue };
+                    symbols.push(SvgSymbol { key: a.qid.clone(), name: a.def.file.clone(), data, pos: st.layout.center, size: (st.layout.radius * 1.1).max(24.0), aspect: a.aspect, pivot: [0.5, 0.6], rotation: 0.0, flip: false });
                 }
             }
         }
@@ -3045,7 +3301,7 @@ impl AppState {
             grid,
         };
         let text = crate::svg::write(&input);
-        std::fs::write(path, text).with_context(|| format!("write {}", path.display()))?;
+        platform::write_output(path, "image/svg+xml", text.into_bytes())?;
         let ms = t.elapsed().as_secs_f32() * 1000.0;
         self.cpu.sections.insert("svg export", ms);
         self.ui.status = format!("Exported {} ({} coast lines, {} labels, {} symbols) in {:.1} s", path.display(), coast.len(), labels.len(), symbols.len(), ms / 1000.0);
@@ -3070,8 +3326,27 @@ impl AppState {
         if transparent {
             flags |= FLAG_TRANSPARENT;
         }
-        let result: Result<bool> = (|| {
-            for (x, w) in job.tiles() {
+        // A tile whose readback was requested last frame may have landed.
+        if job.has_pending_tile() {
+            let _ = self.gpu.device.poll(wgpu::PollType::Poll);
+            match job.try_collect_tile() {
+                Ok(true) => {}
+                Ok(false) => {
+                    self.export = Some(job);
+                    self.window.request_redraw();
+                    return;
+                }
+                Err(e) => {
+                    self.ui.error = Some(format!("Export failed: {e:#}"));
+                    self.instances_dirty = true;
+                    self.window.request_redraw();
+                    return;
+                }
+            }
+        }
+        // (done, waiting on the GPU)
+        let result: Result<(bool, bool)> = (|| {
+            while let Some((x, w)) = job.next_tile() {
                 let origin = job.tile_origin(x);
                 let ss = Vec2::new(w as f32, rows as f32);
                 let mut enc = self.gpu.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("export tile") });
@@ -3119,12 +3394,22 @@ impl AppState {
                     job.renderer.render(&mut pass, &jobs, &screen);
                 }
                 self.gpu.queue.submit([enc.finish()]);
-                job.read_tile(&self.gpu.device, &self.gpu.queue, x, w, transparent)?;
+                job.request_tile(&self.gpu.device, &self.gpu.queue, x, w, transparent);
+                // The desktop can wait for the copy; the browser gets it next frame.
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    let _ = self.gpu.device.poll(wgpu::PollType::wait_indefinitely());
+                    if !job.try_collect_tile()? {
+                        bail!("export readback did not complete");
+                    }
+                }
+                #[cfg(target_arch = "wasm32")]
+                return Ok((false, true));
             }
-            job.finish_band()
+            job.finish_band().map(|done| (done, false))
         })();
         match result {
-            Ok(true) => {
+            Ok((true, _)) => {
                 let ms = job.started.elapsed().as_secs_f32() * 1000.0;
                 let paths = job.written_paths();
                 self.cpu.sections.insert("export", ms);
@@ -3132,16 +3417,33 @@ impl AppState {
                 log::info!("{}", self.ui.status);
                 self.instances_dirty = true;
                 let svg_after = job.svg_after.take();
+                let outputs = std::mem::take(&mut job.outputs);
+                let jpeg = job.settings.jpeg;
                 self.export = None;
                 if let Some(svg_path) = svg_after {
-                    let png = std::fs::read(&paths[0]).ok();
-                    let _ = std::fs::remove_file(&paths[0]);
+                    #[cfg(not(target_arch = "wasm32"))]
+                    let png = {
+                        let png = std::fs::read(&paths[0]).ok();
+                        let _ = std::fs::remove_file(&paths[0]);
+                        png
+                    };
+                    #[cfg(target_arch = "wasm32")]
+                    let png = outputs.into_iter().next().map(|(_, b)| b);
                     if let Err(e) = self.write_svg(&svg_path, png) {
                         self.ui.error = Some(format!("SVG export failed: {e:#}"));
                     }
+                } else {
+                    // Layers assembled in memory (the browser) are handed over now.
+                    for (name, bytes) in outputs {
+                        platform::deliver_file(&name, if jpeg { "image/jpeg" } else { "image/png" }, bytes);
+                    }
                 }
             }
-            Ok(false) => {
+            Ok((false, true)) => {
+                // A tile is waiting on the GPU; check again next frame.
+                self.export = Some(job);
+            }
+            Ok((false, false)) => {
                 self.ui.status = format!("Exporting… {:.0}%", job.progress() * 100.0);
                 self.export = Some(job);
             }
@@ -3274,6 +3576,18 @@ impl AppState {
         self.cpu.tick();
         self.profiler.poll();
         self.profiler.begin_frame();
+        let dropped = platform::take_dropped_files();
+        if !dropped.is_empty() {
+            self.handle_files(Purpose::Dropped, dropped);
+        }
+        for cmd in platform::take_commands() {
+            let (name, arg) = cmd.split_once(':').unwrap_or((cmd.as_str(), ""));
+            match name {
+                "export" => self.start_export(ExportSettings { scale: arg.parse().unwrap_or(1.0), ..Default::default() }, PathBuf::from("map.png")),
+                "fit" => self.fit_view(),
+                other => log::warn!("unknown page command {other:?}"),
+            }
+        }
         self.poll_jobs();
         if self.library.poll() {
             self.reload_library();
@@ -3319,7 +3633,6 @@ impl AppState {
                 } else if self.demo_stage == 2 && self.save_job.is_none() && self.doc.path.is_some() {
                     self.demo_stage = 3;
                     // Import a PNG with a white background to exercise trim, chroma key and hot reload.
-                    let png_path = std::env::temp_dir().join("isoline-demo-import.png");
                     let mut bm = isoline_core::assets::Bitmap::new(96, 96);
                     for y in 0..96u32 {
                         for x in 0..96u32 {
@@ -3333,12 +3646,14 @@ impl AppState {
                             bm.set(x, y, if stone || centre { [42, 31, 20, 255] } else { [255, 255, 255, 255] });
                         }
                     }
-                    let f = std::fs::File::create(&png_path).unwrap();
-                    let mut enc = png::Encoder::new(std::io::BufWriter::new(f), 96, 96);
-                    enc.set_color(png::ColorType::Rgba);
-                    enc.set_depth(png::BitDepth::Eight);
-                    enc.write_header().unwrap().write_image_data(&bm.rgba).unwrap();
-                    self.import_files(vec![png_path]);
+                    let mut png_bytes = Vec::new();
+                    {
+                        let mut enc = png::Encoder::new(&mut png_bytes, 96, 96);
+                        enc.set_color(png::ColorType::Rgba);
+                        enc.set_depth(png::BitDepth::Eight);
+                        enc.write_header().unwrap().write_image_data(&bm.rgba).unwrap();
+                    }
+                    self.import_files(vec![PickedFile { name: "isoline-demo-import.png".into(), bytes: png_bytes, path: None }]);
                 } else if self.demo_stage == 4 && self.symbol_job.is_none() && !self.doc.symbols_stale {
                     self.demo_stage = 5;
                     self.name_everything();
@@ -3386,8 +3701,8 @@ impl AppState {
                     self.selected_settlement = None;
                     self.instances_dirty = true;
                     self.tools.tool = Tool::Name;
-                    let dir = std::env::temp_dir().join("isoline-demo.isoline");
-                    self.save_to(dir);
+                    #[cfg(not(target_arch = "wasm32"))]
+                    self.save_to(std::env::temp_dir().join("isoline-demo.isoline"));
                 } else if self.demo_stage == 3 && (self.library.get("project/isoline_demo_import").is_some() || self.frames_since_install > 400) {
                     self.demo_stage = 4;
                     let w = self.doc.width() as f32;
@@ -3639,6 +3954,7 @@ impl AppState {
             keys.sort();
             let parts: Vec<String> = keys.iter().map(|k| format!("{k} {:.1}", self.cpu.sections[k])).collect();
             log::info!("perf: frame avg {:.1} ms; {}", self.cpu.avg_frame_ms(), parts.join(", "));
+            #[cfg(not(target_arch = "wasm32"))]
             if self.surface_copyable {
                 if let Err(e) = self.save_screenshot(&frame.texture, &path) {
                     log::error!("screenshot failed: {e:#}");
@@ -3646,9 +3962,18 @@ impl AppState {
             } else {
                 log::error!("surface does not support COPY_SRC; cannot take screenshot");
             }
+            #[cfg(target_arch = "wasm32")]
+            let _ = path;
         }
         frame.present();
+        if platform::IS_WEB {
+            if self.frames_since_install == 1 || self.frames_since_install == u32::MAX {
+                platform::set_canvas_flag("data-ready", "1");
+            }
+            platform::set_canvas_flag("data-modified", if self.doc.modified { "1" } else { "0" });
+        }
         if take_shot {
+            #[cfg(not(target_arch = "wasm32"))]
             project::discard_autosave(None);
             event_loop.exit();
             return;

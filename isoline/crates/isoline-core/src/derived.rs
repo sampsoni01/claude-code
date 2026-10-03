@@ -11,7 +11,7 @@ use crate::field::ScalarField;
 use crate::water::{self, WaterOutput, WaterParams, WaterTimings};
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
-use std::time::Instant;
+use web_time::Instant;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Default)]
 pub struct DerivedParams {

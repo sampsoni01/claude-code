@@ -13,13 +13,19 @@ glam.workspace = true
 rayon.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-memmap2.workspace = true
 log.workspace = true
 thiserror.workspace = true
 parking_lot.workspace = true
 uuid.workspace = true
 image.workspace = true
 resvg.workspace = true
-walkdir.workspace = true
 include_dir.workspace = true
+web-time.workspace = true
+zip.workspace = true
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+walkdir.workspace = true
 dirs.workspace = true
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+uuid = { workspace = true, features = ["js"] }

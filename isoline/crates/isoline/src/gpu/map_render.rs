@@ -186,9 +186,7 @@ impl MapRenderer {
             multiview_mask: None,
             cache: None,
         });
-        if let Some(e) = pollster::block_on(error_scope.pop()) {
-            panic!("map pipeline failed validation: {e}");
-        }
+        crate::gpu::Gpu::check_scope(error_scope, "map pipeline");
         let uniform = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("map view"),
             size: std::mem::size_of::<ViewUniform>() as u64,

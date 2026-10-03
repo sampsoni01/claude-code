@@ -3,7 +3,9 @@
 //! Entries beyond a RAM budget are spilled to files in a session-private
 //! directory and reloaded on demand, so history depth is bounded by disk.
 
-use crate::field::{ScalarField, TILE_TEXELS};
+use crate::field::ScalarField;
+#[cfg(not(target_arch = "wasm32"))]
+use crate::field::TILE_TEXELS;
 use crate::hydrology::River;
 use crate::borders::{Border, Region};
 use crate::entity::Entity;
@@ -11,8 +13,11 @@ use crate::placement::Placement;
 use crate::settlement::Settlement;
 use crate::water::LakePolygon;
 use std::collections::VecDeque;
+#[cfg(not(target_arch = "wasm32"))]
 use std::fs;
-use std::io::{self, Read, Write};
+use std::io;
+#[cfg(not(target_arch = "wasm32"))]
+use std::io::{Read, Write};
 use std::path::PathBuf;
 
 #[derive(Clone, Debug)]
@@ -101,6 +106,7 @@ impl UndoOp {
 #[derive(Debug)]
 enum Payload {
     Loaded(UndoOp),
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     Spilled { path: PathBuf, field: String, bytes: usize },
 }
 
@@ -125,7 +131,9 @@ pub struct UndoStack {
     cursor: usize,
     ram_budget: usize,
     loaded_bytes: usize,
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     spill_dir: PathBuf,
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     seq: u64,
     max_entries: usize,
 }
@@ -133,7 +141,10 @@ pub struct UndoStack {
 impl UndoStack {
     /// `ram_budget` is the number of bytes of loaded history to keep in memory.
     pub fn new(ram_budget: usize) -> Self {
+        #[cfg(not(target_arch = "wasm32"))]
         let spill_dir = std::env::temp_dir().join(format!("isoline-undo-{}", std::process::id()));
+        #[cfg(target_arch = "wasm32")]
+        let spill_dir = PathBuf::new();
         Self {
             entries: VecDeque::new(),
             cursor: 0,
@@ -226,7 +237,10 @@ impl UndoStack {
         match e.payload {
             Payload::Loaded(op) => self.loaded_bytes -= op.bytes(),
             Payload::Spilled { path, .. } => {
+                #[cfg(not(target_arch = "wasm32"))]
                 let _ = fs::remove_file(path);
+                #[cfg(target_arch = "wasm32")]
+                let _ = path;
             }
         }
     }
@@ -237,6 +251,17 @@ impl UndoStack {
         if self.loaded_bytes <= self.ram_budget {
             return;
         }
+        // Without a disk to spill to, the oldest history is dropped instead.
+        #[cfg(target_arch = "wasm32")]
+        {
+            while self.loaded_bytes > self.ram_budget && self.cursor > 2 && !self.entries.is_empty() {
+                let e = self.entries.pop_front().unwrap();
+                self.cursor -= 1;
+                self.discard(e);
+            }
+            return;
+        }
+        #[allow(unreachable_code)]
         let keep_from = self.cursor.saturating_sub(2);
         for i in 0..keep_from {
             if self.loaded_bytes <= self.ram_budget {
@@ -251,6 +276,12 @@ impl UndoStack {
         }
     }
 
+    #[cfg(target_arch = "wasm32")]
+    fn spill(&mut self, _i: usize) -> io::Result<()> {
+        Err(io::Error::other("no disk"))
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
     fn spill(&mut self, i: usize) -> io::Result<()> {
         fs::create_dir_all(&self.spill_dir)?;
         self.seq += 1;
@@ -272,6 +303,10 @@ impl UndoStack {
         Ok(())
     }
 
+    #[cfg(target_arch = "wasm32")]
+    fn ensure_loaded(&mut self, _i: usize) {}
+
+    #[cfg(not(target_arch = "wasm32"))]
     fn ensure_loaded(&mut self, i: usize) {
         let Payload::Spilled { path, field, bytes } = &self.entries[i].payload else { return };
         let (path, field, bytes) = (path.clone(), field.clone(), *bytes);
@@ -292,6 +327,7 @@ impl UndoStack {
         }
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     fn read_spilled(path: &PathBuf) -> io::Result<Vec<TileDelta>> {
         let mut f = io::BufReader::new(fs::File::open(path)?);
         let mut n = [0u8; 4];
@@ -313,7 +349,10 @@ impl UndoStack {
 
 impl Drop for UndoStack {
     fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.spill_dir);
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let _ = fs::remove_dir_all(&self.spill_dir);
+        }
     }
 }
 

@@ -287,6 +287,7 @@ fn forest_marks(fp: vec2<f32>, ti: vec2<i32>) -> vec2<f32> {
     return vec2<f32>(cover, outline);
 }
 
+@diagnostic(off, derivative_uniformity)
 fn isoline(v: f32, width: f32) -> f32 {
     let aa = max(fwidth(v), 1e-4);
     return 1.0 - smoothstep(0.0, aa * width, abs(v));
@@ -294,6 +295,9 @@ fn isoline(v: f32, width: f32) -> f32 {
 
 // ---- fragment -------------------------------------------------------------
 
+// Derivatives (fwidth) follow an early return for the desk outside the
+// sheet; the browser's compiler would otherwise refuse the shader.
+@diagnostic(off, derivative_uniformity)
 @fragment
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     let sp = in.pos.xy;

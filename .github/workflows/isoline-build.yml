@@ -56,6 +56,47 @@ jobs:
           name: ${{ matrix.archive }}
           path: ${{ matrix.archive }}
 
+  web:
+    name: Browser build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: isoline
+          key: wasm
+      - name: Install wasm-bindgen (the version Cargo.lock pins)
+        run: |
+          V=$(grep -A1 'name = "wasm-bindgen"' isoline/Cargo.lock | grep version | head -1 | sed 's/.*"\(.*\)"/\1/')
+          echo "wasm-bindgen $V"
+          curl -sSL -o wb.tar.gz "https://github.com/rustwasm/wasm-bindgen/releases/download/$V/wasm-bindgen-$V-x86_64-unknown-linux-musl.tar.gz"
+          tar xzf wb.tar.gz
+          echo "WASM_BINDGEN=$PWD/wasm-bindgen-$V-x86_64-unknown-linux-musl/wasm-bindgen" >> "$GITHUB_ENV"
+      - name: Install wasm-opt
+        run: |
+          curl -sSL -o binaryen.tar.gz https://github.com/WebAssembly/binaryen/releases/download/version_123/binaryen-version_123-x86_64-linux.tar.gz
+          tar xzf binaryen.tar.gz
+          echo "$PWD/binaryen-version_123/bin" >> "$GITHUB_PATH"
+      - name: Build
+        run: isoline/web/build.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: isoline-web
+          path: isoline/web/dist
+      - name: Publish to GitHub Pages (gh-pages branch)
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: isoline/web/dist
+          publish_branch: gh-pages
+          force_orphan: true
+          commit_message: "Isoline web build from ${{ github.sha }}"
+
   release:
     name: Publish downloads
     needs: build
@@ -73,7 +114,9 @@ jobs:
           cat > notes.md <<'NOTES'
           Desktop builds of the Isoline fantasy map maker.
 
-          Download the zip for your system, unzip it, and run the `isoline` program inside. Keep the `assets` folder next to it.
+          The browser version runs at https://sampsoni01.github.io/claude-code/ (Chrome, Edge, Firefox or Safari with WebGPU). Nothing to install.
+
+          Desktop: download the zip for your system, unzip it, and run the `isoline` program inside.
 
           If it crashes or refuses to start, it shows the reason in a dialog and writes `isoline-crash.log` and `isoline.log` next to the program (or in `%LOCALAPPDATA%\isoline` when that folder is read-only). Send those files when reporting a problem.
 

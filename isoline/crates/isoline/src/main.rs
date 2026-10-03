@@ -1,23 +1,14 @@
-//! Isoline — a field-based fantasy map maker.
+//! Isoline — a field-based fantasy map maker (desktop entry point).
 
-mod app;
-mod autoname;
-mod bench;
-mod camera;
-mod diagnostics;
-mod document;
-mod export;
-mod svg;
-mod themes;
-mod gpu;
-mod jobs;
-mod labels;
-mod library;
-mod tools;
-mod ui;
-
+#[cfg(not(target_arch = "wasm32"))]
+use isoline::{app, bench, diagnostics};
+#[cfg(not(target_arch = "wasm32"))]
 use std::path::PathBuf;
 
+#[cfg(target_arch = "wasm32")]
+fn main() {}
+
+#[cfg(not(target_arch = "wasm32"))]
 fn usage() {
     eprintln!("isoline [--open <project-dir>] [--size N] [--bench [N]]");
     eprintln!("  --open   open a project directory on launch");
@@ -29,6 +20,7 @@ fn usage() {
     eprintln!("  --export <file.png|jpg> [--export-scale N]  export the sheet at N px per texel once ready, then exit");
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn main() {
     diagnostics::install();
 

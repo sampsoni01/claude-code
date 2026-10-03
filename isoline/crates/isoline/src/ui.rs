@@ -44,6 +44,8 @@ pub struct RecoveryPrompt {
     pub autosave_dir: PathBuf,
     pub manifest: Manifest,
     pub project_dir: Option<PathBuf>,
+    /// The autosave itself when it lives in browser storage.
+    pub archive: Option<std::sync::Arc<Vec<u8>>>,
 }
 
 /// A selected vertex in baked water geometry.
@@ -826,16 +828,17 @@ pub fn draw(root: &mut egui::Ui, st: &mut UiState, c: UiContext) -> Vec<UiAction
                     st.show_new = true;
                     ui.close();
                 }
-                if ui.button("Open…           Ctrl+O").clicked() {
+                let web = crate::platform::IS_WEB;
+                if ui.button(if web { "Open .isoline.zip…  Ctrl+O" } else { "Open…           Ctrl+O" }).clicked() {
                     actions.push(UiAction::Open);
                     ui.close();
                 }
                 ui.separator();
-                if ui.button("Save             Ctrl+S").clicked() {
+                if ui.button(if web { "Save (download)  Ctrl+S" } else { "Save             Ctrl+S" }).clicked() {
                     actions.push(UiAction::Save);
                     ui.close();
                 }
-                if ui.button("Save As…").clicked() {
+                if !web && ui.button("Save As…").clicked() {
                     actions.push(UiAction::SaveAs);
                     ui.close();
                 }
@@ -865,10 +868,12 @@ pub fn draw(root: &mut egui::Ui, st: &mut UiState, c: UiContext) -> Vec<UiAction
                     actions.push(UiAction::ExportGazetteer { json: true });
                     ui.close();
                 }
-                ui.separator();
-                if ui.button("Quit").clicked() {
-                    actions.push(UiAction::Quit);
-                    ui.close();
+                if !crate::platform::IS_WEB {
+                    ui.separator();
+                    if ui.button("Quit").clicked() {
+                        actions.push(UiAction::Quit);
+                        ui.close();
+                    }
                 }
             });
             ui.menu_button("Edit", |ui| {
@@ -1496,7 +1501,7 @@ pub fn draw(root: &mut egui::Ui, st: &mut UiState, c: UiContext) -> Vec<UiAction
                     if ui.button("Import image…").on_hover_text("PNG, JPG, WebP or SVG. Also: drop files onto the map.").clicked() {
                         actions.push(UiAction::ImportImages);
                     }
-                    if ui.button("Add pack folder…").clicked() {
+                    if !crate::platform::IS_WEB && ui.button("Add pack folder…").clicked() {
                         actions.push(UiAction::AddPackDir);
                     }
                     ui.toggle_value(&mut st.show_packs, "Packs");
@@ -1976,7 +1981,11 @@ pub fn draw(root: &mut egui::Ui, st: &mut UiState, c: UiContext) -> Vec<UiAction
 
     if let Some(rp) = st.recovery.clone() {
         egui::Window::new("Recover unsaved work?").collapsible(false).resizable(false).show(ctx, |ui| {
-            ui.label(format!("An autosave of \"{}\" from {} is newer than the last save.", rp.manifest.name, rp.manifest.saved_at));
+            if rp.archive.is_some() {
+                ui.label(format!("An autosave of \"{}\" from {} is in this browser's storage.", rp.manifest.name, rp.manifest.saved_at));
+            } else {
+                ui.label(format!("An autosave of \"{}\" from {} is newer than the last save.", rp.manifest.name, rp.manifest.saved_at));
+            }
             ui.horizontal(|ui| {
                 if ui.button("Recover").clicked() {
                     actions.push(UiAction::Recover(rp.clone()));

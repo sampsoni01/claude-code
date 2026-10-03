@@ -23,10 +23,12 @@ use crate::theme::Theme;
 use crate::water::LakePolygon;
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
+#[cfg(not(target_arch = "wasm32"))]
 use std::fs;
-use std::io::Write;
+use std::io::{Read, Write};
+#[cfg(not(target_arch = "wasm32"))]
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use web_time::{SystemTime, UNIX_EPOCH};
 
 pub const FORMAT: &str = "isoline-project";
 pub const VERSION: u32 = 1;
@@ -189,6 +191,9 @@ pub struct ProjectData {
     /// Derived vector geometry, written for other tools to read; the app
     /// recomputes it from the fields on load.
     pub geometry: Geometry,
+    /// Project asset files (path relative to the project's `assets` folder,
+    /// bytes). Filled by archives; on disk the folder itself holds them.
+    pub assets: Vec<(String, Vec<u8>)>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -238,6 +243,7 @@ pub fn iso_utc(secs: u64) -> String {
     format!("{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}Z", rem / 3600, (rem % 3600) / 60, rem % 60)
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
     let tmp = path.with_extension("tmp");
     {
@@ -252,36 +258,36 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
 /// Write a project to `dir` (created if missing). Field blobs are written
 /// first, then the manifest, each via rename so a crash never leaves a
 /// half-written manifest pointing at a half-written blob.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn save(dir: &Path, data: &ProjectData) -> Result<()> {
     fs::create_dir_all(dir.join("fields")).with_context(|| format!("create {}", dir.display()))?;
-    let mut manifest = data.manifest.clone();
-    manifest.format = FORMAT.into();
-    manifest.version = VERSION;
-    manifest.fields.clear();
-    for (name, field) in &data.fields {
-        let rel = format!("fields/{name}.f32");
-        write_atomic(&dir.join(&rel), bytemuck::cast_slice(field.data()))?;
-        manifest.fields.push(FieldEntry {
-            name: name.clone(),
-            file: rel,
-            dtype: "f32".into(),
-            width: field.width(),
-            height: field.height(),
-        });
+    let manifest = manifest_for_save(data);
+    for (entry, (_, field)) in manifest.fields.iter().zip(&data.fields) {
+        write_atomic(&dir.join(&entry.file), bytemuck::cast_slice(field.data()))?;
     }
     let geom = serde_json::to_vec(&data.geometry)?;
     write_atomic(&dir.join("geometry.json"), &geom)?;
-    manifest.saved_at_unix = now_unix();
-    manifest.saved_at = iso_utc(manifest.saved_at_unix);
+    for (rel, bytes) in &data.assets {
+        let p = dir.join("assets").join(rel);
+        if let Some(parent) = p.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        write_atomic(&p, bytes)?;
+    }
     let json = serde_json::to_vec_pretty(&manifest)?;
     write_atomic(&dir.join("manifest.json"), &json)?;
     Ok(())
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 pub fn read_manifest(dir: &Path) -> Result<Manifest> {
     let path = dir.join("manifest.json");
     let text = fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))?;
-    let m: Manifest = serde_json::from_str(&text).context("parse manifest.json")?;
+    parse_manifest(&text)
+}
+
+fn parse_manifest(text: &str) -> Result<Manifest> {
+    let m: Manifest = serde_json::from_str(text).context("parse manifest.json")?;
     if m.format != FORMAT {
         bail!("not an Isoline project (format = {:?})", m.format);
     }
@@ -291,57 +297,140 @@ pub fn read_manifest(dir: &Path) -> Result<Manifest> {
     Ok(m)
 }
 
-/// Load a project directory. Field blobs are memory-mapped and copied into
-/// owned memory in parallel chunks.
+/// Field bytes (little-endian f32) to a field, checking the size.
+fn field_from_bytes(entry: &FieldEntry, bytes: &[u8]) -> Result<ScalarField> {
+    if entry.dtype != "f32" {
+        bail!("unsupported field dtype {:?}", entry.dtype);
+    }
+    let expected = entry.width as usize * entry.height as usize * 4;
+    if bytes.len() != expected {
+        bail!("{} is {} bytes, expected {expected} for {}x{}", entry.file, bytes.len(), entry.width, entry.height);
+    }
+    let mut data = vec![0f32; entry.width as usize * entry.height as usize];
+    {
+        use rayon::prelude::*;
+        let chunk = 1 << 18; // texels
+        data.par_chunks_mut(chunk).enumerate().for_each(|(i, dst)| {
+            let off = i * chunk * 4;
+            let src = &bytes[off..off + dst.len() * 4];
+            for (d, s) in dst.iter_mut().zip(src.chunks_exact(4)) {
+                *d = f32::from_le_bytes([s[0], s[1], s[2], s[3]]);
+            }
+        });
+    }
+    Ok(ScalarField::from_vec(entry.width, entry.height, data))
+}
+
+fn manifest_for_save(data: &ProjectData) -> Manifest {
+    let mut manifest = data.manifest.clone();
+    manifest.format = FORMAT.into();
+    manifest.version = VERSION;
+    manifest.fields = data
+        .fields
+        .iter()
+        .map(|(name, field)| FieldEntry { name: name.clone(), file: format!("fields/{name}.f32"), dtype: "f32".into(), width: field.width(), height: field.height() })
+        .collect();
+    manifest.saved_at_unix = now_unix();
+    manifest.saved_at = iso_utc(manifest.saved_at_unix);
+    manifest
+}
+
+// ---- single-file archive ---------------------------------------------------
+
+/// Extension of the single-file form of a project (a zip of the folder layout).
+pub const ARCHIVE_EXTENSION: &str = "isoline.zip";
+
+/// Pack a project into one zip file with the same layout as a project
+/// folder. `compress` trades time for size: stored entries are fast, which
+/// autosaves want; deflated ones are small, which downloads want.
+pub fn pack_archive(data: &ProjectData, compress: bool) -> Result<Vec<u8>> {
+    use zip::write::SimpleFileOptions;
+    let manifest = manifest_for_save(data);
+    let method = if compress { zip::CompressionMethod::Deflated } else { zip::CompressionMethod::Stored };
+    let opts = SimpleFileOptions::default().compression_method(method).compression_level(if compress { Some(1) } else { None }).large_file(true);
+    let mut zw = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    zw.start_file("manifest.json", opts)?;
+    zw.write_all(&serde_json::to_vec_pretty(&manifest)?)?;
+    zw.start_file("geometry.json", opts)?;
+    zw.write_all(&serde_json::to_vec(&data.geometry)?)?;
+    for (entry, (_, field)) in manifest.fields.iter().zip(&data.fields) {
+        zw.start_file(&entry.file, opts)?;
+        zw.write_all(bytemuck::cast_slice(field.data()))?;
+    }
+    for (rel, bytes) in &data.assets {
+        zw.start_file(format!("assets/{}", rel.replace('\\', "/")), opts)?;
+        zw.write_all(bytes)?;
+    }
+    Ok(zw.finish()?.into_inner())
+}
+
+/// Read a project archive written by `pack_archive` (or a zipped folder).
+pub fn unpack_archive(bytes: &[u8]) -> Result<ProjectData> {
+    let mut za = zip::ZipArchive::new(std::io::Cursor::new(bytes)).context("not a zip file")?;
+    // Allow a zipped folder: everything may sit under one top-level directory.
+    let prefix = {
+        let names: Vec<String> = za.file_names().map(|n| n.to_string()).collect();
+        if names.iter().any(|n| n == "manifest.json") {
+            String::new()
+        } else {
+            names.iter().find(|n| n.ends_with("/manifest.json")).map(|n| n[..n.len() - "manifest.json".len()].to_string()).context("no manifest.json in the archive")?
+        }
+    };
+    let read = |za: &mut zip::ZipArchive<std::io::Cursor<&[u8]>>, name: &str| -> Result<Vec<u8>> {
+        let mut f = za.by_name(&format!("{prefix}{name}")).with_context(|| format!("{name} missing from the archive"))?;
+        let mut v = Vec::with_capacity(f.size() as usize);
+        f.read_to_end(&mut v)?;
+        Ok(v)
+    };
+    let manifest = parse_manifest(&String::from_utf8_lossy(&read(&mut za, "manifest.json")?))?;
+    let mut fields = Vec::new();
+    for entry in &manifest.fields {
+        let bytes = read(&mut za, &entry.file.replace('\\', "/"))?;
+        fields.push((entry.name.clone(), field_from_bytes(entry, &bytes)?));
+    }
+    let geometry = read(&mut za, "geometry.json").ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default();
+    let mut assets = Vec::new();
+    let asset_names: Vec<String> = za.file_names().filter(|n| n.starts_with(&format!("{prefix}assets/")) && !n.ends_with('/')).map(|n| n.to_string()).collect();
+    for name in asset_names {
+        let rel = name[prefix.len() + "assets/".len()..].to_string();
+        let bytes = read(&mut za, &name[prefix.len()..])?;
+        assets.push((rel, bytes));
+    }
+    Ok(ProjectData { manifest, fields, geometry, assets })
+}
+
+/// Load a project directory. Field blobs are read whole and converted in
+/// parallel chunks. Project assets stay on disk (the folder is the pack).
+#[cfg(not(target_arch = "wasm32"))]
 pub fn load(dir: &Path) -> Result<ProjectData> {
     let manifest = read_manifest(dir)?;
     let mut fields = Vec::new();
     for entry in &manifest.fields {
-        if entry.dtype != "f32" {
-            bail!("unsupported field dtype {:?}", entry.dtype);
-        }
         let path = dir.join(&entry.file);
-        let file = fs::File::open(&path).with_context(|| format!("open {}", path.display()))?;
-        let expected = entry.width as usize * entry.height as usize * 4;
-        let len = file.metadata()?.len() as usize;
-        if len != expected {
-            bail!("{} is {len} bytes, expected {expected} for {}x{}", entry.file, entry.width, entry.height);
-        }
-        // SAFETY: the file is only read, and we copy out immediately; a
-        // concurrent truncation would at worst fault this process.
-        let mmap = unsafe { memmap2::Mmap::map(&file) }.with_context(|| format!("mmap {}", path.display()))?;
-        let mut data = vec![0f32; entry.width as usize * entry.height as usize];
-        {
-            use rayon::prelude::*;
-            let chunk = 1 << 18; // texels
-            data.par_chunks_mut(chunk).enumerate().for_each(|(i, dst)| {
-                let off = i * chunk * 4;
-                let src = &mmap[off..off + dst.len() * 4];
-                for (d, s) in dst.iter_mut().zip(src.chunks_exact(4)) {
-                    *d = f32::from_le_bytes([s[0], s[1], s[2], s[3]]);
-                }
-            });
-        }
-        fields.push((entry.name.clone(), ScalarField::from_vec(entry.width, entry.height, data)));
+        let bytes = fs::read(&path).with_context(|| format!("read {}", path.display()))?;
+        fields.push((entry.name.clone(), field_from_bytes(entry, &bytes)?));
     }
     let geometry = fs::read_to_string(dir.join("geometry.json"))
         .ok()
         .and_then(|t| serde_json::from_str(&t).ok())
         .unwrap_or_default();
-    Ok(ProjectData { manifest, fields, geometry })
+    Ok(ProjectData { manifest, fields, geometry, assets: Vec::new() })
 }
 
 // ---- autosave / recovery -------------------------------------------------
 
+#[cfg(not(target_arch = "wasm32"))]
 pub fn autosave_dir(project_dir: &Path) -> PathBuf {
     project_dir.join("autosave")
 }
 
 /// Where autosaves of never-saved projects go.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn untitled_autosave_dir() -> PathBuf {
     std::env::temp_dir().join("isoline").join("untitled-autosave")
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 pub fn autosave(project_dir: Option<&Path>, data: &ProjectData) -> Result<PathBuf> {
     let dir = match project_dir {
         Some(p) => autosave_dir(p),
@@ -352,6 +441,7 @@ pub fn autosave(project_dir: Option<&Path>, data: &ProjectData) -> Result<PathBu
 }
 
 /// If an autosave exists that is newer than the saved manifest, return it.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn pending_recovery(project_dir: &Path) -> Option<(PathBuf, Manifest)> {
     let dir = autosave_dir(project_dir);
     let auto = read_manifest(&dir).ok()?;
@@ -363,12 +453,14 @@ pub fn pending_recovery(project_dir: &Path) -> Option<(PathBuf, Manifest)> {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 pub fn pending_untitled_recovery() -> Option<(PathBuf, Manifest)> {
     let dir = untitled_autosave_dir();
     let m = read_manifest(&dir).ok()?;
     Some((dir, m))
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 pub fn discard_autosave(project_dir: Option<&Path>) {
     let dir = match project_dir {
         Some(p) => autosave_dir(p),
@@ -388,6 +480,24 @@ mod tests {
     }
 
     #[test]
+    fn archive_round_trip() {
+        let mut f = ScalarField::new(70, 40, 0.0);
+        f.par_map_inplace(|x, y, _| x as f32 - y as f32 * 0.25);
+        let mut m = Manifest::new("arc", 70, 40);
+        m.sea_level = 3.0;
+        let data = ProjectData { manifest: m, fields: vec![("elevation".into(), f.clone())], geometry: Geometry::default(), assets: vec![("imported/a.png".into(), vec![9, 8, 7])] };
+        for compress in [false, true] {
+            let bytes = pack_archive(&data, compress).unwrap();
+            let back = unpack_archive(&bytes).unwrap();
+            assert_eq!(back.manifest.sea_level, 3.0);
+            assert_eq!(back.fields[0].1.data(), f.data());
+            assert_eq!(back.assets, vec![("imported/a.png".to_string(), vec![9, 8, 7])]);
+        }
+        assert!(unpack_archive(b"not a zip").is_err());
+    }
+
+    #[test]
+    #[cfg(not(target_arch = "wasm32"))]
     fn save_load_round_trip() {
         let dir = std::env::temp_dir().join(format!("isoline-test-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
@@ -395,8 +505,9 @@ mod tests {
         f.par_map_inplace(|x, y, _| x as f32 * 0.5 - y as f32);
         let mut m = Manifest::new("t", 130, 70);
         m.sea_level = 12.5;
-        let data = ProjectData { manifest: m, fields: vec![("elevation".into(), f.clone())], geometry: Geometry::default() };
+        let data = ProjectData { manifest: m, fields: vec![("elevation".into(), f.clone())], geometry: Geometry::default(), assets: vec![("imported/x.bin".into(), vec![1, 2, 3])] };
         save(&dir, &data).unwrap();
+        assert_eq!(fs::read(dir.join("assets/imported/x.bin")).unwrap(), vec![1, 2, 3]);
         let back = load(&dir).unwrap();
         assert_eq!(back.manifest.sea_level, 12.5);
         assert_eq!(back.manifest.fields.len(), 1);

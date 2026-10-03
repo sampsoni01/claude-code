@@ -107,9 +107,7 @@ impl BrushPass {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        if let Some(e) = pollster::block_on(error_scope.pop()) {
-            panic!("brush pipeline failed validation: {e}");
-        }
+        crate::gpu::Gpu::check_scope(error_scope, "brush pipeline");
         let dab_capacity = MAX_DABS_PER_FRAME;
         let dab_buf = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("brush dabs"),

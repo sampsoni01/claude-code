@@ -2,6 +2,8 @@
 //! log with the panic message, and an error dialog so a failed launch
 //! explains itself instead of closing silently.
 
+#[cfg(not(target_arch = "wasm32"))]
+mod native {
 use std::fs::File;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -157,3 +159,94 @@ fn fatal_dialog(title: &str, body: &str, crash_path: Option<&Path>) {
     }
     rfd::MessageDialog::new().set_level(rfd::MessageLevel::Error).set_title(title).set_description(desc).set_buttons(rfd::MessageButtons::Ok).show();
 }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub use native::*;
+
+#[cfg(target_arch = "wasm32")]
+mod web {
+    //! Browser: log to the console, show a panic in the page.
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    static INSTALLED: AtomicBool = AtomicBool::new(false);
+
+    struct ConsoleLogger;
+
+    impl log::Log for ConsoleLogger {
+        fn enabled(&self, m: &log::Metadata) -> bool {
+            let t = m.target();
+            if t.starts_with("wgpu") || t.starts_with("naga") {
+                m.level() <= log::Level::Warn
+            } else {
+                m.level() <= log::Level::Info
+            }
+        }
+        fn log(&self, r: &log::Record) {
+            if !self.enabled(r.metadata()) {
+                return;
+            }
+            let line = format!("[{} {}] {}", r.level(), r.target(), r.args());
+            let v = wasm_bindgen::JsValue::from_str(&line);
+            match r.level() {
+                log::Level::Error => web_sys::console::error_1(&v),
+                log::Level::Warn => web_sys::console::warn_1(&v),
+                _ => web_sys::console::log_1(&v),
+            }
+        }
+        fn flush(&self) {}
+    }
+
+    pub fn set_dialogs(_on: bool) {}
+
+    fn show_overlay(title: &str, body: &str) {
+        let Some(doc) = web_sys::window().and_then(|w| w.document()) else { return };
+        let el = match doc.get_element_by_id("isoline-crash") {
+            Some(e) => e,
+            None => {
+                let Ok(e) = doc.create_element("pre") else { return };
+                e.set_id("isoline-crash");
+                let _ = e.set_attribute(
+                    "style",
+                    "position:fixed;left:0;top:0;right:0;max-height:60vh;overflow:auto;margin:0;padding:16px;background:#2a1414;color:#ffd9d9;font:13px/1.5 ui-monospace,monospace;white-space:pre-wrap;z-index:1000",
+                );
+                if let Some(b) = doc.body() {
+                    let _ = b.append_child(&e);
+                }
+                e
+            }
+        };
+        el.set_text_content(Some(&format!("{title}\n\n{body}\n\nReload the page to try again. Please report this message.")));
+    }
+
+    pub fn install() {
+        if INSTALLED.swap(true, Ordering::Relaxed) {
+            return;
+        }
+        let _ = log::set_logger(&ConsoleLogger);
+        log::set_max_level(log::LevelFilter::Info);
+        std::panic::set_hook(Box::new(|info| {
+            let msg = if let Some(s) = info.payload().downcast_ref::<&str>() {
+                s.to_string()
+            } else if let Some(s) = info.payload().downcast_ref::<String>() {
+                s.clone()
+            } else {
+                "unknown panic".to_string()
+            };
+            let loc = info.location().map(|l| format!("{}:{}:{}", l.file(), l.line(), l.column())).unwrap_or_else(|| "unknown location".into());
+            let text = format!("crash: {msg}\nat: {loc}");
+            web_sys::console::error_1(&wasm_bindgen::JsValue::from_str(&text));
+            show_overlay("Isoline crashed", &text);
+        }));
+        log::info!("Isoline {} (browser)", env!("CARGO_PKG_VERSION"));
+    }
+
+    pub fn fatal(context: &str, err: &str) {
+        let text = format!("{context}\n{err}");
+        web_sys::console::error_1(&wasm_bindgen::JsValue::from_str(&text));
+        show_overlay("Isoline could not start", &text);
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+pub use web::*;

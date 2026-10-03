@@ -15,7 +15,7 @@ use isoline_core::tiles::{PixelRect, TileSet};
 use isoline_core::undo::{GeometrySnapshot, RegionSnapshot, TileDelta, UndoOp, UndoStack};
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::time::Instant;
+use web_time::Instant;
 
 /// Graph node handles.
 #[derive(Clone, Copy, Debug)]
@@ -196,7 +196,7 @@ impl Document {
     }
 
     pub fn from_project(data: ProjectData, path: Option<PathBuf>) -> Result<Self> {
-        let ProjectData { manifest, fields, geometry } = data;
+        let ProjectData { manifest, fields, geometry, .. } = data;
         let mut elevation = None;
         let mut moisture = None;
         for (n, f) in fields {
@@ -255,7 +255,7 @@ impl Document {
         geometry.regions = self.regions.clone();
         geometry.borders = self.borders.clone();
         geometry.settlements = self.settlements.clone();
-        ProjectData { manifest: m, fields, geometry }
+        ProjectData { manifest: m, fields, geometry, assets: Vec::new() }
     }
 
     pub fn width(&self) -> u32 {

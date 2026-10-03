@@ -2,7 +2,7 @@
 
 use crossbeam_channel::{Receiver, Sender};
 use std::collections::{HashMap, VecDeque};
-use std::time::Instant;
+use web_time::Instant;
 
 const MAX_QUERIES: u32 = 32;
 const HISTORY: usize = 240;

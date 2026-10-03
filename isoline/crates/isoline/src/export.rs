@@ -4,10 +4,13 @@
 //! borders and towns are laid out once for the whole sheet with a headless
 //! egui context and rasterized per tile.
 
-use anyhow::{bail, Context, Result};
+use anyhow::{bail, Result};
+#[cfg(not(target_arch = "wasm32"))]
+use anyhow::Context;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::time::Instant;
+use std::sync::{Arc, Mutex};
+use web_time::Instant;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct ExportSettings {
@@ -76,9 +79,61 @@ impl Layer {
     }
 }
 
+/// Where encoded bytes go: a file on the desktop, memory in the browser.
+enum Out {
+    #[cfg(not(target_arch = "wasm32"))]
+    File(std::io::BufWriter<std::fs::File>),
+    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+    Memory(Arc<Mutex<Vec<u8>>>),
+}
+
+impl Write for Out {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        match self {
+            #[cfg(not(target_arch = "wasm32"))]
+            Out::File(f) => f.write(buf),
+            Out::Memory(m) => {
+                m.lock().unwrap().extend_from_slice(buf);
+                Ok(buf.len())
+            }
+        }
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        match self {
+            #[cfg(not(target_arch = "wasm32"))]
+            Out::File(f) => f.flush(),
+            Out::Memory(_) => Ok(()),
+        }
+    }
+}
+
+type MemOut = Arc<Mutex<Vec<u8>>>;
+
+fn open_out(path: &Path) -> Result<(Out, Option<MemOut>)> {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let file = std::fs::File::create(path).with_context(|| format!("create {}", path.display()))?;
+        Ok((Out::File(std::io::BufWriter::with_capacity(1 << 20, file)), None))
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        let _ = path;
+        let m = Arc::new(Mutex::new(Vec::new()));
+        Ok((Out::Memory(m.clone()), Some(m)))
+    }
+}
+
 enum Sink {
-    Png(Box<png::StreamWriter<'static, std::io::BufWriter<std::fs::File>>>),
-    Jpeg { path: PathBuf, rgb: Vec<u8>, quality: u8 },
+    Png(Box<png::StreamWriter<'static, Out>>),
+    Jpeg { rgb: Vec<u8>, quality: u8 },
+}
+
+/// A tile copied to the readback buffer, waiting for the map to complete.
+struct PendingTile {
+    x: u32,
+    w: u32,
+    transparent: bool,
+    rx: std::sync::mpsc::Receiver<Result<(), wgpu::BufferAsyncError>>,
 }
 
 /// The state of one export, advanced a band at a time by the app.
@@ -100,6 +155,14 @@ pub struct ExportJob {
     readback: wgpu::Buffer,
     bpr: u32,
     sink: Option<Sink>,
+    /// In-memory output of the layer being written (browser builds).
+    mem_out: Option<MemOut>,
+    /// Finished files held in memory, (file name, bytes); empty when the
+    /// layers were streamed to disk.
+    pub outputs: Vec<(String, Vec<u8>)>,
+    /// Next tile of the current band to render.
+    tile_idx: usize,
+    pending: Option<PendingTile>,
     pub shapes: Vec<egui::epaint::ClippedShape>,
     pub ctx: egui::Context,
     pub renderer: egui_wgpu::Renderer,
@@ -175,6 +238,10 @@ impl ExportJob {
             readback,
             bpr,
             sink: None,
+            mem_out: None,
+            outputs: Vec::new(),
+            tile_idx: 0,
+            pending: None,
             shapes,
             ctx,
             renderer,
@@ -207,11 +274,13 @@ impl ExportJob {
 
     fn open_layer(&mut self) -> Result<()> {
         let path = self.layer_path(self.layer());
+        self.tile_idx = 0;
         if self.settings.jpeg {
-            self.sink = Some(Sink::Jpeg { path, rgb: Vec::with_capacity((self.width * self.height * 3) as usize), quality: self.settings.quality });
+            self.sink = Some(Sink::Jpeg { rgb: Vec::with_capacity((self.width * self.height * 3) as usize), quality: self.settings.quality });
         } else {
-            let file = std::fs::File::create(&path).with_context(|| format!("create {}", path.display()))?;
-            let mut enc = png::Encoder::new(std::io::BufWriter::with_capacity(1 << 20, file), self.width, self.height);
+            let (out, mem) = open_out(&path)?;
+            self.mem_out = mem;
+            let mut enc = png::Encoder::new(out, self.width, self.height);
             enc.set_color(png::ColorType::Rgba);
             enc.set_depth(png::BitDepth::Eight);
             let ppm = (self.settings.dpi as f32 / 0.0254).round() as u32;
@@ -261,9 +330,18 @@ impl ExportJob {
             .collect()
     }
 
-    /// Copy a rendered tile out of the GPU into the band buffer.
-    pub fn read_tile(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, x: u32, w: u32, transparent: bool) -> Result<()> {
-        let rows = self.band_rows();
+    /// The next tile of the current band to render, if any.
+    pub fn next_tile(&self) -> Option<(u32, u32)> {
+        self.tiles().get(self.tile_idx).copied()
+    }
+
+    pub fn has_pending_tile(&self) -> bool {
+        self.pending.is_some()
+    }
+
+    /// Copy the rendered tile to the readback buffer and ask for it to be
+    /// mapped. `try_collect_tile` moves it into the band once the GPU is done.
+    pub fn request_tile(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, x: u32, w: u32, transparent: bool) {
         let mut enc = device.create_command_encoder(&Default::default());
         enc.copy_texture_to_buffer(
             wgpu::TexelCopyTextureInfo { texture: &self.tile_tex, mip_level: 0, origin: wgpu::Origin3d::ZERO, aspect: wgpu::TextureAspect::All },
@@ -275,11 +353,24 @@ impl ExportJob {
         self.readback.slice(..).map_async(wgpu::MapMode::Read, move |r| {
             let _ = tx.send(r);
         });
-        let _ = device.poll(wgpu::PollType::wait_indefinitely());
-        if let Err(e) = rx.recv().context("export readback").and_then(|r| r.context("export readback failed")) {
+        self.pending = Some(PendingTile { x, w, transparent, rx });
+    }
+
+    /// If the pending tile's map completed, copy it into the band and
+    /// advance. Returns false while the GPU is still working on it.
+    pub fn try_collect_tile(&mut self) -> Result<bool> {
+        let Some(p) = self.pending.as_ref() else { return Ok(true) };
+        let r = match p.rx.try_recv() {
+            Ok(r) => r,
+            Err(std::sync::mpsc::TryRecvError::Empty) => return Ok(false),
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => bail!("export readback lost"),
+        };
+        let PendingTile { x, w, transparent, .. } = self.pending.take().unwrap();
+        if let Err(e) = r {
             self.readback.unmap();
-            return Err(e);
+            bail!("export readback failed: {e}");
         }
+        let rows = self.band_rows();
         {
             let data = self.readback.slice(..).get_mapped_range();
             let stride = (self.width * 4) as usize;
@@ -306,7 +397,8 @@ impl ExportJob {
             }
         }
         self.readback.unmap();
-        Ok(())
+        self.tile_idx += 1;
+        Ok(true)
     }
 
     /// The band is complete: write it and advance. Returns true when the
@@ -324,16 +416,24 @@ impl ExportJob {
         }
         self.band_y += rows as u32;
         self.bands_done += 1;
+        self.tile_idx = 0;
         if self.band_y >= self.height {
+            let path = self.layer_path(self.layer());
             match self.sink.take().expect("open sink") {
                 Sink::Png(w) => w.finish()?,
-                Sink::Jpeg { path, rgb, quality } => {
-                    let file = std::fs::File::create(&path).with_context(|| format!("create {}", path.display()))?;
-                    let mut enc = image::codecs::jpeg::JpegEncoder::new_with_quality(std::io::BufWriter::new(file), quality);
+                Sink::Jpeg { rgb, quality } => {
+                    let (out, mem) = open_out(&path)?;
+                    self.mem_out = mem;
+                    let mut enc = image::codecs::jpeg::JpegEncoder::new_with_quality(std::io::BufWriter::new(out), quality);
                     enc.encode(&rgb, self.width, self.height, image::ExtendedColorType::Rgb8)?;
                 }
             }
-            log::info!("export: wrote {} ({}×{})", self.layer_path(self.layer()).display(), self.width, self.height);
+            if let Some(m) = self.mem_out.take() {
+                let bytes = std::mem::take(&mut *m.lock().unwrap());
+                let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "map.png".into());
+                self.outputs.push((name, bytes));
+            }
+            log::info!("export: wrote {} ({}×{})", path.display(), self.width, self.height);
             self.layer_idx += 1;
             if self.layer_idx >= self.layers.len() {
                 self.done = true;

@@ -5,6 +5,7 @@
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+#[cfg(not(target_arch = "wasm32"))]
 use std::path::Path;
 
 /// A culture pack file (`assets/cultures/*.json` or user folders).
@@ -87,11 +88,16 @@ impl Culture {
         Self { id: id.into(), pack, order, table, min_len: min_len.max(3), max_len: max_len.max(5) }
     }
 
+    pub fn from_json(id: &str, text: &str) -> Result<Culture> {
+        let pack: CulturePack = serde_json::from_str(text).with_context(|| format!("parse culture {id}"))?;
+        Ok(Culture::from_pack(id.to_string(), pack))
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn load_file(path: &Path) -> Result<Culture> {
         let text = std::fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
-        let pack: CulturePack = serde_json::from_str(&text).with_context(|| format!("parse {}", path.display()))?;
         let id = path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| "culture".into());
-        Ok(Culture::from_pack(id, pack))
+        Self::from_json(&id, &text)
     }
 
     /// A bare root name, capitalised.
@@ -189,6 +195,9 @@ pub fn capitalize(s: &str) -> String {
 }
 
 /// Where the shipped culture packs live.
+/// Extra culture folders on disk (desktop): `$ISOLINE_ASSETS/cultures`,
+/// `assets/cultures` next to the executable, the source tree in debug builds.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn builtin_culture_dirs() -> Vec<std::path::PathBuf> {
     let mut out = Vec::new();
     if let Ok(p) = std::env::var("ISOLINE_ASSETS") {
@@ -209,13 +218,11 @@ pub fn builtin_culture_dirs() -> Vec<std::path::PathBuf> {
             out.push(src);
         }
     }
-    if let Some(e) = crate::assets::embedded_assets_dir() {
-        out.push(e.join("cultures"));
-    }
     let mut seen = std::collections::HashSet::new();
     out.into_iter().filter_map(|p| p.canonicalize().ok()).filter(|p| seen.insert(p.clone())).collect()
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 pub fn load_cultures(dirs: &[std::path::PathBuf]) -> Vec<Culture> {
     let mut out: Vec<Culture> = Vec::new();
     for d in dirs {
@@ -236,13 +243,44 @@ pub fn load_cultures(dirs: &[std::path::PathBuf]) -> Vec<Culture> {
     out
 }
 
+/// The name languages built into the program.
+pub fn embedded_cultures() -> Vec<Culture> {
+    let mut out = Vec::new();
+    for (name, bytes) in crate::assets::embedded_files("cultures") {
+        if !name.ends_with(".json") || name.contains('/') {
+            continue;
+        }
+        let id = name.trim_end_matches(".json");
+        match Culture::from_json(id, &String::from_utf8_lossy(bytes)) {
+            Ok(c) => out.push(c),
+            Err(e) => log::warn!("built-in culture {id}: {e:#}"),
+        }
+    }
+    out
+}
+
+/// Every culture available: folders on disk first (desktop), then the
+/// built-in set; the first with a given id wins.
+pub fn load_all_cultures() -> Vec<Culture> {
+    #[cfg(not(target_arch = "wasm32"))]
+    let mut out: Vec<Culture> = load_cultures(&builtin_culture_dirs());
+    #[cfg(target_arch = "wasm32")]
+    let mut out: Vec<Culture> = Vec::new();
+    for c in embedded_cultures() {
+        if !out.iter().any(|o| o.id == c.id) {
+            out.push(c);
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn generates_plausible_names() {
-        let cultures = load_cultures(&builtin_culture_dirs());
+        let cultures = load_all_cultures();
         assert!(cultures.len() >= 4, "{} cultures", cultures.len());
         let c = cultures.iter().find(|c| c.id == "northern").unwrap();
         let mut rng = NameRng::new(5);

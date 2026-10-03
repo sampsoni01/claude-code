@@ -4,7 +4,7 @@
 use crossbeam_channel::{bounded, Receiver};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 use std::sync::Arc;
-use std::time::Instant;
+use web_time::Instant;
 
 static RUNNING: AtomicUsize = AtomicUsize::new(0);
 
@@ -32,6 +32,7 @@ impl<T: Send + 'static> Job<T> {
         let (p, c) = (progress.clone(), cancel.clone());
         let tname = name.clone();
         RUNNING.fetch_add(1, Ordering::Relaxed);
+        #[cfg(not(target_arch = "wasm32"))]
         std::thread::Builder::new()
             .name(format!("job:{tname}"))
             .spawn(move || {
@@ -40,6 +41,15 @@ impl<T: Send + 'static> Job<T> {
                 let _ = tx.send(out);
             })
             .expect("spawn job thread");
+        // Browsers give the page one thread: the job runs right here and
+        // its result is waiting the first time anyone asks for it.
+        #[cfg(target_arch = "wasm32")]
+        {
+            let _ = &tname;
+            let out = f(&p, &c);
+            RUNNING.fetch_sub(1, Ordering::Relaxed);
+            let _ = tx.send(out);
+        }
         Self { name, progress, cancel, started: Instant::now(), rx }
     }
 

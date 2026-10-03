@@ -7,10 +7,13 @@ use isoline_core::geometry::{Polygon, P2};
 use isoline_core::settlement::{District, Settlement};
 use isoline_core::theme::Theme;
 use std::fmt::Write;
-use std::path::PathBuf;
 
 pub struct SvgSymbol {
-    pub path: PathBuf,
+    /// Identifies the image: one `<symbol>` is written per distinct key.
+    pub key: String,
+    /// File name, for the image type.
+    pub name: String,
+    pub data: std::sync::Arc<Vec<u8>>,
     pub pos: P2,
     pub size: f32,
     pub aspect: f32,
@@ -204,25 +207,24 @@ pub fn write(input: &SvgInput<'_>) -> String {
     let _ = writeln!(s, "</g>");
     // Symbols: each distinct file once as a <symbol>, then <use>.
     let _ = writeln!(s, r##"<defs>"##);
-    let mut seen: Vec<PathBuf> = Vec::new();
+    let mut seen: Vec<&str> = Vec::new();
     for sym in input.symbols {
-        if seen.contains(&sym.path) {
+        if seen.contains(&sym.key.as_str()) {
             continue;
         }
-        seen.push(sym.path.clone());
-        let Ok(bytes) = std::fs::read(&sym.path) else { continue };
-        let mime = match sym.path.extension().and_then(|e| e.to_str()).map(|e| e.to_ascii_lowercase()).as_deref() {
+        seen.push(&sym.key);
+        let mime = match sym.name.rsplit('.').next().map(|e| e.to_ascii_lowercase()).as_deref() {
             Some("svg") => "image/svg+xml",
             Some("jpg") | Some("jpeg") => "image/jpeg",
             Some("webp") => "image/webp",
             _ => "image/png",
         };
-        let _ = writeln!(s, r##"<symbol id="sym{}" viewBox="0 0 1 1" preserveAspectRatio="none"><image width="1" height="1" preserveAspectRatio="none" xlink:href="data:{mime};base64,{}"/></symbol>"##, seen.len() - 1, base64(&bytes));
+        let _ = writeln!(s, r##"<symbol id="sym{}" viewBox="0 0 1 1" preserveAspectRatio="none"><image width="1" height="1" preserveAspectRatio="none" xlink:href="data:{mime};base64,{}"/></symbol>"##, seen.len() - 1, base64(&sym.data));
     }
     let _ = writeln!(s, "</defs>");
     let _ = writeln!(s, r##"<g id="symbols">"##);
     for sym in input.symbols {
-        let Some(idx) = seen.iter().position(|p| *p == sym.path) else { continue };
+        let Some(idx) = seen.iter().position(|p| *p == sym.key) else { continue };
         let sw = sym.size;
         let sh = sym.size / sym.aspect.max(0.05);
         let x = -sym.pivot[0] * sw;

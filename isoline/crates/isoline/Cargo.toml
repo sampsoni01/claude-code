@@ -7,6 +7,11 @@ license.workspace = true
 rust-version.workspace = true
 default-run = "isoline"
 
+[lib]
+name = "isoline"
+path = "src/lib.rs"
+crate-type = ["cdylib", "rlib"]
+
 [[bin]]
 name = "isoline"
 path = "src/main.rs"
@@ -20,17 +25,27 @@ rayon.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 log.workspace = true
-env_logger.workspace = true
 parking_lot.workspace = true
 crossbeam-channel.workspace = true
-wgpu.workspace = true
+wgpu = { workspace = true, features = ["fragile-send-sync-non-atomic-wasm"] }
 winit.workspace = true
 egui.workspace = true
-egui-wgpu.workspace = true
-egui-winit.workspace = true
-pollster.workspace = true
+egui-wgpu = { workspace = true, default-features = false, features = ["winit", "fragile-send-sync-non-atomic-wasm"] }
 rfd.workspace = true
-notify.workspace = true
 png.workspace = true
-dirs.workspace = true
 image.workspace = true
+web-time.workspace = true
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+egui-winit = { workspace = true, features = ["clipboard", "wayland", "x11"] }
+env_logger.workspace = true
+pollster.workspace = true
+notify.workspace = true
+dirs.workspace = true
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+egui-winit = { workspace = true }
+wasm-bindgen.workspace = true
+wasm-bindgen-futures.workspace = true
+js-sys.workspace = true
+web-sys = { workspace = true, features = ["Window", "Document", "Element", "HtmlElement", "HtmlCanvasElement", "Storage", "console", "Location", "CssStyleDeclaration"] }
