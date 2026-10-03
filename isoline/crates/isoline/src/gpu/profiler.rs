@@ -17,12 +17,13 @@ pub struct GpuProfiler {
     query_set: Option<wgpu::QuerySet>,
     resolve: Option<wgpu::Buffer>,
     frames: Vec<Frame>,
-    current: usize,
+    /// Slot resolved by the last `end_frame`, waiting to be mapped after submit.
+    pending: Option<usize>,
     next_query: u32,
     names: Vec<(String, u32)>,
     period_ns: f32,
-    tx: Sender<usize>,
-    rx: Receiver<usize>,
+    tx: Sender<(usize, bool)>,
+    rx: Receiver<(usize, bool)>,
     /// Latest GPU pass timings in milliseconds.
     pub gpu_ms: HashMap<String, f32>,
     pub enabled: bool,
@@ -35,7 +36,7 @@ impl GpuProfiler {
             query_set: None,
             resolve: None,
             frames: Vec::new(),
-            current: 0,
+            pending: None,
             next_query: 0,
             names: Vec::new(),
             period_ns: queue.get_timestamp_period(),
@@ -121,29 +122,28 @@ impl GpuProfiler {
         encoder.copy_buffer_to_buffer(resolve, 0, &self.frames[slot].buffer, 0, self.next_query as u64 * 8);
         self.frames[slot].names = std::mem::take(&mut self.names);
         self.frames[slot].in_flight = true;
-        self.current = slot;
+        self.pending = Some(slot);
     }
 
-    /// Call after submit.
+    /// Call after submit. Maps only the slot `end_frame` resolved this
+    /// frame; a slot already waiting on the GPU must not be mapped twice.
     pub fn after_submit(&mut self) {
-        let slot = self.current;
+        let Some(slot) = self.pending.take() else { return };
         if self.frames.get(slot).map(|f| f.in_flight && !f.names.is_empty()).unwrap_or(false) {
             let tx = self.tx.clone();
             let n = self.frames[slot].names.len() as u64 * 16;
             self.frames[slot].buffer.slice(..n).map_async(wgpu::MapMode::Read, move |r| {
-                if r.is_ok() {
-                    let _ = tx.send(slot);
-                }
+                let _ = tx.send((slot, r.is_ok()));
             });
         }
     }
 
     /// Collect finished results.
     pub fn poll(&mut self) {
-        while let Ok(slot) = self.rx.try_recv() {
+        while let Ok((slot, ok)) = self.rx.try_recv() {
             let f = &mut self.frames[slot];
-            let n = f.names.len() as u64 * 16;
-            {
+            if ok {
+                let n = f.names.len() as u64 * 16;
                 let mapped = f.buffer.slice(..n).get_mapped_range();
                 let stamps: &[u64] = bytemuck::cast_slice(&mapped);
                 for (name, i) in &f.names {
@@ -152,6 +152,7 @@ impl GpuProfiler {
                     let ms = b.saturating_sub(a) as f32 * self.period_ns / 1.0e6;
                     self.gpu_ms.insert(name.clone(), ms);
                 }
+                drop(mapped);
             }
             f.buffer.unmap();
             f.names.clear();

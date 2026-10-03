@@ -276,7 +276,10 @@ impl ExportJob {
             let _ = tx.send(r);
         });
         let _ = device.poll(wgpu::PollType::wait_indefinitely());
-        rx.recv().context("export readback")?.context("export readback failed")?;
+        if let Err(e) = rx.recv().context("export readback").and_then(|r| r.context("export readback failed")) {
+            self.readback.unmap();
+            return Err(e);
+        }
         {
             let data = self.readback.slice(..).get_mapped_range();
             let stride = (self.width * 4) as usize;

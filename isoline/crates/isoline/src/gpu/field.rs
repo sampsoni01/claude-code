@@ -279,6 +279,7 @@ impl GpuField {
                 self.stats.total_bytes_landed += n as u64 * TILE_BYTES;
             } else {
                 log::error!("readback map failed for {n} tiles");
+                slot.buffer.as_ref().unwrap().unmap();
             }
             self.stats.tiles_in_flight -= n as u32;
             slot.tiles.clear();
