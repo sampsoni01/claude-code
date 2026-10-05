@@ -160,7 +160,7 @@ impl Library {
     /// inside the archive).
     pub fn set_project_files(&mut self, files: Vec<(String, Vec<u8>)>) {
         self.project_files = files.into_iter().map(|(n, b)| (n, Arc::<[u8]>::from(b))).collect();
-        self.pending_reload = Some(Instant::now() - Duration::from_secs(1));
+        self.pending_reload = Some(crate::platform::instant_ago(Duration::from_secs(1)));
     }
 
     /// The in-memory project assets, for saving into an archive.
@@ -459,7 +459,7 @@ impl Library {
             self.project_files.retain(|(n, _)| *n != rel);
             self.project_files.push((rel.clone(), Arc::<[u8]>::from(data)));
         }
-        self.pending_reload = Some(Instant::now() - Duration::from_secs(1));
+        self.pending_reload = Some(crate::platform::instant_ago(Duration::from_secs(1)));
         Ok(file)
     }
 }

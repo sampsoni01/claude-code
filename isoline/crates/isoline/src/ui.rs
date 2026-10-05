@@ -407,6 +407,8 @@ pub fn apply_style(ctx: &egui::Context) {
 #[allow(clippy::large_enum_variant)]
 pub enum UiAction {
     New(NewProjectParams),
+    /// The map was renamed from the title field.
+    RenameMap(String),
     Open,
     Save,
     SaveAs,
@@ -469,6 +471,8 @@ pub enum UiAction {
 
 #[derive(Default)]
 pub struct UiState {
+    /// Text of the map-name field while it is being edited.
+    pub title_edit: Option<String>,
     pub show_profiler: bool,
     pub show_new: bool,
     pub show_about: bool,
@@ -926,8 +930,24 @@ pub fn draw(root: &mut egui::Ui, st: &mut UiState, c: UiContext) -> Vec<UiAction
                 }
             });
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let title = format!("{}{}", c.doc.name, if c.doc.modified { " •" } else { "" });
-                ui.label(egui::RichText::new(title).strong());
+                // The map's name, editable in place: it names the cartouche
+                // and the saved file.
+                if st.title_edit.is_none() {
+                    st.title_edit = Some(c.doc.name.clone());
+                }
+                let edit = st.title_edit.as_mut().unwrap();
+                let resp = ui.add(egui::TextEdit::singleline(edit).desired_width(180.0).font(egui::TextStyle::Button).hint_text("Map name")).on_hover_text("Name of the map: shown in the cartouche and used for saved files");
+                if resp.lost_focus() || (resp.changed() && !resp.has_focus()) {
+                    let name = edit.trim().to_string();
+                    if !name.is_empty() && name != c.doc.name {
+                        actions.push(UiAction::RenameMap(name));
+                    }
+                } else if !resp.has_focus() && *edit != c.doc.name {
+                    *edit = c.doc.name.clone();
+                }
+                if c.doc.modified {
+                    ui.label(egui::RichText::new("•").strong()).on_hover_text("Unsaved changes");
+                }
             });
         });
     });

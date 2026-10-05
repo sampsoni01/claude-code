@@ -614,7 +614,7 @@ impl AppState {
             self.needs_fit = false;
         }
         self.doc.derived_stale = true;
-        self.doc.derived_last_change = Instant::now() - DERIVED_DEBOUNCE;
+        self.doc.derived_last_change = platform::instant_ago(DERIVED_DEBOUNCE);
         if self.doc.params.water.mode == RecomputeMode::Manual {
             self.doc.derived_requested = true;
         }
@@ -743,6 +743,7 @@ impl AppState {
                     if let Some(bytes) = bytes {
                         match project::unpack_archive(&bytes) {
                             Ok(data) if !self.doc.modified => {
+                                log::info!("autosave of \"{}\" from {} found in browser storage; offering recovery", data.manifest.name, data.manifest.saved_at);
                                 self.ui.recovery = Some(RecoveryPrompt { autosave_dir: PathBuf::from("browser storage"), manifest: data.manifest.clone(), project_dir: None, archive: Some(Arc::new(bytes)) });
                             }
                             Ok(_) => {}
@@ -1041,18 +1042,27 @@ impl AppState {
         }
 
         if self.doc.modified && self.autosave_job.is_none() && self.save_job.is_none() && self.doc.last_autosave.elapsed() >= AUTOSAVE_INTERVAL && !self.input.stroke {
-            self.doc.last_autosave = Instant::now();
-            let data = self.project_data_for_save();
-            #[cfg(not(target_arch = "wasm32"))]
-            {
-                let path = self.doc.path.clone();
-                self.autosave_job = Some(Job::spawn("Autosaving", move |_, _| project::autosave(path.as_deref(), &data)));
+            self.autosave_now();
+        }
+    }
+
+    /// Write the autosave: a folder beside the project on the desktop, the
+    /// browser's storage on the web.
+    fn autosave_now(&mut self) {
+        self.doc.last_autosave = Instant::now();
+        let data = self.project_data_for_save();
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let path = self.doc.path.clone();
+            self.autosave_job = Some(Job::spawn("Autosaving", move |_, _| project::autosave(path.as_deref(), &data)));
+        }
+        #[cfg(target_arch = "wasm32")]
+        match project::pack_archive(&data, false) {
+            Ok(bytes) => {
+                log::info!("autosave: {} bytes to browser storage", bytes.len());
+                platform::store_put(platform::AUTOSAVE_KEY, &bytes);
             }
-            #[cfg(target_arch = "wasm32")]
-            match project::pack_archive(&data, false) {
-                Ok(bytes) => platform::store_put(platform::AUTOSAVE_KEY, &bytes),
-                Err(e) => log::warn!("autosave: {e:#}"),
-            }
+            Err(e) => log::warn!("autosave: {e:#}"),
         }
     }
 
@@ -2466,6 +2476,12 @@ impl AppState {
         for a in actions {
             match a {
                 UiAction::New(p) => self.start_generation(p),
+                UiAction::RenameMap(name) => {
+                    self.doc.name = name;
+                    self.doc.modified = true;
+                    self.instances_dirty = true;
+                    self.window.set_title(&format!("Isoline — {}", self.doc.name));
+                }
                 UiAction::Open => self.open_dialog(),
                 UiAction::Save => self.save(),
                 UiAction::SaveAs => self.save_as(),
@@ -3585,6 +3601,13 @@ impl AppState {
             match name {
                 "export" => self.start_export(ExportSettings { scale: arg.parse().unwrap_or(1.0), ..Default::default() }, PathBuf::from("map.png")),
                 "fit" => self.fit_view(),
+                "save" => self.save(),
+                "open" => self.open_dialog(),
+                "autosave" => {
+                    self.doc.modified = true;
+                    self.autosave_now();
+                }
+                "status" => log::info!("status: {} | modified {} | {} symbols in library | {} placements", self.ui.status, self.doc.modified, self.library.assets.len(), self.doc.placements.len()),
                 other => log::warn!("unknown page command {other:?}"),
             }
         }

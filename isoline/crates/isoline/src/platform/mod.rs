@@ -47,6 +47,13 @@ pub type Filter<'a> = (&'a str, &'a [&'a str]);
 
 pub const IS_WEB: bool = cfg!(target_arch = "wasm32");
 
+/// An instant `d` in the past, or now when the clock has not run that
+/// long yet (the browser's clock starts with the page).
+pub fn instant_ago(d: std::time::Duration) -> web_time::Instant {
+    let now = web_time::Instant::now();
+    now.checked_sub(d).unwrap_or(now)
+}
+
 /// Storage key of the browser autosave.
 pub const AUTOSAVE_KEY: &str = "autosave";
 

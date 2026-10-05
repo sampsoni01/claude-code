@@ -9,6 +9,32 @@ The coastline is literally the isoline `elevation == seaLevel`, hence the name.
 
 ![Milestone 8](docs/milestone8.png)
 
+## Browser version
+
+The same program builds for the browser (WebAssembly + WebGPU) and is
+published to GitHub Pages by the build workflow: open the page in a current
+Chrome, Edge, Firefox or Safari and nothing needs installing. What differs
+from the desktop:
+
+- **Saving downloads a file.** A project is one `name.isoline.zip` archive
+  (the project folder layout zipped, imported images included). Open it
+  again with File ▸ Open or by dropping it onto the page. The desktop can
+  open the same archive.
+- **Autosave lives in the browser's storage** (IndexedDB) every two minutes
+  while the map is modified; reloading the page offers to recover it.
+- **Exports download** when finished (PNG, JPEG, SVG, gazetteer, theme).
+- **Imported images** go into the project archive rather than a folder;
+  asset pack folders are a desktop feature.
+- **Jobs run on the page's one thread**, so generating or recomputing water
+  blocks the interface for the duration instead of running in the background.
+  New maps default to 1024 × 1024 for that reason; larger sizes work.
+- **Favourites and recents** are kept in the browser's local storage.
+
+Build it locally with `web/build.sh` (needs the `wasm32-unknown-unknown`
+target and a `wasm-bindgen` CLI matching `Cargo.lock`; set `WASM_BINDGEN`
+to its path), then serve `web/dist` over http. WebGPU requires a secure
+context: `localhost` or https.
+
 ## Shipping fixes (after Milestone 8)
 
 - The default symbol pack, name languages and example themes are built into

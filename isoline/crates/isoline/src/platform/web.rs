@@ -6,10 +6,36 @@ use crate::app::UserEvent;
 use anyhow::Result;
 use std::path::{Path, PathBuf};
 use wasm_bindgen::prelude::*;
+use wasm_bindgen::JsCast;
 use wasm_bindgen_futures::JsFuture;
 use winit::event_loop::EventLoopProxy;
 
 #[wasm_bindgen(inline_js = r#"
+export function isoline_pick_files(accept, multiple) {
+    return new Promise((resolve) => {
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = accept;
+        input.multiple = !!multiple;
+        input.style.display = 'none';
+        document.body.appendChild(input);
+        let done = false;
+        const finish = async () => {
+            if (done) return;
+            done = true;
+            const out = [];
+            for (const f of input.files || []) {
+                out.push({ name: f.name, bytes: new Uint8Array(await f.arrayBuffer()) });
+            }
+            input.remove();
+            resolve(out);
+        };
+        input.addEventListener('change', finish);
+        // No 'change' fires on cancel; a focus return with no files means cancelled.
+        window.addEventListener('focus', () => setTimeout(finish, 800), { once: true });
+        input.click();
+    });
+}
 export function isoline_download(name, mime, bytes) {
     const blob = new Blob([bytes], { type: mime });
     const url = URL.createObjectURL(blob);
@@ -62,29 +88,29 @@ export async function isoline_store_delete(key) {
 }
 "#)]
 extern "C" {
+    fn isoline_pick_files(accept: &str, multiple: bool) -> js_sys::Promise;
     fn isoline_download(name: &str, mime: &str, bytes: &[u8]);
     fn isoline_store_put(key: &str, bytes: &[u8]) -> js_sys::Promise;
     fn isoline_store_get(key: &str) -> js_sys::Promise;
     fn isoline_store_delete(key: &str) -> js_sys::Promise;
 }
 
-fn dialog(title: &str, filters: &[Filter<'_>]) -> rfd::AsyncFileDialog {
-    let mut d = rfd::AsyncFileDialog::new().set_title(title);
-    for (name, exts) in filters {
-        d = d.add_filter(*name, exts);
-    }
-    d
-}
-
 /// Ask for one or more files; they arrive later as `PlatformEvent::Files`.
-pub fn pick_files(purpose: Purpose, title: &str, filters: &[Filter<'_>], multiple: bool, proxy: &EventLoopProxy<UserEvent>) {
-    let d = dialog(title, filters);
+/// Uses a hidden file input clicked while the user's click still counts
+/// as activation, so the browser's own picker opens.
+pub fn pick_files(purpose: Purpose, _title: &str, filters: &[Filter<'_>], multiple: bool, proxy: &EventLoopProxy<UserEvent>) {
+    let accept: Vec<String> = filters.iter().flat_map(|(_, exts)| exts.iter().map(|e| format!(".{e}"))).collect();
+    let promise = isoline_pick_files(&accept.join(","), multiple);
     let proxy = proxy.clone();
     wasm_bindgen_futures::spawn_local(async move {
-        let handles = if multiple { d.pick_files().await.unwrap_or_default() } else { d.pick_file().await.into_iter().collect::<Vec<_>>() };
+        let Ok(list) = JsFuture::from(promise).await else { return };
         let mut files = Vec::new();
-        for h in handles {
-            files.push(PickedFile { name: h.file_name(), bytes: h.read().await, path: None });
+        if let Some(arr) = list.dyn_ref::<js_sys::Array>() {
+            for item in arr.iter() {
+                let name = js_sys::Reflect::get(&item, &"name".into()).ok().and_then(|v| v.as_string()).unwrap_or_else(|| "file".into());
+                let bytes = js_sys::Reflect::get(&item, &"bytes".into()).ok().map(|v| js_sys::Uint8Array::new(&v).to_vec()).unwrap_or_default();
+                files.push(PickedFile { name, bytes, path: None });
+            }
         }
         if !files.is_empty() {
             let _ = proxy.send_event(UserEvent::Platform(PlatformEvent::Files { purpose, files }));
