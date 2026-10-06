@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Isoline map maker</title>
+<link rel="icon" href="data:,">
+<style>
+  html, body { margin: 0; height: 100%; background: #1d1b17; color: #e8e2d4; font: 15px/1.5 system-ui, sans-serif; overflow: hidden; }
+  canvas#isoline { display: block; width: 100vw; height: 100vh; outline: none; touch-action: none; }
+  #loading { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; text-align: center; padding: 24px; }
+  #loading .bar { width: 240px; height: 4px; background: #3a362e; border-radius: 2px; overflow: hidden; }
+  #loading .bar i { display: block; width: 40%; height: 100%; background: #c9b17a; animation: slide 1.2s infinite ease-in-out; }
+  @keyframes slide { 0% { transform: translateX(-100%); } 100% { transform: translateX(350%); } }
+  #loading a { color: #c9b17a; }
+  #drop { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; background: rgba(201,177,122,0.15); border: 3px dashed #c9b17a; pointer-events: none; font-size: 22px; }
+  body.dragging #drop { display: flex; }
+</style>
+</head>
+<body>
+<canvas id="isoline" tabindex="0"></canvas>
+<div id="loading"><div><strong>Isoline</strong> is loading…</div><div class="bar"><i></i></div><div id="loading-note"></div></div>
+<div id="drop">Drop a .isoline.zip map, a theme, or images</div>
+<script type="module">
+  const note = document.getElementById('loading-note');
+  const loading = document.getElementById('loading');
+  function fail(msg) {
+    loading.querySelector('.bar').style.display = 'none';
+    note.innerHTML = msg;
+  }
+  if (!navigator.gpu) {
+    fail('This browser does not offer WebGPU, which the map maker needs.<br>Use a current Chrome, Edge, Firefox or Safari. ' +
+         (window.isSecureContext ? '' : 'The page must be served over https or localhost.'));
+  } else {
+    try {
+      const mod = await import('./isoline.js');
+      await mod.default();
+      window.isoline = mod;
+      const canvas = document.getElementById('isoline');
+      const hide = () => { loading.style.display = 'none'; };
+      // Hide the loading card once the first frame has been drawn.
+      const check = () => { if (canvas.width > 0 && canvas.dataset.ready) hide(); else requestAnimationFrame(check); };
+      setTimeout(hide, 4000);
+      check();
+      // Files dropped anywhere on the page go to the app.
+      window.addEventListener('dragover', e => { e.preventDefault(); document.body.classList.add('dragging'); });
+      window.addEventListener('dragleave', e => { if (e.relatedTarget === null) document.body.classList.remove('dragging'); });
+      window.addEventListener('drop', async e => {
+        e.preventDefault();
+        document.body.classList.remove('dragging');
+        for (const f of e.dataTransfer.files) {
+          const buf = new Uint8Array(await f.arrayBuffer());
+          mod.drop_file(f.name, buf);
+        }
+      });
+      window.addEventListener('beforeunload', e => { if (canvas.dataset.modified === '1') { e.preventDefault(); e.returnValue = ''; } });
+    } catch (e) {
+      console.error(e);
+      fail('Isoline could not start: ' + (e && e.message ? e.message : e));
+    }
+  }
+</script>
+</body>
+</html>
