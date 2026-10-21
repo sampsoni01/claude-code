@@ -379,3 +379,9 @@ These are requirements, not architecture choices.
 - Display typeface (a CC0 pixel font is fine as a placeholder)
 - The seven exclusive resources and the common resources (credits, alloy, fuel, research) carry over from DESIGN.md; each needs a liquid or solid tag. Confirm during the economy test build
 - Ground regiment icon view (top-down or side)
+
+## 26. Decisions recorded by the coding session
+
+- **October 21, 2026. Screen resolution.** The screen is 480 art pixels wide, scaled to the phone with nearest-neighbor filtering. All sprite sizes are in `docs/ART_SPEC.md`, which supersedes the sizes in the bible's Art specs tab until that tab is updated. Decided by the coding session at the owner's request for as many pixels as possible while keeping a pixel art look.
+- **October 21, 2026. Test build 1 postponed.** The owner asked to skip the name generator until the Cultures and Syllables tabs are filled. Test build 2 is first.
+- **October 21, 2026. Repository.** The dedicated repository is `sampsoni01/Starshine`. Paths in it are `docs/` and `data/` at the root, without the `galactic-conquest/` prefix.

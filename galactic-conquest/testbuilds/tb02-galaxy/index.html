@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<title>Starshine Galaxy Map</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=VT323&display=swap">
+<style>
+/* Test build 2: grey boxes on navy. Single dark theme by design, this is a game screen. */
+:root {
+  color-scheme: dark;
+  --bg: #0a0f1e; --panel: #111831; --line: #27314f; --fg: #e4e9f5; --muted: #98a3bf;
+  --amber: #f0a53a; --amber-ink: #0a0f1e; --cyan: #3fd3e0; --red: #c04040;
+  --font: 'VT323', ui-monospace, Menlo, monospace;
+}
+html, body { height: 100%; margin: 0; }
+body { background: var(--bg); color: var(--fg); font: 20px/1.2 var(--font); overflow: hidden; overscroll-behavior: none; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+#map { position: fixed; inset: 0; width: 100%; height: 100%; display: block; image-rendering: pixelated; image-rendering: crisp-edges; touch-action: none; }
+.bar { position: fixed; left: 0; right: 0; background: rgba(17, 24, 49, 0.94); padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+.bar.top { top: 0; padding-top: calc(8px + env(safe-area-inset-top, 0px)); padding-bottom: 8px; border-bottom: 1px solid var(--line); display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.bar.bottom { bottom: 0; padding-top: 8px; padding-bottom: calc(8px + env(safe-area-inset-bottom, 0px)); border-top: 1px solid var(--line); max-height: 34vh; overflow-y: auto; }
+button, select { font: inherit; background: var(--panel); color: var(--fg); border: 1px solid var(--line); border-radius: 4px; min-height: 40px; padding: 2px 12px; cursor: pointer; }
+button:focus-visible, select:focus-visible { outline: 2px solid var(--cyan); outline-offset: 1px; }
+button.on { background: var(--amber); color: var(--amber-ink); border-color: var(--amber); }
+.seed { color: var(--amber); letter-spacing: 0.06em; }
+.muted { color: var(--muted); }
+.row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.panel-title { color: var(--amber); }
+.legend { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 6px; color: var(--muted); font-size: 17px; }
+.sw { display: inline-block; width: 11px; height: 11px; vertical-align: -1px; margin-right: 5px; box-sizing: border-box; }
+.sw.node { background: #8a93a8; }
+.sw.lane { height: 2px; width: 16px; background: #5c6896; vertical-align: 3px; }
+.sw.cut { height: 0; width: 16px; border-top: 2px dashed var(--red); vertical-align: 3px; }
+.sw.hole { background: #000; border: 1px solid #788cbe; }
+.sw.heart { background: #aa78e6; }
+.sw.start { border: 2px solid var(--amber); }
+.sw.neb { background: #1e1640; }
+#info p { margin: 0 0 4px; }
+</style>
+</head>
+<body>
+<canvas id="map" aria-label="Galaxy map"></canvas>
+<div class="bar top">
+  <span>Seed <span class="seed" id="seed">------</span></span>
+  <button id="btnNew" type="button">New galaxy</button>
+  <select id="size" aria-label="Galaxy size">
+    <option value="80">80 systems</option>
+    <option value="100">100 systems</option>
+    <option value="120" selected>120 systems</option>
+    <option value="150">150 systems</option>
+  </select>
+  <div class="row">
+    <button id="btnOut" type="button" aria-label="Zoom out">&minus;</button>
+    <button id="btnIn" type="button" aria-label="Zoom in">+</button>
+    <button id="btnFit" type="button">Fit</button>
+    <button id="btnSectors" type="button">Sectors</button>
+    <button id="btnStarts" type="button" class="on">Starts</button>
+  </div>
+</div>
+<div class="bar bottom">
+  <div id="info"></div>
+  <div class="legend">
+    <span><i class="sw node"></i>system</span>
+    <span><i class="sw lane"></i>lane between sectors</span>
+    <span><i class="sw cut"></i>pulsar shortcut</span>
+    <span><i class="sw hole"></i>black hole</span>
+    <span><i class="sw heart"></i>nebula heart</span>
+    <span><i class="sw neb"></i>nebula</span>
+    <span><i class="sw start"></i>possible home</span>
+  </div>
+</div>
+<script type="module" src="/src/testbuilds/tb02-galaxy/main.ts"></script>
+</body>
+</html>
